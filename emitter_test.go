@@ -54,6 +54,9 @@ func TestEmitterMessage(t *testing.T) {
 	if err := msg.Annotation(&URLCitation{URL: "https://x", Title: "x", EndIndex: 5}); err != nil {
 		t.Fatal(err)
 	}
+	if err := msg.Logprobs(LogProb{Token: "Hel", Logprob: -0.1}, LogProb{Token: "lo", Logprob: -0.2}); err != nil {
+		t.Fatal(err)
+	}
 	if err := msg.Refusal("no"); err != nil {
 		t.Fatal(err)
 	}
@@ -88,6 +91,14 @@ func TestEmitterMessage(t *testing.T) {
 	}
 	if len(m.Content[0].(*OutputText).Annotations) != 1 {
 		t.Errorf("annotations = %+v", m.Content[0].(*OutputText).Annotations)
+	}
+	if lp := m.Content[0].(*OutputText).Logprobs; len(lp) != 2 || lp[1].Token != "lo" {
+		t.Errorf("logprobs = %+v", lp)
+	}
+	for _, ev := range sink.events {
+		if d, ok := ev.(*OutputTextDoneEvent); ok && len(d.Logprobs) != 2 {
+			t.Errorf("output_text.done logprobs = %+v", d.Logprobs)
+		}
 	}
 	// Every content event carries the message's id and index 0.
 	for _, ev := range sink.events {

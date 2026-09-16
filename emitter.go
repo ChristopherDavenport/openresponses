@@ -78,7 +78,10 @@ func (e *Emitter) Message(phase Phase) (*MessageWriter, error) {
 }
 
 // FunctionCall opens a function call item. callID may be empty, in which
-// case one is generated.
+// case an opaque one is generated. Pass your own when a downstream
+// consumer must recover the function from a function_call_output that is
+// replayed without its function_call, for example by embedding the name
+// in the ID; nothing in the generated form allows that.
 func (e *Emitter) FunctionCall(callID, name string) (*FunctionCallWriter, error) {
 	if callID == "" {
 		callID = NewID("call")
@@ -240,6 +243,19 @@ func (w *MessageWriter) Annotation(a Annotation) error {
 		ItemID: w.msg.ID, OutputIndex: w.index, ContentIndex: w.partIndex(),
 		AnnotationIndex: len(part.Annotations) - 1, Annotation: a,
 	})
+}
+
+// Logprobs appends token log probabilities to the open output_text part,
+// opening one if needed. They are carried on output_text.done and the
+// final part, as the spec's include option message.output_text.logprobs
+// expects.
+func (w *MessageWriter) Logprobs(logprobs ...LogProb) error {
+	part, err := w.textPart()
+	if err != nil {
+		return err
+	}
+	part.Logprobs = append(part.Logprobs, logprobs...)
+	return nil
 }
 
 // Refusal appends delta to the open refusal part, opening one if needed.
