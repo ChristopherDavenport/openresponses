@@ -40,6 +40,60 @@
 // verbatim, so a proxy built on this package never drops data. Packages
 // may register their own types with [RegisterItem], [RegisterContent],
 // [RegisterTool], [RegisterAnnotation] and [RegisterEvent].
+//
+// # Streaming lifecycle
+//
+// This section is the normative statement of the event ordering this
+// package produces and expects; [Emitter] produces it, [Accumulator]
+// folds it, and streamtest.Validate checks it. A stream:
+//
+//   - begins with response.created and ends with exactly one of
+//     response.completed, response.incomplete or response.failed, with
+//     nothing after it;
+//   - numbers events from zero, increasing by one;
+//   - follows an error event immediately with response.failed over SSE,
+//     while over WebSocket the error frame alone ends the turn;
+//   - adds output items at consecutive output_index values, one open at a
+//     time, and closes each with output_item.done carrying the same id and
+//     type before the next is added;
+//   - inside a message, adds content parts at consecutive content_index
+//     values, one open at a time, streams deltas that name the item id and
+//     both indices, sends output_text.done or refusal.done, then
+//     content_part.done, before the item is closed;
+//   - inside a reasoning item, does the same with summary_index for
+//     summary parts and reasoning.done for reasoning text;
+//   - inside a function call, sends function_call_arguments.done after the
+//     deltas and before the item is closed;
+//   - carries, in the terminal response, exactly the items that were
+//     added, in order, in their final form.
+//
+// # Beyond the wire
+//
+// Nothing in this section is required for conformance. It exists so that
+// adapters do not each reimplement the same protocol mechanics, and the
+// wire types above stand alone without it.
+//
+//   - [Emitter] streams a response on an adapter's behalf, owning the
+//     lifecycle bookends, indices, item IDs and the response snapshot.
+//   - [Accumulator] folds a stream of events back into a [Response]; the
+//     client, [CollectStream] and the handler use it.
+//   - [CollectStream] derives a non-streaming Create from a streaming
+//     adapter, and [Stream] exposes a streaming adapter as an in-process
+//     iterator, the pull-shaped counterpart of [Client.CreateStream].
+//   - [ResponseStore], with [MemoryStore] as the bounded default, lets the
+//     [Handler] resolve previous_response_id over every transport through
+//     [WithResponseStore]. Without it, HTTP requests reach the adapter
+//     with the field untouched while WebSocket connections resolve their
+//     own recent responses regardless, so whether a stale ID yields
+//     previous_response_not_found or reaches the adapter depends on this
+//     option and the transport.
+//   - [NewResponse], [NewID], the Response.Complete, Incomplete and Fail
+//     methods and the error constructors ([InvalidRequest],
+//     [PreviousResponseNotFound], [TooManyRequests], [ModelError], ...)
+//     build spec-shaped values.
+//   - The streamtest package records and validates an adapter's stream
+//     in a unit test, and the echo package is a deterministic adapter for
+//     tests and the compliance run.
 package openresponses
 
 // SpecVersion is the Open Responses specification date this package

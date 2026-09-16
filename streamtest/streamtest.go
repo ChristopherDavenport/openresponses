@@ -87,7 +87,9 @@ func Run(ctx context.Context, adapter openresponses.Streamer, req openresponses.
 	return sink, nil
 }
 
-// Validate checks that events form a well-ordered stream:
+// Validate checks that events form a well-ordered stream. The rules are
+// the "Streaming lifecycle" section of the openresponses package
+// documentation, which is normative; this list restates them:
 //
 //   - it starts with response.created and ends with exactly one terminal
 //     event, with nothing after it;

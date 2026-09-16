@@ -6,7 +6,9 @@ import "fmt"
 // adapter, so adapters only supply content. It owns the bookend events
 // (response.created, output_item.added/done, content_part.added/done, the
 // *.done events), output and content indices, item IDs and the response
-// snapshot, and it closes an open item before opening the next.
+// snapshot, and it closes an open item before opening the next. The
+// order it produces is the one described under "Streaming lifecycle" in
+// the package documentation.
 //
 //	em := openresponses.NewEmitter(sink, openresponses.NewResponse(req))
 //	msg, err := em.Message(openresponses.PhaseFinalAnswer)

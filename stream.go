@@ -183,8 +183,11 @@ func (s *EventStream) Wait() (*Response, error) {
 	return resp, nil
 }
 
-// Accumulator folds a sequence of streaming events into a Response. The
-// zero value is ready to use. It is not safe for concurrent use.
+// Accumulator folds a sequence of streaming events into a Response,
+// following the order described under "Streaming lifecycle" in the
+// package documentation and tolerating streams that omit the terminal
+// snapshot. The zero value is ready to use. It is not safe for
+// concurrent use.
 type Accumulator struct {
 	resp *Response
 	// lastError remembers an error event so a stream that fails without
