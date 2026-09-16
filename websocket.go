@@ -47,17 +47,21 @@ func (h *Handler) serveWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn.SetReadLimit(h.maxBodyBytes)
 	session := &webSocketSession{
 		adapter: h.adapter,
+		store:   h.store,
 		conn:    conn,
-		cache:   newTurnCache(h.ws.cacheSize),
+		cache:   NewMemoryStore(h.ws.cacheSize),
 	}
 	session.run(r.Context(), h.ws.lifetime)
 }
 
-// webSocketSession is one server-side connection.
+// webSocketSession is one server-side connection. cache is the
+// connection-local memory the spec asks for; store is the handler's
+// shared store, consulted second.
 type webSocketSession struct {
 	adapter Adapter
+	store   ResponseStore
 	conn    *websocket.Conn
-	cache   *turnCache
+	cache   *MemoryStore
 }
 
 func (s *webSocketSession) run(parent context.Context, lifetime time.Duration) {
@@ -129,31 +133,27 @@ func (s *webSocketSession) turn(ctx context.Context, data []byte) error {
 		return s.writeError(ctx, err)
 	}
 
-	previousID := req.PreviousResponseID
-	if previousID != "" {
-		if prior, ok := s.cache.get(previousID); ok {
-			merged := make(Items, 0, len(prior)+len(req.Input))
-			merged = append(merged, prior...)
-			merged = append(merged, req.Input...)
-			if err := checkFunctionCallOutputs(merged); err != nil {
-				s.cache.evict(previousID)
-				return s.writeError(ctx, err)
-			}
-			req.Input = merged
-			req.PreviousResponseID = ""
-		} else if !req.Stored() {
-			return s.writeError(ctx, PreviousResponseNotFound(previousID))
+	cont, err := resolveContinuation(ctx, &req, s.cache, s.store)
+	if err != nil {
+		if cont.resolved {
+			_ = s.cache.Delete(ctx, cont.id)
 		}
+		return s.writeError(ctx, err)
+	}
+	// A store:false chain lives only in connection memory, and a shared
+	// store would have answered for a stored one, so a miss is final.
+	if cont.id != "" && !cont.resolved && (!req.Stored() || s.store != nil) {
+		return s.writeError(ctx, PreviousResponseNotFound(cont.id))
 	}
 
-	sink := &webSocketSink{ctx: ctx, conn: s.conn, previousID: previousID}
-	err := s.adapter.CreateStream(ctx, req, sink)
+	sink := &webSocketSink{ctx: ctx, conn: s.conn, previousID: cont.id}
+	err = s.adapter.CreateStream(ctx, req, sink)
 	if sink.failed != nil {
 		return sink.failed
 	}
 	if err != nil && !sink.terminal {
-		if previousID != "" {
-			s.cache.evict(previousID)
+		if cont.resolved {
+			_ = s.cache.Delete(ctx, cont.id)
 		}
 		return s.writeError(ctx, err)
 	}
@@ -168,16 +168,19 @@ func (s *webSocketSession) turn(ctx context.Context, data []byte) error {
 			return err
 		}
 	}
-	if resp != nil && resp.ID != "" {
-		if resp.Status == ResponseStatusFailed {
-			if previousID != "" {
-				s.cache.evict(previousID)
-			}
-		} else {
-			history := make(Items, 0, len(req.Input)+len(resp.Output))
-			history = append(history, req.Input...)
-			history = append(history, resp.Output...)
-			s.cache.put(resp.ID, history)
+	if resp == nil || resp.ID == "" {
+		return nil
+	}
+	if resp.Status == ResponseStatusFailed {
+		if cont.resolved {
+			_ = s.cache.Delete(ctx, cont.id)
+		}
+		return nil
+	}
+	_ = s.cache.Save(ctx, resp.ID, history(req, resp))
+	if s.store != nil && req.Stored() {
+		if err := s.store.Save(ctx, resp.ID, history(req, resp)); err != nil {
+			return s.writeError(ctx, fmt.Errorf("save response %q: %w", resp.ID, err))
 		}
 	}
 	return nil
@@ -220,7 +223,7 @@ func (s *webSocketSink) Send(ev StreamEvent) error {
 		setter.SetSequence(s.seq)
 	}
 	s.seq++
-	s.stampPreviousID(ev)
+	stampPreviousID(ev, s.previousID)
 	data, err := EncodeEvent(ev)
 	if err != nil {
 		return fmt.Errorf("openresponses: encode %s: %w", ev.EventType(), err)
@@ -234,102 +237,6 @@ func (s *webSocketSink) Send(ev StreamEvent) error {
 		s.terminal = true
 	}
 	return nil
-}
-
-// stampPreviousID restores previous_response_id on response snapshots
-// when the connection resolved the continuation itself.
-func (s *webSocketSink) stampPreviousID(ev StreamEvent) {
-	if s.previousID == "" {
-		return
-	}
-	var resp *Response
-	switch e := ev.(type) {
-	case *ResponseCreatedEvent:
-		resp = e.Response
-	case *ResponseQueuedEvent:
-		resp = e.Response
-	case *ResponseInProgressEvent:
-		resp = e.Response
-	case *ResponseCompletedEvent:
-		resp = e.Response
-	case *ResponseFailedEvent:
-		resp = e.Response
-	case *ResponseIncompleteEvent:
-		resp = e.Response
-	}
-	if resp != nil && resp.PreviousResponseID == nil {
-		id := s.previousID
-		resp.PreviousResponseID = &id
-	}
-}
-
-// checkFunctionCallOutputs verifies that every function_call_output
-// refers to a function_call earlier in the conversation.
-func checkFunctionCallOutputs(items []Item) error {
-	calls := map[string]bool{}
-	for i, item := range items {
-		switch v := item.(type) {
-		case *FunctionCall:
-			calls[v.CallID] = true
-		case *FunctionCallOutput:
-			if !calls[v.CallID] {
-				return InvalidRequest(CodeInvalidValue,
-					fmt.Sprintf("no function_call with call_id %q precedes this function_call_output", v.CallID),
-					fmt.Sprintf("input[%d].call_id", i))
-			}
-		}
-	}
-	return nil
-}
-
-// turnCache remembers the conversation context of recent responses on a
-// connection, keyed by response ID, so previous_response_id works with
-// store:false. It keeps the newest size entries.
-type turnCache struct {
-	mu    sync.Mutex
-	size  int
-	order []string
-	items map[string]Items
-}
-
-func newTurnCache(size int) *turnCache {
-	if size < 1 {
-		size = 1
-	}
-	return &turnCache{size: size, items: make(map[string]Items, size)}
-}
-
-func (c *turnCache) get(id string) (Items, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	items, ok := c.items[id]
-	return items, ok
-}
-
-func (c *turnCache) put(id string, items Items) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, exists := c.items[id]; !exists {
-		c.order = append(c.order, id)
-	}
-	c.items[id] = items
-	for len(c.order) > c.size {
-		oldest := c.order[0]
-		c.order = c.order[1:]
-		delete(c.items, oldest)
-	}
-}
-
-func (c *turnCache) evict(id string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	delete(c.items, id)
-	for i, v := range c.order {
-		if v == id {
-			c.order = append(c.order[:i], c.order[i+1:]...)
-			break
-		}
-	}
 }
 
 // WebSocketConn is a client-side WebSocket connection. Turns run one at

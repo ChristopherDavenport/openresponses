@@ -108,15 +108,30 @@ the error event and `response.failed` with the right transport
 semantics, and forwards any `Error.Headers` (for example `Retry-After`
 from an upstream 429) to the HTTP response and the error payload.
 
-`CollectStream` derives `Create` from `CreateStream`, and the
-`UnsupportedStreaming` and `UnsupportedCompaction` types can be embedded
-to decline what you do not implement. `NewResponse(req)` builds a
+`CollectStream` derives `Create` from `CreateStream`, `Stream` turns a
+streaming adapter into a pull-shaped `iter.Seq2` for in-process use, and
+the `UnsupportedStreaming` and `UnsupportedCompaction` types can be
+embedded to decline what you do not implement. `NewResponse(req)` builds a
 spec-shaped response that echoes the request's settings, `NewID` mints
 identifiers, and `InvalidRequest`, `NotFound`, `PreviousResponseNotFound`,
 `TooManyRequests`, `ModelError` and `ServerError` build the errors the
-handler maps to the right envelope. Resolving `previous_response_id` on
-`/responses/compact` is the adapter's job; the library is stateless over
-HTTP.
+handler maps to the right envelope.
+
+`previous_response_id` is resolved by the handler when it has a
+`ResponseStore`:
+
+```go
+openresponses.NewHandler(adapter, openresponses.WithResponseStore(openresponses.NewMemoryStore(1024)))
+```
+
+Over HTTP, on `/responses/compact` and over WebSocket alike, the stored
+history is inlined ahead of the new input and the field is cleared, so
+the adapter always sees a self-contained conversation; stored responses
+are saved after they complete, `store: false` ones never are, and an
+unknown ID yields `previous_response_not_found`. `MemoryStore` is a
+bounded in-memory implementation for a single replica; a fleet supplies
+its own three-method implementation. Without a store, HTTP requests
+reach the adapter with `previous_response_id` untouched.
 
 The `streamtest` package unit-tests an adapter's stream without a
 server: `streamtest.Run` records the events, validates the item
@@ -133,9 +148,10 @@ The handler:
   `[DONE]`;
 - runs WebSocket turns sequentially, rejects the forbidden `stream`,
   `stream_options` and `background` fields, keeps a per-connection cache
-  for `previous_response_id`, returns `previous_response_not_found` and
-  evicts the cache entry after a failed continuation, and enforces the
-  60-minute lifetime with `websocket_connection_limit_reached`.
+  for `previous_response_id` (consulted before the shared store), returns
+  `previous_response_not_found` and evicts the cache entry after a failed
+  continuation, and enforces the 60-minute lifetime with
+  `websocket_connection_limit_reached`.
 
 ## Extensions
 
@@ -170,7 +186,8 @@ handler and WebSocket transport with in-process servers.
 | `sse.go`, `stream.go` | SSE framing, `EventStream`, `Accumulator` |
 | `emitter.go` | `Emitter` and the item writers for streaming adapters |
 | `client.go` | `Client` |
-| `handler.go` | `Handler`, `Adapter`, `EventSink` |
+| `handler.go` | `Handler`, `Adapter`, `EventSink`, `Stream` |
+| `store.go` | `ResponseStore`, `MemoryStore`, continuation resolution |
 | `websocket.go` | WebSocket server session and `WebSocketConn` |
 | `streamtest/` | recording sink and stream validator for adapter tests |
 | `echo/` | deterministic adapter used by the compliance run |

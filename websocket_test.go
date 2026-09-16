@@ -14,10 +14,17 @@ import (
 // echoAdapter is a small in-package adapter that echoes the last user
 // message and honours function_call_output items, enough to exercise
 // continuation.
-type echoAdapter struct{ UnsupportedCompaction }
+type echoAdapter struct{}
 
 func (echoAdapter) Create(ctx context.Context, req Request) (*Response, error) {
 	return CollectStream(ctx, echoAdapter{}, req)
+}
+
+func (echoAdapter) Compact(_ context.Context, req CompactRequest) (*CompactResponse, error) {
+	if req.PreviousResponseID != "" {
+		return nil, PreviousResponseNotFound(req.PreviousResponseID)
+	}
+	return &CompactResponse{ID: NewID("resp"), Output: Items{&Compaction{ID: NewID("cmp"), EncryptedContent: "x"}}}, nil
 }
 
 func (echoAdapter) CreateStream(_ context.Context, req Request, sink EventSink) error {
@@ -247,27 +254,5 @@ func TestWebSocketDialError(t *testing.T) {
 	var e *Error
 	if !errors.As(err, &e) || e.StatusCode != 401 || e.Code != "unauthorized" {
 		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestTurnCache(t *testing.T) {
-	c := newTurnCache(2)
-	c.put("a", Items{UserText("a")})
-	c.put("b", Items{UserText("b")})
-	c.put("c", Items{UserText("c")})
-	if _, ok := c.get("a"); ok {
-		t.Error("a should have been evicted")
-	}
-	if _, ok := c.get("c"); !ok {
-		t.Error("c missing")
-	}
-	c.evict("b")
-	if _, ok := c.get("b"); ok {
-		t.Error("b should be gone")
-	}
-	c.put("d", nil)
-	c.put("e", nil)
-	if len(c.order) != 2 || len(c.items) != 2 {
-		t.Errorf("order=%v items=%d", c.order, len(c.items))
 	}
 }

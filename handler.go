@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net/http"
 	"path"
 	"strings"
@@ -74,6 +75,55 @@ func CollectStream(ctx context.Context, s Streamer, req Request) (*Response, err
 	return resp, nil
 }
 
+// Stream runs a streaming adapter in-process and yields its events as
+// they arrive, the pull-shaped counterpart of [Client.CreateStream]. The
+// sequence ends after the terminal event, or with a non-nil error when
+// the adapter fails. Breaking out of the loop cancels the adapter, whose
+// next Send returns the cancellation. Events are delivered through their
+// wire form, so the consumer sees what a client would and later mutation
+// by the adapter is invisible.
+func Stream(ctx context.Context, s Streamer, req Request) iter.Seq2[StreamEvent, error] {
+	return func(yield func(StreamEvent, error) bool) {
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		events := make(chan StreamEvent)
+		done := make(chan error, 1)
+		go func() {
+			done <- s.CreateStream(ctx, req, EventSinkFunc(func(ev StreamEvent) error {
+				data, err := EncodeEvent(ev)
+				if err != nil {
+					return err
+				}
+				copy, err := DecodeEvent(data)
+				if err != nil {
+					return err
+				}
+				select {
+				case events <- copy:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}))
+		}()
+		for {
+			select {
+			case ev := <-events:
+				if !yield(ev, nil) {
+					cancel()
+					<-done
+					return
+				}
+			case err := <-done:
+				if err != nil {
+					yield(nil, err)
+				}
+				return
+			}
+		}
+	}
+}
+
 // UnsupportedStreaming can be embedded by adapters that do not stream.
 type UnsupportedStreaming struct{}
 
@@ -97,12 +147,21 @@ func (UnsupportedCompaction) Compact(context.Context, CompactRequest) (*CompactR
 //	http.Handle("/v1/", openresponses.NewHandler(adapter))
 type Handler struct {
 	adapter      Adapter
+	store        ResponseStore
 	maxBodyBytes int64
 	ws           webSocketConfig
 }
 
 // HandlerOption configures a Handler.
 type HandlerOption func(*Handler)
+
+// WithResponseStore makes the handler resolve previous_response_id
+// against store over every transport and save the history of every
+// stored response into it. See [ResponseStore]. Without a store, HTTP
+// requests reach the adapter with previous_response_id untouched.
+func WithResponseStore(store ResponseStore) HandlerOption {
+	return func(h *Handler) { h.store = store }
+}
 
 // WithMaxBodyBytes caps request bodies. The default is 64 MiB.
 func WithMaxBodyBytes(n int64) HandlerOption {
@@ -178,8 +237,13 @@ func (h *Handler) serveResponses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	cont, err := h.resolve(r.Context(), &req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	if req.Stream {
-		h.streamResponse(w, r, req)
+		h.streamResponse(w, r, req, cont)
 		return
 	}
 	resp, err := h.adapter.Create(r.Context(), req)
@@ -187,7 +251,41 @@ func (h *Handler) serveResponses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if cont.resolved && resp.PreviousResponseID == nil {
+		resp.PreviousResponseID = &cont.id
+	}
+	if err := h.save(r.Context(), req, resp); err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// resolve applies the shared store to a request's previous_response_id.
+// With no store the request passes through untouched.
+func (h *Handler) resolve(ctx context.Context, req *Request) (continuation, error) {
+	if h.store == nil {
+		return continuation{id: req.PreviousResponseID}, nil
+	}
+	cont, err := resolveContinuation(ctx, req, h.store)
+	if err != nil {
+		return cont, err
+	}
+	if cont.id != "" && !cont.resolved {
+		return cont, PreviousResponseNotFound(cont.id)
+	}
+	return cont, nil
+}
+
+// save records a completed, stored response in the shared store.
+func (h *Handler) save(ctx context.Context, req Request, resp *Response) error {
+	if h.store == nil || resp == nil || resp.ID == "" || !req.Stored() || resp.Status == ResponseStatusFailed {
+		return nil
+	}
+	if err := h.store.Save(ctx, resp.ID, history(req, resp)); err != nil {
+		return fmt.Errorf("save response %q: %w", resp.ID, err)
+	}
+	return nil
 }
 
 func (h *Handler) serveCompact(w http.ResponseWriter, r *http.Request) {
@@ -204,6 +302,20 @@ func (h *Handler) serveCompact(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if h.store != nil && req.PreviousResponseID != "" {
+		probe := Request{Input: req.Input, PreviousResponseID: req.PreviousResponseID}
+		cont, err := resolveContinuation(r.Context(), &probe, h.store)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if !cont.resolved {
+			writeError(w, PreviousResponseNotFound(cont.id))
+			return
+		}
+		req.Input = probe.Input
+		req.PreviousResponseID = ""
+	}
 	resp, err := h.adapter.Compact(r.Context(), req)
 	if err != nil {
 		writeError(w, err)
@@ -216,8 +328,9 @@ func (h *Handler) serveCompact(w http.ResponseWriter, r *http.Request) {
 // stream according to the spec: an adapter error after the first frame
 // becomes error + response.failed; a missing terminal event is
 // synthesized; every stream ends with [DONE].
-func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, req Request) {
+func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, req Request, cont continuation) {
 	sink := newSSESink(w, req)
+	sink.previousID = cont.id
 	err := h.adapter.CreateStream(r.Context(), req, sink)
 	if r.Context().Err() != nil {
 		return
@@ -226,13 +339,18 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, req Req
 		writeError(w, err)
 		return
 	}
-	sink.finish(err)
+	resp := sink.finish(err)
+	// The stream is already complete; a store failure cannot be reported
+	// to this client, so it is dropped here. A store that can fail should
+	// log inside Save.
+	_ = h.save(r.Context(), req, resp)
 }
 
 // sseSink is the EventSink for HTTP streaming.
 type sseSink struct {
-	w   *sseWriter
-	req Request
+	w          *sseWriter
+	req        Request
+	previousID string
 
 	mu       sync.Mutex
 	seq      int64
@@ -268,6 +386,7 @@ func (s *sseSink) writeLocked(ev StreamEvent) error {
 		setter.SetSequence(s.seq)
 	}
 	s.seq++
+	stampPreviousID(ev, s.previousID)
 	data, err := EncodeEvent(ev)
 	if err != nil {
 		return fmt.Errorf("openresponses: encode %s: %w", ev.EventType(), err)
@@ -290,12 +409,13 @@ func (s *sseSink) started() bool {
 	return s.sent
 }
 
-// finish closes out the stream after the adapter returns.
-func (s *sseSink) finish(adapterErr error) {
+// finish closes out the stream after the adapter returns and returns
+// the final response, or nil when the client went away.
+func (s *sseSink) finish(adapterErr error) *Response {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failed != nil {
-		return
+		return nil
 	}
 	if adapterErr != nil && !s.terminal {
 		e := AsError(adapterErr)
@@ -318,6 +438,7 @@ func (s *sseSink) finish(adapterErr error) {
 		_ = s.writeLocked(&ResponseCompletedEvent{Response: resp})
 	}
 	_ = s.w.WriteDone()
+	return s.acc.Response()
 }
 
 // decodeBody reads a JSON body into v, returning an invalid_request
