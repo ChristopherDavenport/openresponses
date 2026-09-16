@@ -1,0 +1,50 @@
+{
+  "model": "gpt-5",
+  "input": [
+    {"type": "message", "role": "system", "content": "Be brief."},
+    {"type": "message", "role": "user", "content": [
+      {"type": "input_text", "text": "What is in this image?"},
+      {"type": "input_image", "image_url": "https://example.com/cat.png", "detail": "low"},
+      {"type": "input_file", "filename": "notes.txt", "file_data": "aGVsbG8="}
+    ]},
+    {"type": "message", "role": "assistant", "phase": "commentary", "content": [
+      {"type": "output_text", "text": "Looking.", "annotations": []},
+      {"type": "refusal", "refusal": "no"}
+    ]},
+    {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{\"q\":\"cat\"}"},
+    {"type": "function_call_output", "call_id": "call_1", "output": "a cat"},
+    {"type": "function_call_output", "call_id": "call_1", "output": [{"type": "input_text", "text": "still a cat"}, {"type": "input_video", "video_url": "https://example.com/clip.mp4"}]},
+    {"type": "reasoning", "summary": [{"type": "summary_text", "text": "thinking"}], "encrypted_content": "enc"},
+    {"type": "compaction", "encrypted_content": "cmp"},
+    {"type": "item_reference", "id": "msg_prev"},
+    {"type": "acme:search_result", "id": "sr_1", "status": "completed", "results": [1, 2]}
+  ],
+  "previous_response_id": "resp_prev",
+  "include": ["reasoning.encrypted_content"],
+  "tools": [
+    {"type": "function", "name": "lookup", "description": "Look things up", "parameters": {"type": "object", "properties": {"q": {"type": "string"}}, "required": ["q"]}, "strict": true},
+    {"type": "openai:web_search", "search_context_size": "low"}
+  ],
+  "tool_choice": {"type": "allowed_tools", "tools": [{"type": "function", "name": "lookup"}], "mode": "auto"},
+  "metadata": {"trace": "abc"},
+  "text": {"format": {"type": "json_schema", "name": "answer", "schema": {"type": "object"}, "strict": true}, "verbosity": "low"},
+  "temperature": 0.2,
+  "top_p": 0.9,
+  "presence_penalty": 0.1,
+  "frequency_penalty": 0.3,
+  "parallel_tool_calls": false,
+  "stream": true,
+  "stream_options": {"include_obfuscation": true},
+  "max_output_tokens": 100,
+  "max_tool_calls": 2,
+  "reasoning": {"effort": "high", "summary": "auto"},
+  "safety_identifier": "user-1",
+  "prompt_cache_key": "cache-1",
+  "truncation": "auto",
+  "instructions": "Be nice.",
+  "store": false,
+  "service_tier": "flex",
+  "top_logprobs": 3,
+  "openrouter": {"provider": {"order": ["x"]}},
+  "acme:priority": 7
+}

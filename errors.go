@@ -1,0 +1,233 @@
+package openresponses
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+)
+
+// ErrorType classifies an error on the wire and maps to an HTTP status.
+type ErrorType string
+
+// Error types defined by the specification.
+const (
+	ErrorTypeInvalidRequest  ErrorType = "invalid_request"
+	ErrorTypeNotFound        ErrorType = "not_found"
+	ErrorTypeTooManyRequests ErrorType = "too_many_requests"
+	ErrorTypeModelError      ErrorType = "model_error"
+	ErrorTypeServerError     ErrorType = "server_error"
+)
+
+// Error codes the specification names explicitly.
+const (
+	CodePreviousResponseNotFound        = "previous_response_not_found"
+	CodeWebSocketConnectionLimitReached = "websocket_connection_limit_reached"
+	CodeInvalidValue                    = "invalid_value"
+	CodeMissingRequiredParameter        = "missing_required_parameter"
+	CodeUnsupportedParameter            = "unsupported_parameter"
+	CodeStreamingNotSupported           = "streaming_not_supported"
+	CodeCompactionNotSupported          = "compaction_not_supported"
+)
+
+// HTTPStatus returns the HTTP status for the error type. Unknown types map
+// to 500.
+func (t ErrorType) HTTPStatus() int {
+	switch t {
+	case ErrorTypeInvalidRequest, "invalid_request_error":
+		return http.StatusBadRequest
+	case ErrorTypeNotFound:
+		return http.StatusNotFound
+	case ErrorTypeTooManyRequests:
+		return http.StatusTooManyRequests
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// ErrorPayload is the wire form of an error. It appears in the HTTP error
+// envelope, in error streaming events, in the WebSocket error frame and in
+// the error field of a failed response.
+type ErrorPayload struct {
+	Type    ErrorType         `json:"type,omitempty"`
+	Code    string            `json:"code"`
+	Message string            `json:"message"`
+	Param   string            `json:"param"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// MarshalJSON emits param as null when empty, as the spec requires the
+// key to be present but nullable.
+func (p ErrorPayload) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Type    ErrorType         `json:"type,omitempty"`
+		Code    string            `json:"code"`
+		Message string            `json:"message"`
+		Param   *string           `json:"param"`
+		Headers map[string]string `json:"headers,omitempty"`
+	}{p.Type, p.Code, p.Message, nilIfEmpty(p.Param), p.Headers})
+}
+
+// UnmarshalJSON accepts null for code and param.
+func (p *ErrorPayload) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		Type    ErrorType         `json:"type"`
+		Code    *string           `json:"code"`
+		Message string            `json:"message"`
+		Param   *string           `json:"param"`
+		Headers map[string]string `json:"headers"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*p = ErrorPayload{Type: aux.Type, Message: aux.Message, Headers: aux.Headers}
+	if aux.Code != nil {
+		p.Code = *aux.Code
+	}
+	if aux.Param != nil {
+		p.Param = *aux.Param
+	}
+	return nil
+}
+
+// Error is a spec-shaped error. Clients receive it for non-2xx responses
+// and for error events; adapters return it to have the handler emit the
+// right envelope and status.
+type Error struct {
+	// StatusCode is the HTTP status. When zero, Type decides the status.
+	StatusCode int
+	Type       ErrorType
+	Code       string
+	Message    string
+	Param      string
+
+	// Headers holds the response headers when the error came from an
+	// HTTP response.
+	Headers http.Header
+	// Body holds the raw response body when it was not a spec envelope.
+	Body []byte
+}
+
+// Error implements the error interface.
+func (e *Error) Error() string {
+	status := e.HTTPStatus()
+	switch {
+	case e.Code != "" && e.Message != "":
+		return fmt.Sprintf("openresponses: %s (%d): %s: %s", e.Type, status, e.Code, e.Message)
+	case e.Message != "":
+		return fmt.Sprintf("openresponses: %s (%d): %s", e.Type, status, e.Message)
+	default:
+		return fmt.Sprintf("openresponses: %s (%d)", e.Type, status)
+	}
+}
+
+// HTTPStatus returns StatusCode, or the status derived from Type.
+func (e *Error) HTTPStatus() int {
+	if e.StatusCode != 0 {
+		return e.StatusCode
+	}
+	return e.Type.HTTPStatus()
+}
+
+// Payload returns the wire form of the error.
+func (e *Error) Payload() ErrorPayload {
+	typ := e.Type
+	if typ == "" {
+		typ = ErrorTypeServerError
+	}
+	return ErrorPayload{Type: typ, Code: e.Code, Message: e.Message, Param: e.Param}
+}
+
+// Is reports whether target is an *Error with the same Type and, when
+// target sets one, the same Code. This lets callers write
+// errors.Is(err, &Error{Type: ErrorTypeNotFound}).
+func (e *Error) Is(target error) bool {
+	t, ok := target.(*Error)
+	if !ok {
+		return false
+	}
+	if t.Type != "" && t.Type != e.Type {
+		return false
+	}
+	if t.Code != "" && t.Code != e.Code {
+		return false
+	}
+	if t.StatusCode != 0 && t.StatusCode != e.HTTPStatus() {
+		return false
+	}
+	return true
+}
+
+// NewError builds an error of the given type.
+func NewError(typ ErrorType, code, message string) *Error {
+	return &Error{Type: typ, Code: code, Message: message}
+}
+
+// InvalidRequest builds an invalid_request error. param names the
+// offending field and may be empty.
+func InvalidRequest(code, message, param string) *Error {
+	return &Error{Type: ErrorTypeInvalidRequest, Code: code, Message: message, Param: param}
+}
+
+// NotFound builds a not_found error.
+func NotFound(code, message string) *Error {
+	return &Error{Type: ErrorTypeNotFound, Code: code, Message: message}
+}
+
+// errorEnvelope is the body of a non-2xx HTTP response.
+type errorEnvelope struct {
+	Error ErrorPayload `json:"error"`
+}
+
+// AsError converts any error into an
+// *Error. Errors that already are *Error pass through; errors implementing
+// HTTPStatus() int keep their status; everything else becomes a
+// server_error with the error text as message.
+func AsError(err error) *Error {
+	var e *Error
+	if errors.As(err, &e) {
+		return e
+	}
+	out := &Error{Type: ErrorTypeServerError, Code: "internal_error", Message: err.Error()}
+	var st interface{ HTTPStatus() int }
+	if errors.As(err, &st) {
+		out.StatusCode = st.HTTPStatus()
+		switch out.StatusCode {
+		case http.StatusBadRequest:
+			out.Type = ErrorTypeInvalidRequest
+		case http.StatusNotFound:
+			out.Type = ErrorTypeNotFound
+		case http.StatusTooManyRequests:
+			out.Type = ErrorTypeTooManyRequests
+		}
+	}
+	return out
+}
+
+// IsNotFound reports whether err is a not_found error.
+func IsNotFound(err error) bool {
+	return errors.Is(err, &Error{Type: ErrorTypeNotFound})
+}
+
+// IsRateLimited reports whether err is a too_many_requests error.
+func IsRateLimited(err error) bool {
+	return errors.Is(err, &Error{Type: ErrorTypeTooManyRequests})
+}
+
+// IsInvalidRequest reports whether err is an invalid_request error.
+func IsInvalidRequest(err error) bool {
+	return errors.Is(err, &Error{Type: ErrorTypeInvalidRequest})
+}
+
+// Sentinel errors returned by streams and connections.
+var (
+	// ErrTruncatedStream is returned when a stream ends without a [DONE]
+	// sentinel or a terminal response event.
+	ErrTruncatedStream = errors.New("openresponses: stream ended before a terminal event")
+	// ErrStreamClosed is returned when sending on a closed stream or
+	// connection.
+	ErrStreamClosed = errors.New("openresponses: stream closed")
+	// ErrTerminalEventSent is returned when an adapter emits an event after
+	// a terminal response event.
+	ErrTerminalEventSent = errors.New("openresponses: terminal event already sent")
+)
