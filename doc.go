@@ -80,6 +80,9 @@
 //   - [CollectStream] derives a non-streaming Create from a streaming
 //     adapter, and [Stream] exposes a streaming adapter as an in-process
 //     iterator, the pull-shaped counterpart of [Client.CreateStream].
+//   - [ClientAdapter], from [Client.AsAdapter], serves a remote server as
+//     an [Adapter], so every participant, local backend, remote server or
+//     a wrapper over either, composes through the same interface.
 //   - [ResponseStore], with [MemoryStore] as the bounded default, lets the
 //     [Handler] resolve previous_response_id over every transport through
 //     [WithResponseStore]. Without it, HTTP requests reach the adapter

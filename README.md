@@ -109,9 +109,12 @@ semantics, and forwards any `Error.Headers` (for example `Retry-After`
 from an upstream 429) to the HTTP response and the error payload.
 
 `CollectStream` derives `Create` from `CreateStream`, `Stream` turns a
-streaming adapter into a pull-shaped `iter.Seq2` for in-process use, and
-the `UnsupportedStreaming` and `UnsupportedCompaction` types can be
-embedded to decline what you do not implement. `NewResponse(req)` builds a
+streaming adapter into a pull-shaped `iter.Seq2` for in-process use,
+`client.AsAdapter()` serves a remote server as an `Adapter` (so a proxy,
+fallback chain or fan-out composes through one interface, WebSocket
+downstream included), and the `UnsupportedStreaming` and
+`UnsupportedCompaction` types can be embedded to decline what you do not
+implement. `NewResponse(req)` builds a
 spec-shaped response that echoes the request's settings, `NewID` mints
 identifiers, and `InvalidRequest`, `NotFound`, `PreviousResponseNotFound`,
 `TooManyRequests`, `ModelError` and `ServerError` build the errors the
@@ -186,6 +189,7 @@ handler and WebSocket transport with in-process servers.
 | `sse.go`, `stream.go` | SSE framing, `EventStream`, `Accumulator` |
 | `emitter.go` | `Emitter` and the item writers for streaming adapters |
 | `client.go` | `Client` |
+| `clientadapter.go` | `ClientAdapter`, a remote server as an `Adapter` |
 | `handler.go` | `Handler`, `Adapter`, `EventSink`, `Stream` |
 | `store.go` | `ResponseStore`, `MemoryStore`, continuation resolution |
 | `websocket.go` | WebSocket server session and `WebSocketConn` |

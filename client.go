@@ -211,7 +211,15 @@ func (c *Client) webSocketURL() (string, error) {
 // are not a spec envelope are kept verbatim in Error.Body.
 func errorFromHTTP(res *http.Response) *Error {
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
-	out := &Error{StatusCode: res.StatusCode, Headers: res.Header.Clone()}
+	out := &Error{StatusCode: res.StatusCode, ResponseHeaders: res.Header.Clone()}
+	for name, values := range res.Header {
+		if errorHeader(name) {
+			if out.Headers == nil {
+				out.Headers = http.Header{}
+			}
+			out.Headers[http.CanonicalHeaderKey(name)] = append([]string(nil), values...)
+		}
+	}
 	var env errorEnvelope
 	if err := json.Unmarshal(body, &env); err == nil && (env.Error.Message != "" || env.Error.Code != "" || env.Error.Type != "") {
 		out.Type = env.Error.Type

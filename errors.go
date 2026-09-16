@@ -102,13 +102,29 @@ type Error struct {
 	Message    string
 	Param      string
 
-	// Headers are HTTP headers attached to the error. On the client they
-	// are the response headers. On the server they are written to the
-	// HTTP response and carried in the error event payload, so an adapter
-	// can forward Retry-After from an upstream 429.
+	// Headers are HTTP headers that belong to the error and travel with
+	// it: a server writes them to the HTTP response and carries them in
+	// the error event payload, and a client fills them from the response
+	// headers that describe the failure (Retry-After, RateLimit-* and
+	// X-RateLimit-*, X-Request-Id and Request-Id). Forwarding an *Error
+	// therefore keeps Retry-After from an upstream 429 intact without
+	// leaking entity or hop-by-hop headers.
 	Headers http.Header
+	// ResponseHeaders holds every header of the failing HTTP response
+	// when the error came from one. It is never forwarded.
+	ResponseHeaders http.Header
 	// Body holds the raw response body when it was not a spec envelope.
 	Body []byte
+}
+
+// errorHeader reports whether an HTTP response header describes an error
+// and should travel with it.
+func errorHeader(name string) bool {
+	switch http.CanonicalHeaderKey(name) {
+	case "Retry-After", "X-Request-Id", "Request-Id":
+		return true
+	}
+	return strings.HasPrefix(name, "Ratelimit-") || strings.HasPrefix(name, "X-Ratelimit-")
 }
 
 // Error implements the error interface.

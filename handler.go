@@ -477,6 +477,11 @@ func (h *Handler) decodeBody(w http.ResponseWriter, r *http.Request, v any) erro
 func writeError(w http.ResponseWriter, err error) {
 	e := AsError(err)
 	for k, vs := range e.Headers {
+		switch http.CanonicalHeaderKey(k) {
+		case "Content-Length", "Content-Type", "Transfer-Encoding", "Connection":
+			// The envelope written below owns these.
+			continue
+		}
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}

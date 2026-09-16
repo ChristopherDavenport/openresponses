@@ -96,8 +96,11 @@ func TestClientErrors(t *testing.T) {
 			if e.StatusCode != tt.status || e.Type != tt.wantType || e.Code != tt.wantCode {
 				t.Errorf("got %+v", e)
 			}
-			if e.Headers.Get("X-Request-Id") != "req_1" {
-				t.Errorf("headers = %v", e.Headers)
+			if e.Headers.Get("X-Request-Id") != "req_1" || e.Headers.Get("Content-Length") != "" {
+				t.Errorf("error headers = %v", e.Headers)
+			}
+			if e.ResponseHeaders.Get("Content-Length") == "" && e.ResponseHeaders.Get("Content-Type") == "" {
+				t.Errorf("response headers = %v", e.ResponseHeaders)
 			}
 			if tt.wantCode == "" && string(e.Body) != tt.body {
 				t.Errorf("body = %q", e.Body)
@@ -228,3 +231,5 @@ func TestClientMiddleware(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func bytesReader(b []byte) io.Reader { return strings.NewReader(string(b)) }
