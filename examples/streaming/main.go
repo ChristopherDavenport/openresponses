@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/christopherdavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses"
 )
 
 func main() {
@@ -15,7 +15,7 @@ func main() {
 
 	stream, err := client.CreateStream(context.Background(), openresponses.Request{
 		Model: env("OPENRESPONSES_MODEL", "gpt-5"),
-		Input: openresponses.Input{openresponses.UserText("Count from 1 to 5.")},
+		Input: openresponses.Items{openresponses.UserText("Count from 1 to 5.")},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

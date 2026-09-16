@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/christopherdavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 
 	req := openresponses.Request{
 		Model: env("OPENRESPONSES_MODEL", "gpt-5"),
-		Input: openresponses.Input{openresponses.UserText("What's the weather like in San Francisco?")},
+		Input: openresponses.Items{openresponses.UserText("What's the weather like in San Francisco?")},
 		Tools: openresponses.Tools{weather},
 	}
 	resp, err := client.Create(ctx, req)

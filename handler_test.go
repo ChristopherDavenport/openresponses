@@ -142,7 +142,7 @@ func TestHandlerAdapterErrorMapping(t *testing.T) {
 		status int
 		typ    ErrorType
 	}{
-		{"spec error", NotFound(CodePreviousResponseNotFound, "gone"), 404, ErrorTypeNotFound},
+		{"spec error", PreviousResponseNotFound("resp_gone"), 404, ErrorTypeNotFound},
 		{"status override", &Error{StatusCode: 422, Type: ErrorTypeInvalidRequest, Code: "x", Message: "y"}, 422, ErrorTypeInvalidRequest},
 		{"http status interface", statusErr(429), 429, ErrorTypeTooManyRequests},
 		{"plain error", errors.New("kaboom"), 500, ErrorTypeServerError},
@@ -307,7 +307,7 @@ func TestHandlerStreamClientDisconnect(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(context.Background())
-	stream, err := NewClient(srv.URL).CreateStream(ctx, Request{Model: "m", Input: Input{UserText("hi")}})
+	stream, err := NewClient(srv.URL).CreateStream(ctx, Request{Model: "m", Input: Items{UserText("hi")}})
 	if err != nil {
 		t.Fatal(err)
 	}

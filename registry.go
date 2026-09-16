@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/christopherdavenport/openresponses/internal/jsonx"
+	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
 )
 
 // registry maps a wire "type" discriminator to a decoder for T. It is

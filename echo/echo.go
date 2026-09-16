@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/christopherdavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses"
 )
 
 // Adapter implements openresponses.Adapter with canned behaviour.

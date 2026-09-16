@@ -14,7 +14,7 @@
 //	c := openresponses.NewClient("https://api.openai.com/v1", openresponses.WithAPIKey(key))
 //	resp, err := c.Create(ctx, openresponses.Request{
 //		Model: "gpt-5",
-//		Input: openresponses.Input{openresponses.UserText("Hello")},
+//		Input: openresponses.Items{openresponses.UserText("Hello")},
 //	})
 //	fmt.Println(resp.OutputText())
 //

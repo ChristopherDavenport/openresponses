@@ -20,7 +20,7 @@ The core depends only on the standard library plus
 ## Install
 
 ```sh
-go get github.com/christopherdavenport/openresponses
+go get github.com/ChristopherDavenport/openresponses
 ```
 
 Requires Go 1.25.
@@ -33,7 +33,7 @@ client := openresponses.NewClient("https://api.openai.com/v1",
 
 resp, err := client.Create(ctx, openresponses.Request{
     Model: "gpt-5",
-    Input: openresponses.Input{openresponses.UserText("Say hello.")},
+    Input: openresponses.Items{openresponses.UserText("Say hello.")},
 })
 fmt.Println(resp.OutputText())
 ```
@@ -60,7 +60,7 @@ conn, err := client.Dial(ctx)
 first, err := conn.Turn(ctx, req)
 second, err := conn.Turn(ctx, openresponses.Request{
     Model: "gpt-5", PreviousResponseID: first.ID,
-    Input: openresponses.Input{openresponses.UserText("And then?")},
+    Input: openresponses.Items{openresponses.UserText("And then?")},
 })
 ```
 
@@ -84,8 +84,10 @@ http.Handle("/v1/", openresponses.NewHandler(myAdapter))
 `CollectStream` derives `Create` from `CreateStream`, and the
 `UnsupportedStreaming` and `UnsupportedCompaction` types can be embedded
 to decline what you do not implement. `NewResponse(req)` builds a
-spec-shaped response that echoes the request's settings, and `NewID`
-mints identifiers. See `examples/server` and the `echo` package.
+spec-shaped response that echoes the request's settings, `NewID` mints
+identifiers, and `InvalidRequest`, `NotFound`, `PreviousResponseNotFound`,
+`TooManyRequests`, `ModelError` and `ServerError` build the errors the
+handler maps to the right envelope. See `examples/server` and the `echo` package.
 
 The handler:
 

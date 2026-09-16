@@ -132,7 +132,7 @@ func (s *webSocketSession) turn(ctx context.Context, data []byte) error {
 	previousID := req.PreviousResponseID
 	if previousID != "" {
 		if prior, ok := s.cache.get(previousID); ok {
-			merged := make(Input, 0, len(prior)+len(req.Input))
+			merged := make(Items, 0, len(prior)+len(req.Input))
 			merged = append(merged, prior...)
 			merged = append(merged, req.Input...)
 			if err := checkFunctionCallOutputs(merged); err != nil {
@@ -142,12 +142,7 @@ func (s *webSocketSession) turn(ctx context.Context, data []byte) error {
 			req.Input = merged
 			req.PreviousResponseID = ""
 		} else if !req.Stored() {
-			return s.writeError(ctx, &Error{
-				Type:    ErrorTypeNotFound,
-				Code:    CodePreviousResponseNotFound,
-				Message: fmt.Sprintf("previous response %q is not available on this connection", previousID),
-				Param:   "previous_response_id",
-			})
+			return s.writeError(ctx, PreviousResponseNotFound(previousID))
 		}
 	}
 
@@ -181,7 +176,10 @@ func (s *webSocketSession) turn(ctx context.Context, data []byte) error {
 				s.cache.evict(previousID)
 			}
 		} else {
-			s.cache.put(resp.ID, append(append(Items(nil), req.Input...), resp.Output...))
+			history := make(Items, 0, len(req.Input)+len(resp.Output))
+			history = append(history, req.Input...)
+			history = append(history, resp.Output...)
+			s.cache.put(resp.ID, history)
 		}
 	}
 	return nil

@@ -195,14 +195,14 @@ func TestValidate(t *testing.T) {
 		req   Request
 		param string
 	}{
-		{"missing model", Request{Input: Input{UserText("x")}}, "model"},
-		{"assistant with input_text", Request{Model: "m", Input: Input{&Message{Role: RoleAssistant, Content: Contents{&InputText{Text: "x"}}}}}, "input[0].content[0]"},
-		{"user with output_text", Request{Model: "m", Input: Input{&Message{Role: RoleUser, Content: Contents{&OutputText{Text: "x"}}}}}, "input[0].content[0]"},
-		{"bad phase", Request{Model: "m", Input: Input{&Message{Role: RoleAssistant, Phase: "weird"}}}, "input[0].phase"},
-		{"missing role", Request{Model: "m", Input: Input{&Message{}}}, "input[0].role"},
-		{"function_call no name", Request{Model: "m", Input: Input{&FunctionCall{CallID: "c"}}}, "input[0].name"},
-		{"function_call_output no call_id", Request{Model: "m", Input: Input{&FunctionCallOutput{}}}, "input[0].call_id"},
-		{"compaction empty", Request{Model: "m", Input: Input{&Compaction{}}}, "input[0].encrypted_content"},
+		{"missing model", Request{Input: Items{UserText("x")}}, "model"},
+		{"assistant with input_text", Request{Model: "m", Input: Items{&Message{Role: RoleAssistant, Content: Contents{&InputText{Text: "x"}}}}}, "input[0].content[0]"},
+		{"user with output_text", Request{Model: "m", Input: Items{&Message{Role: RoleUser, Content: Contents{&OutputText{Text: "x"}}}}}, "input[0].content[0]"},
+		{"bad phase", Request{Model: "m", Input: Items{&Message{Role: RoleAssistant, Phase: "weird"}}}, "input[0].phase"},
+		{"missing role", Request{Model: "m", Input: Items{&Message{}}}, "input[0].role"},
+		{"function_call no name", Request{Model: "m", Input: Items{&FunctionCall{CallID: "c"}}}, "input[0].name"},
+		{"function_call_output no call_id", Request{Model: "m", Input: Items{&FunctionCallOutput{}}}, "input[0].call_id"},
+		{"compaction empty", Request{Model: "m", Input: Items{&Compaction{}}}, "input[0].encrypted_content"},
 		{"tool without name", Request{Model: "m", Tools: Tools{&FunctionTool{}}}, "tools[0].name"},
 		{"json_schema without name", Request{Model: "m", Text: TextConfig{Format: &TextFormat{Type: TextFormatJSONSchema}}}, "text.format.name"},
 	}
@@ -218,7 +218,7 @@ func TestValidate(t *testing.T) {
 			}
 		})
 	}
-	ok := Request{Model: "m", Input: Input{
+	ok := Request{Model: "m", Input: Items{
 		SystemText("s"), UserText("u"), AssistantText("a"),
 		&Message{Role: RoleAssistant, Phase: PhaseCommentary, Content: Contents{&Refusal{Refusal: "r"}}},
 		&FunctionCall{CallID: "c", Name: "f"}, NewFunctionCallOutput("c", "o"),

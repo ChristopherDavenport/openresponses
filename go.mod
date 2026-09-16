@@ -1,4 +1,4 @@
-module github.com/christopherdavenport/openresponses
+module github.com/ChristopherDavenport/openresponses
 
 go 1.25
 

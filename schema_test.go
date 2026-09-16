@@ -143,21 +143,21 @@ func TestSchemaRequest(t *testing.T) {
 		name string
 		req  Request
 	}{
-		{"minimal", Request{Model: "m", Input: Input{UserText("hi")}}},
+		{"minimal", Request{Model: "m", Input: Items{UserText("hi")}}},
 		{"tools", Request{
 			Model:      "m",
-			Input:      Input{UserText("hi")},
+			Input:      Items{UserText("hi")},
 			Tools:      Tools{NewFunctionTool("f", "desc", json.RawMessage(`{"type":"object","properties":{}}`))},
 			ToolChoice: ToolChoiceFunction("f"),
 		}},
 		{"allowed_tools", Request{
 			Model:      "m",
-			Input:      Input{UserText("hi")},
+			Input:      Items{UserText("hi")},
 			ToolChoice: ToolChoice{Allowed: &AllowedTools{Tools: []ToolReference{FunctionReference("f")}, Mode: ToolChoiceRequired}},
 		}},
 		{"everything", Request{
 			Model:              "m",
-			Input:              Input{UserText("hi")},
+			Input:              Items{UserText("hi")},
 			PreviousResponseID: "resp_0",
 			Include:            []Include{IncludeReasoningEncryptedContent, IncludeOutputTextLogprobs},
 			Metadata:           map[string]string{"a": "b"},
@@ -187,7 +187,7 @@ func TestSchemaRequest(t *testing.T) {
 		})
 	}
 	t.Run("compact", func(t *testing.T) {
-		assertSchema(t, "CompactResponseMethodPublicBody", CompactRequest{Model: "m", Input: Input{UserText("hi")}, PromptCacheKey: "k"})
+		assertSchema(t, "CompactResponseMethodPublicBody", CompactRequest{Model: "m", Input: Items{UserText("hi")}, PromptCacheKey: "k"})
 	})
 }
 

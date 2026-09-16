@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/christopherdavenport/openresponses/internal/jsonx"
+	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
 )
 
 // Tool is a tool the model may call. The only standard tool is

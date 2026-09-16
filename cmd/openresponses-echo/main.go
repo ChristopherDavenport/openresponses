@@ -18,8 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/christopherdavenport/openresponses"
-	"github.com/christopherdavenport/openresponses/echo"
+	"github.com/ChristopherDavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses/echo"
 )
 
 func main() {

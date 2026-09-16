@@ -1,45 +1,17 @@
 package openresponses
 
 import (
-	"encoding/json"
 	"fmt"
 
-	"github.com/christopherdavenport/openresponses/internal/jsonx"
+	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
 )
-
-// Input is the input of a request. On the wire it is either a bare string
-// (one user message) or an array of items; it always marshals as an
-// array.
-type Input []Item
-
-// UnmarshalJSON accepts a string or an array of items.
-func (in *Input) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 || string(data) == "null" {
-		*in = nil
-		return nil
-	}
-	if data[0] == '"' {
-		var s string
-		if err := json.Unmarshal(data, &s); err != nil {
-			return err
-		}
-		*in = Input{UserText(s)}
-		return nil
-	}
-	var items Items
-	if err := json.Unmarshal(data, &items); err != nil {
-		return err
-	}
-	*in = Input(items)
-	return nil
-}
 
 // Request is the body of POST /responses (CreateResponseBody in the
 // OpenAPI document). Optional fields are omitted when empty; pointer
 // fields distinguish "unset" from a zero value.
 type Request struct {
 	Model              string            `json:"model,omitempty"`
-	Input              Input             `json:"input,omitempty"`
+	Input              Items             `json:"input,omitempty"`
 	PreviousResponseID string            `json:"previous_response_id,omitempty"`
 	Include            []Include         `json:"include,omitempty"`
 	Tools              Tools             `json:"tools,omitempty"`
@@ -194,7 +166,7 @@ func validateMessage(m *Message, param string) error {
 // CompactRequest is the body of POST /responses/compact.
 type CompactRequest struct {
 	Model              string `json:"model,omitempty"`
-	Input              Input  `json:"input,omitempty"`
+	Input              Items  `json:"input,omitempty"`
 	PreviousResponseID string `json:"previous_response_id,omitempty"`
 	Instructions       string `json:"instructions,omitempty"`
 	PromptCacheKey     string `json:"prompt_cache_key,omitempty"`

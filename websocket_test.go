@@ -69,14 +69,14 @@ func TestWebSocketTurns(t *testing.T) {
 	defer conn.Close()
 
 	store := false
-	first, err := conn.Turn(ctx, Request{Model: "m", Store: &store, Input: Input{UserText("first")}})
+	first, err := conn.Turn(ctx, Request{Model: "m", Store: &store, Input: Items{UserText("first")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.OutputText() != "first" || first.ID == "" {
 		t.Errorf("first = %+v", first)
 	}
-	second, err := conn.Turn(ctx, Request{Model: "m", Store: &store, Input: Input{UserText("second")}})
+	second, err := conn.Turn(ctx, Request{Model: "m", Store: &store, Input: Items{UserText("second")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +86,7 @@ func TestWebSocketTurns(t *testing.T) {
 
 	// Continuation with store:false resolves through the connection cache
 	// and reports previous_response_id.
-	cont, err := conn.Turn(ctx, Request{Model: "m", Store: &store, PreviousResponseID: first.ID, Input: Input{&FunctionCall{CallID: "c1", Name: "f", Arguments: "{}"}, NewFunctionCallOutput("c1", "ok"), UserText("continued")}})
+	cont, err := conn.Turn(ctx, Request{Model: "m", Store: &store, PreviousResponseID: first.ID, Input: Items{&FunctionCall{CallID: "c1", Name: "f", Arguments: "{}"}, NewFunctionCallOutput("c1", "ok"), UserText("continued")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,13 +104,13 @@ func TestWebSocketPreviousResponseNotFound(t *testing.T) {
 	}
 	defer conn.Close()
 	store := false
-	_, err = conn.Turn(ctx, Request{Model: "m", Store: &store, PreviousResponseID: "resp_missing", Input: Input{UserText("x")}})
+	_, err = conn.Turn(ctx, Request{Model: "m", Store: &store, PreviousResponseID: "resp_missing", Input: Items{UserText("x")}})
 	var e *Error
 	if !errors.As(err, &e) || e.Code != CodePreviousResponseNotFound || e.StatusCode != 404 {
 		t.Fatalf("err = %v", err)
 	}
 	// The connection is still usable afterwards.
-	if _, err := conn.Turn(ctx, Request{Model: "m", Store: &store, Input: Input{UserText("recover")}}); err != nil {
+	if _, err := conn.Turn(ctx, Request{Model: "m", Store: &store, Input: Items{UserText("recover")}}); err != nil {
 		t.Fatalf("recovery turn: %v", err)
 	}
 }
@@ -123,7 +123,7 @@ func TestWebSocketReconnectLosesCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := conn.Turn(ctx, Request{Model: "m", Store: &store, Input: Input{UserText("x")}})
+	first, err := conn.Turn(ctx, Request{Model: "m", Store: &store, Input: Items{UserText("x")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestWebSocketReconnectLosesCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn2.Close()
-	_, err = conn2.Turn(ctx, Request{Model: "m", Store: &store, PreviousResponseID: first.ID, Input: Input{UserText("y")}})
+	_, err = conn2.Turn(ctx, Request{Model: "m", Store: &store, PreviousResponseID: first.ID, Input: Items{UserText("y")}})
 	if !errors.Is(err, &Error{Code: CodePreviousResponseNotFound}) {
 		t.Fatalf("err = %v", err)
 	}
@@ -149,15 +149,15 @@ func TestWebSocketFailedContinuationEvicts(t *testing.T) {
 	}
 	defer conn.Close()
 	store := false
-	first, err := conn.Turn(ctx, Request{Model: "m", Store: &store, Input: Input{UserText("x")}})
+	first, err := conn.Turn(ctx, Request{Model: "m", Store: &store, Input: Items{UserText("x")}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = conn.Turn(ctx, Request{Model: "m", Store: &store, PreviousResponseID: first.ID, Input: Input{NewFunctionCallOutput("call_missing", "no such call")}})
+	_, err = conn.Turn(ctx, Request{Model: "m", Store: &store, PreviousResponseID: first.ID, Input: Items{NewFunctionCallOutput("call_missing", "no such call")}})
 	if !IsInvalidRequest(err) {
 		t.Fatalf("expected invalid_request, got %v", err)
 	}
-	_, err = conn.Turn(ctx, Request{Model: "m", Store: &store, PreviousResponseID: first.ID, Input: Input{UserText("stale")}})
+	_, err = conn.Turn(ctx, Request{Model: "m", Store: &store, PreviousResponseID: first.ID, Input: Items{UserText("stale")}})
 	if !errors.Is(err, &Error{Code: CodePreviousResponseNotFound}) {
 		t.Fatalf("err = %v", err)
 	}

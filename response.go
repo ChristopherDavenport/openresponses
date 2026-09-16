@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/christopherdavenport/openresponses/internal/jsonx"
+	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
 )
 
 // ObjectResponse and ObjectCompaction are the "object" values of the two
@@ -137,12 +137,7 @@ func (r *Response) Clone() *Response {
 	if r.Tools != nil {
 		cp.Tools = append(Tools(nil), r.Tools...)
 	}
-	if r.Metadata != nil {
-		cp.Metadata = make(map[string]string, len(r.Metadata))
-		for k, v := range r.Metadata {
-			cp.Metadata[k] = v
-		}
-	}
+	cp.Metadata = cloneMap(r.Metadata)
 	if r.Extra != nil {
 		cp.Extra = make(map[string]any, len(r.Extra))
 		for k, v := range r.Extra {
@@ -154,7 +149,8 @@ func (r *Response) Clone() *Response {
 
 // NewResponse builds an in_progress response that echoes the request's
 // settings, as a server adapter would before generating output. The ID is
-// the caller's to set; CreatedAt is now.
+// the caller's to set; CreatedAt is now. Tools, tool choice, reasoning
+// and metadata are copied, so filling in defaults never alters req.
 func NewResponse(req Request) *Response {
 	resp := &Response{
 		Object:             ObjectResponse,
@@ -162,41 +158,104 @@ func NewResponse(req Request) *Response {
 		Status:             ResponseStatusInProgress,
 		Model:              req.Model,
 		Output:             Items{},
-		Tools:              req.Tools,
-		ToolChoice:         req.ToolChoice,
+		Tools:              cloneTools(req.Tools),
+		ToolChoice:         cloneToolChoice(req.ToolChoice),
 		Truncation:         req.Truncation,
 		ParallelToolCalls:  req.ParallelToolCalls == nil || *req.ParallelToolCalls,
-		Text:               req.Text,
+		Text:               cloneTextConfig(req.Text),
 		TopP:               derefOr(req.TopP, 1),
 		PresencePenalty:    derefOr(req.PresencePenalty, 0),
 		FrequencyPenalty:   derefOr(req.FrequencyPenalty, 0),
 		TopLogprobs:        derefOr(req.TopLogprobs, 0),
 		Temperature:        derefOr(req.Temperature, 1),
-		Reasoning:          req.Reasoning,
-		MaxOutputTokens:    req.MaxOutputTokens,
-		MaxToolCalls:       req.MaxToolCalls,
+		Reasoning:          &ReasoningConfig{},
+		MaxOutputTokens:    cloneptr(req.MaxOutputTokens),
+		MaxToolCalls:       cloneptr(req.MaxToolCalls),
 		Store:              req.Stored(),
 		Background:         req.Background,
 		ServiceTier:        req.ServiceTier,
-		Metadata:           req.Metadata,
+		Metadata:           cloneMap(req.Metadata),
 		PreviousResponseID: nilIfEmpty(req.PreviousResponseID),
 		Instructions:       nilIfEmpty(req.Instructions),
 		SafetyIdentifier:   nilIfEmpty(req.SafetyIdentifier),
 		PromptCacheKey:     nilIfEmpty(req.PromptCacheKey),
 	}
-	if resp.Tools == nil {
-		resp.Tools = Tools{}
-	}
-	for _, tool := range resp.Tools {
-		if ft, ok := tool.(*FunctionTool); ok && ft.Strict == nil {
-			strict := false
-			ft.Strict = &strict
-		}
-	}
-	if resp.Reasoning == nil {
-		resp.Reasoning = &ReasoningConfig{}
+	if req.Reasoning != nil {
+		*resp.Reasoning = *req.Reasoning
 	}
 	return resp
+}
+
+// cloneTools copies the slice and every function tool so that the
+// resource-form defaults (strict present) do not leak into the request.
+// Other tool types are shared; they are treated as immutable.
+func cloneTools(tools Tools) Tools {
+	out := make(Tools, len(tools))
+	for i, tool := range tools {
+		ft, ok := tool.(*FunctionTool)
+		if !ok {
+			out[i] = tool
+			continue
+		}
+		cp := *ft
+		if cp.Parameters != nil {
+			cp.Parameters = append(json.RawMessage(nil), ft.Parameters...)
+		}
+		if cp.Strict == nil {
+			strict := false
+			cp.Strict = &strict
+		} else {
+			cp.Strict = cloneptr(ft.Strict)
+		}
+		out[i] = &cp
+	}
+	return out
+}
+
+func cloneToolChoice(tc ToolChoice) ToolChoice {
+	out := ToolChoice{Mode: tc.Mode}
+	if tc.Function != nil {
+		fn := *tc.Function
+		out.Function = &fn
+	}
+	if tc.Allowed != nil {
+		allowed := *tc.Allowed
+		allowed.Tools = append([]ToolReference(nil), tc.Allowed.Tools...)
+		out.Allowed = &allowed
+	}
+	return out
+}
+
+func cloneTextConfig(tc TextConfig) TextConfig {
+	out := TextConfig{Verbosity: tc.Verbosity}
+	if tc.Format != nil {
+		format := *tc.Format
+		if format.Schema != nil {
+			format.Schema = append(json.RawMessage(nil), tc.Format.Schema...)
+		}
+		format.Strict = cloneptr(tc.Format.Strict)
+		out.Format = &format
+	}
+	return out
+}
+
+func cloneMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneptr[T any](p *T) *T {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
 }
 
 func derefOr[T any](p *T, def T) T {

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/christopherdavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses"
 )
 
 func main() {
@@ -18,7 +18,7 @@ func main() {
 
 	resp, err := client.Create(context.Background(), openresponses.Request{
 		Model: env("OPENRESPONSES_MODEL", "gpt-5"),
-		Input: openresponses.Input{openresponses.UserText("Say hello in exactly three words.")},
+		Input: openresponses.Items{openresponses.UserText("Say hello in exactly three words.")},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

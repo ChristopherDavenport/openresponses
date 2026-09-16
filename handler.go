@@ -154,7 +154,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(p, "/responses"):
 		h.serveResponses(w, r)
 	default:
-		writeError(w, &Error{StatusCode: http.StatusNotFound, Type: ErrorTypeNotFound, Code: "not_found", Message: "no such endpoint"})
+		writeError(w, NotFound("not_found", "no such endpoint", ""))
 	}
 }
 

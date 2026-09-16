@@ -169,9 +169,33 @@ func InvalidRequest(code, message, param string) *Error {
 	return &Error{Type: ErrorTypeInvalidRequest, Code: code, Message: message, Param: param}
 }
 
-// NotFound builds a not_found error.
-func NotFound(code, message string) *Error {
-	return &Error{Type: ErrorTypeNotFound, Code: code, Message: message}
+// NotFound builds a not_found error. param names the field that referred
+// to the missing resource and may be empty.
+func NotFound(code, message, param string) *Error {
+	return &Error{Type: ErrorTypeNotFound, Code: code, Message: message, Param: param}
+}
+
+// PreviousResponseNotFound builds the not_found error the spec defines
+// for an unavailable previous_response_id.
+func PreviousResponseNotFound(id string) *Error {
+	return NotFound(CodePreviousResponseNotFound,
+		fmt.Sprintf("previous response %q is not available", id), "previous_response_id")
+}
+
+// TooManyRequests builds a too_many_requests error.
+func TooManyRequests(code, message string) *Error {
+	return &Error{Type: ErrorTypeTooManyRequests, Code: code, Message: message}
+}
+
+// ModelError builds a model_error, for failures reported by the model
+// provider.
+func ModelError(code, message string) *Error {
+	return &Error{Type: ErrorTypeModelError, Code: code, Message: message}
+}
+
+// ServerError builds a server_error.
+func ServerError(code, message string) *Error {
+	return &Error{Type: ErrorTypeServerError, Code: code, Message: message}
 }
 
 // errorEnvelope is the body of a non-2xx HTTP response.

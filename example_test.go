@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/christopherdavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses"
 )
 
 func ExampleRequest() {
 	req := openresponses.Request{
 		Model: "gpt-5",
-		Input: openresponses.Input{
+		Input: openresponses.Items{
 			openresponses.SystemText("Be brief."),
 			openresponses.UserText("Hello"),
 		},

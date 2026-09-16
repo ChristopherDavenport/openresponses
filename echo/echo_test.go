@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/christopherdavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses"
 )
 
 func TestEchoMessage(t *testing.T) {
 	a := &Adapter{}
-	resp, err := a.Create(context.Background(), openresponses.Request{Model: "m", Input: openresponses.Input{
+	resp, err := a.Create(context.Background(), openresponses.Request{Model: "m", Input: openresponses.Items{
 		openresponses.SystemText("be a pirate"),
 		openresponses.UserText("say hello"),
 	}})
@@ -32,7 +32,7 @@ func TestEchoMessage(t *testing.T) {
 func TestEchoToolCall(t *testing.T) {
 	a := &Adapter{}
 	tool := openresponses.NewFunctionTool("get_weather", "", json.RawMessage(`{"type":"object","required":["location"]}`))
-	req := openresponses.Request{Model: "m", Tools: openresponses.Tools{tool}, Input: openresponses.Input{openresponses.UserText("SF")}}
+	req := openresponses.Request{Model: "m", Tools: openresponses.Tools{tool}, Input: openresponses.Items{openresponses.UserText("SF")}}
 	resp, err := a.Create(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestEchoToolCall(t *testing.T) {
 		t.Errorf("text = %q", resp.OutputText())
 	}
 	// tool_choice none suppresses calls.
-	req.Input = openresponses.Input{openresponses.UserText("hi")}
+	req.Input = openresponses.Items{openresponses.UserText("hi")}
 	req.ToolChoice = openresponses.ToolChoice{Mode: openresponses.ToolChoiceNone}
 	resp, err = a.Create(context.Background(), req)
 	if err != nil {
@@ -64,7 +64,7 @@ func TestEchoToolCall(t *testing.T) {
 
 func TestEchoCompactRoundTrip(t *testing.T) {
 	a := &Adapter{}
-	compact, err := a.Compact(context.Background(), openresponses.CompactRequest{Model: "m", Input: openresponses.Input{
+	compact, err := a.Compact(context.Background(), openresponses.CompactRequest{Model: "m", Input: openresponses.Items{
 		openresponses.UserText("code word: slate"),
 		openresponses.AssistantText("OK"),
 	}})
@@ -74,14 +74,14 @@ func TestEchoCompactRoundTrip(t *testing.T) {
 	if compact.Object != openresponses.ObjectCompaction || len(compact.Output) != 1 {
 		t.Fatalf("compact = %+v", compact)
 	}
-	resp, err := a.Create(context.Background(), openresponses.Request{Model: "m", Input: append(openresponses.Input(compact.Output), openresponses.UserText("what was it?"))})
+	resp, err := a.Create(context.Background(), openresponses.Request{Model: "m", Input: append(compact.Output, openresponses.UserText("what was it?"))})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resp.OutputText() != "what was it?" {
 		t.Errorf("text = %q", resp.OutputText())
 	}
-	_, err = a.Create(context.Background(), openresponses.Request{Model: "m", Input: openresponses.Input{&openresponses.Compaction{EncryptedContent: "not ours"}}})
+	_, err = a.Create(context.Background(), openresponses.Request{Model: "m", Input: openresponses.Items{&openresponses.Compaction{EncryptedContent: "not ours"}}})
 	if !openresponses.IsInvalidRequest(err) {
 		t.Errorf("foreign compaction: %v", err)
 	}

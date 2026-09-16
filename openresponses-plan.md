@@ -359,7 +359,7 @@ depends on 5.
 
 ## 9. Decisions still open
 
-- **Module path.** Standalone `github.com/christopherdavenport/openresponses`
+- **Module path.** Standalone `github.com/ChristopherDavenport/openresponses`
   versus an `openresponses/` package inside `dex`. The package has no dependency
   on dex, so standalone is the default unless dex is meant to stay a monorepo.
 - **Server side in v1 or not.** If dex is client-only today, phases 5 and 6

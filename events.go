@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/christopherdavenport/openresponses/internal/jsonx"
+	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
 )
 
 // StreamEvent is one event in a Server-Sent Events or WebSocket stream.

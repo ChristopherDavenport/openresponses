@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/christopherdavenport/openresponses/internal/jsonx"
+	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
 )
 
 // Item is one entry in a request input or a response output. Concrete
@@ -15,11 +15,27 @@ type Item interface {
 	ItemType() string
 }
 
-// Items is a list of items that decodes through the item registry.
+// Items is a list of items that decodes through the item registry. It is
+// used for request input, response output and stored conversations
+// alike. A request's input may be a bare string on the wire, which
+// decodes as one user message; Items always marshals as an array.
 type Items []Item
 
-// UnmarshalJSON decodes each element through [UnmarshalItem].
+// UnmarshalJSON decodes each element through [UnmarshalItem]. A JSON
+// string decodes as a single user message and null as a nil slice.
 func (it *Items) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		*it = nil
+		return nil
+	}
+	if data[0] == '"' {
+		var s string
+		if err := json.Unmarshal(data, &s); err != nil {
+			return err
+		}
+		*it = Items{UserText(s)}
+		return nil
+	}
 	var raws []json.RawMessage
 	if err := json.Unmarshal(data, &raws); err != nil {
 		return err

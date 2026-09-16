@@ -10,7 +10,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/christopherdavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses"
 )
 
 type reverser struct {
@@ -67,7 +67,7 @@ func (reverser) CreateStream(_ context.Context, req openresponses.Request, sink 
 	return sink.Send(&openresponses.ResponseCompletedEvent{Response: resp})
 }
 
-func lastUserText(items openresponses.Input) string {
+func lastUserText(items openresponses.Items) string {
 	for i := len(items) - 1; i >= 0; i-- {
 		if m, ok := items[i].(*openresponses.Message); ok && m.Role == openresponses.RoleUser {
 			return m.Text()

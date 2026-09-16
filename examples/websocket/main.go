@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/christopherdavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses"
 )
 
 func main() {
@@ -27,7 +27,7 @@ func main() {
 	first, err := conn.Turn(ctx, openresponses.Request{
 		Model: model,
 		Store: &store,
-		Input: openresponses.Input{openresponses.UserText("Remember the code word: cobalt. Reply with OK.")},
+		Input: openresponses.Items{openresponses.UserText("Remember the code word: cobalt. Reply with OK.")},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -39,7 +39,7 @@ func main() {
 		Model:              model,
 		Store:              &store,
 		PreviousResponseID: first.ID,
-		Input:              openresponses.Input{openresponses.UserText("What is the code word?")},
+		Input:              openresponses.Items{openresponses.UserText("What is the code word?")},
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

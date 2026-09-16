@@ -36,7 +36,7 @@ func TestClientCreate(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL+"/v1/", WithAPIKey("k"), WithHeader("X-Extra", "1"), WithUserAgent("t/1"))
-	resp, err := c.Create(context.Background(), Request{Model: "m", Input: Input{UserText("hi")}})
+	resp, err := c.Create(context.Background(), Request{Model: "m", Input: Items{UserText("hi")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestClientCreateStream(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewClient(srv.URL)
-	stream, err := c.CreateStream(context.Background(), Request{Model: "m", Input: Input{UserText("hi")}})
+	stream, err := c.CreateStream(context.Background(), Request{Model: "m", Input: Items{UserText("hi")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestClientCompact(t *testing.T) {
 		writeJSON(w, http.StatusOK, &CompactResponse{ID: "c", CreatedAt: 1, Output: Items{&Compaction{ID: "cmp", EncryptedContent: "e"}}})
 	}))
 	defer srv.Close()
-	resp, err := NewClient(srv.URL).Compact(context.Background(), CompactRequest{Model: "m", Input: Input{UserText("x")}})
+	resp, err := NewClient(srv.URL).Compact(context.Background(), CompactRequest{Model: "m", Input: Items{UserText("x")}})
 	if err != nil {
 		t.Fatal(err)
 	}
