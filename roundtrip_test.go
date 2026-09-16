@@ -95,7 +95,7 @@ func TestRoundTripResponse(t *testing.T) {
 	if _, ok := resp.Output[5].(*UnknownItem); !ok {
 		t.Errorf("output[5] = %T", resp.Output[5])
 	}
-	if resp.Reasoning == nil || resp.Reasoning.Effort != ReasoningEffortHigh || resp.Reasoning.Summary != "" {
+	if resp.Reasoning.Effort != ReasoningEffortHigh || resp.Reasoning.Summary != "" {
 		t.Errorf("reasoning = %+v", resp.Reasoning)
 	}
 	out, err := json.Marshal(resp)

@@ -2,6 +2,7 @@ package openresponses
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"iter"
@@ -200,7 +201,9 @@ func (a *Accumulator) Response() *Response {
 	return a.resp
 }
 
-// Add applies one event. Unknown events are ignored.
+// Add applies one event. Unknown events are ignored. Items and parts
+// carried by *.added events are copied, so the accumulator never mutates
+// the producer's objects when it applies later deltas.
 func (a *Accumulator) Add(ev StreamEvent) {
 	switch e := ev.(type) {
 	case *ResponseCreatedEvent:
@@ -216,11 +219,11 @@ func (a *Accumulator) Add(ev StreamEvent) {
 	case *ResponseIncompleteEvent:
 		a.setResponse(e.Response)
 	case *OutputItemAddedEvent:
-		a.setItem(e.OutputIndex, e.Item)
+		a.setItem(e.OutputIndex, cloneItem(e.Item))
 	case *OutputItemDoneEvent:
 		a.setItem(e.OutputIndex, e.Item)
 	case *ContentPartAddedEvent:
-		a.setPart(e.OutputIndex, e.ContentIndex, e.Part)
+		a.setPart(e.OutputIndex, e.ContentIndex, cloneContent(e.Part))
 	case *ContentPartDoneEvent:
 		a.setPart(e.OutputIndex, e.ContentIndex, e.Part)
 	case *OutputTextDeltaEvent:
@@ -252,7 +255,7 @@ func (a *Accumulator) Add(ev StreamEvent) {
 			fc.Arguments = e.Arguments
 		}
 	case *ReasoningSummaryPartAddedEvent:
-		a.setSummaryPart(e.OutputIndex, e.SummaryIndex, e.Part)
+		a.setSummaryPart(e.OutputIndex, e.SummaryIndex, cloneContent(e.Part))
 	case *ReasoningSummaryPartDoneEvent:
 		a.setSummaryPart(e.OutputIndex, e.SummaryIndex, e.Part)
 	case *ReasoningSummaryTextDeltaEvent:
@@ -375,4 +378,37 @@ func (a *Accumulator) reasoningPart(idx, cidx int) Content {
 		r.Content = append(r.Content, &ReasoningText{})
 	}
 	return r.Content[cidx]
+}
+
+// cloneItem deep-copies an item through its wire form. On a decode
+// failure the original is returned; the item was produced by this
+// package's own types so that does not happen in practice.
+func cloneItem(item Item) Item {
+	if item == nil {
+		return nil
+	}
+	data, err := json.Marshal(item)
+	if err != nil {
+		return item
+	}
+	cp, err := UnmarshalItem(data)
+	if err != nil {
+		return item
+	}
+	return cp
+}
+
+func cloneContent(part Content) Content {
+	if part == nil {
+		return nil
+	}
+	data, err := json.Marshal(part)
+	if err != nil {
+		return part
+	}
+	cp, err := UnmarshalContent(data)
+	if err != nil {
+		return part
+	}
+	return cp
 }

@@ -39,7 +39,7 @@ type Response struct {
 	FrequencyPenalty   float64            `json:"frequency_penalty"`
 	TopLogprobs        int                `json:"top_logprobs"`
 	Temperature        float64            `json:"temperature"`
-	Reasoning          *ReasoningConfig   `json:"reasoning"`
+	Reasoning          ReasoningConfig    `json:"reasoning"`
 	Usage              *Usage             `json:"usage"`
 	MaxOutputTokens    *int               `json:"max_output_tokens"`
 	MaxToolCalls       *int               `json:"max_tool_calls"`
@@ -168,7 +168,7 @@ func NewResponse(req Request) *Response {
 		FrequencyPenalty:   derefOr(req.FrequencyPenalty, 0),
 		TopLogprobs:        derefOr(req.TopLogprobs, 0),
 		Temperature:        derefOr(req.Temperature, 1),
-		Reasoning:          &ReasoningConfig{},
+		Reasoning:          req.Reasoning,
 		MaxOutputTokens:    cloneptr(req.MaxOutputTokens),
 		MaxToolCalls:       cloneptr(req.MaxToolCalls),
 		Store:              req.Stored(),
@@ -180,10 +180,30 @@ func NewResponse(req Request) *Response {
 		SafetyIdentifier:   nilIfEmpty(req.SafetyIdentifier),
 		PromptCacheKey:     nilIfEmpty(req.PromptCacheKey),
 	}
-	if req.Reasoning != nil {
-		*resp.Reasoning = *req.Reasoning
-	}
 	return resp
+}
+
+// Complete marks the response completed as of now.
+func (r *Response) Complete() {
+	r.Status = ResponseStatusCompleted
+	now := time.Now().Unix()
+	r.CompletedAt = &now
+}
+
+// Incomplete marks the response incomplete as of now with the given
+// reason.
+func (r *Response) Incomplete(reason IncompleteReason) {
+	r.Status = ResponseStatusIncomplete
+	r.IncompleteDetails = &IncompleteDetails{Reason: reason}
+	now := time.Now().Unix()
+	r.CompletedAt = &now
+}
+
+// Fail marks the response failed and records err in the error field.
+func (r *Response) Fail(err error) {
+	r.Status = ResponseStatusFailed
+	payload := AsError(err).Payload()
+	r.Error = &payload
 }
 
 // cloneTools copies the slice and every function tool so that the
@@ -290,12 +310,14 @@ type OutputTokensDetails struct {
 }
 
 // CompactResponse is the resource returned by POST /responses/compact.
+// Usage is a pointer to match [Response]; the spec requires the key, so
+// a nil Usage is emitted as zero counts.
 type CompactResponse struct {
 	ID        string `json:"id"`
 	Object    string `json:"object"`
 	Output    Items  `json:"output"`
 	CreatedAt int64  `json:"created_at"`
-	Usage     Usage  `json:"usage"`
+	Usage     *Usage `json:"usage"`
 
 	// Extra holds top-level keys not defined by the spec.
 	Extra map[string]any `json:"-"`
@@ -309,6 +331,9 @@ func (r CompactResponse) MarshalJSON() ([]byte, error) {
 	cp.Object = ObjectCompaction
 	if cp.Output == nil {
 		cp.Output = Items{}
+	}
+	if cp.Usage == nil {
+		cp.Usage = &Usage{}
 	}
 	return jsonx.MarshalWithExtra(cp, r.Extra)
 }

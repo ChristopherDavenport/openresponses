@@ -208,13 +208,17 @@ func (t TextConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(cp)
 }
 
-// ReasoningConfig is the "reasoning" field of a request or response. Both
-// members are emitted, as null when empty, because the resource form
-// requires them.
+// ReasoningConfig is the "reasoning" field of a request or response. The
+// zero value means "not configured": it is omitted from requests and
+// emitted as {"effort":null,"summary":null} on responses, and a null on
+// the wire decodes to it.
 type ReasoningConfig struct {
 	Effort  ReasoningEffort
 	Summary ReasoningSummary
 }
+
+// IsZero reports whether neither effort nor summary is set.
+func (r ReasoningConfig) IsZero() bool { return r.Effort == "" && r.Summary == "" }
 
 // MarshalJSON emits effort and summary, using null for empty values.
 func (r ReasoningConfig) MarshalJSON() ([]byte, error) {
@@ -226,6 +230,10 @@ func (r ReasoningConfig) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON decodes effort and summary, treating null as empty.
 func (r *ReasoningConfig) UnmarshalJSON(data []byte) error {
+	*r = ReasoningConfig{}
+	if len(data) == 0 || string(data) == "null" {
+		return nil
+	}
 	var aux struct {
 		Effort  *ReasoningEffort  `json:"effort"`
 		Summary *ReasoningSummary `json:"summary"`
@@ -233,7 +241,6 @@ func (r *ReasoningConfig) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
-	*r = ReasoningConfig{}
 	if aux.Effort != nil {
 		r.Effort = *aux.Effort
 	}

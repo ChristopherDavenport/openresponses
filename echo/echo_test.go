@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ChristopherDavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses/streamtest"
 )
 
 func TestEchoMessage(t *testing.T) {
@@ -84,5 +85,30 @@ func TestEchoCompactRoundTrip(t *testing.T) {
 	_, err = a.Create(context.Background(), openresponses.Request{Model: "m", Input: openresponses.Items{&openresponses.Compaction{EncryptedContent: "not ours"}}})
 	if !openresponses.IsInvalidRequest(err) {
 		t.Errorf("foreign compaction: %v", err)
+	}
+}
+
+func TestEchoStreamIsWellOrdered(t *testing.T) {
+	a := &Adapter{}
+	for name, req := range map[string]openresponses.Request{
+		"message": {Model: "m", Input: openresponses.Items{openresponses.UserText("hi there")}},
+		"tool":    {Model: "m", Input: openresponses.Items{openresponses.UserText("SF")}, Tools: openresponses.Tools{openresponses.NewFunctionTool("f", "", nil)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			sink, err := streamtest.Run(context.Background(), a, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sink.Response().Usage == nil {
+				t.Error("usage missing")
+			}
+		})
+	}
+}
+
+func TestEchoCompactRejectsPreviousResponseID(t *testing.T) {
+	_, err := (&Adapter{}).Compact(context.Background(), openresponses.CompactRequest{Model: "m", PreviousResponseID: "resp_x"})
+	if !openresponses.IsNotFound(err) {
+		t.Errorf("err = %v", err)
 	}
 }

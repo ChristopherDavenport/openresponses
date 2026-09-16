@@ -81,13 +81,46 @@ type Adapter interface {
 http.Handle("/v1/", openresponses.NewHandler(myAdapter))
 ```
 
+Streaming adapters should not hand-roll the item lifecycle. `Emitter`
+owns the bookend events, indices, item IDs and the response snapshot;
+adapters only supply content:
+
+```go
+func (a *myAdapter) CreateStream(ctx context.Context, req openresponses.Request, sink openresponses.EventSink) error {
+    em := openresponses.NewEmitter(sink, openresponses.NewResponse(req))
+    msg, err := em.Message(openresponses.PhaseFinalAnswer)
+    if err != nil {
+        return err
+    }
+    for delta := range upstream {
+        if err := msg.Text(delta); err != nil {
+            return err
+        }
+    }
+    em.Response().Usage = &usage
+    return em.Complete() // closes the message, sends response.completed
+}
+```
+
+`Emitter.FunctionCall`, `Emitter.Reasoning` and `Emitter.Item` cover the
+other item kinds. To fail a response, return an error; the handler emits
+the error event and `response.failed` with the right transport
+semantics, and forwards any `Error.Headers` (for example `Retry-After`
+from an upstream 429) to the HTTP response and the error payload.
+
 `CollectStream` derives `Create` from `CreateStream`, and the
 `UnsupportedStreaming` and `UnsupportedCompaction` types can be embedded
 to decline what you do not implement. `NewResponse(req)` builds a
 spec-shaped response that echoes the request's settings, `NewID` mints
 identifiers, and `InvalidRequest`, `NotFound`, `PreviousResponseNotFound`,
 `TooManyRequests`, `ModelError` and `ServerError` build the errors the
-handler maps to the right envelope. See `examples/server` and the `echo` package.
+handler maps to the right envelope. Resolving `previous_response_id` on
+`/responses/compact` is the adapter's job; the library is stateless over
+HTTP.
+
+The `streamtest` package unit-tests an adapter's stream without a
+server: `streamtest.Run` records the events, validates the item
+lifecycle ordering, and returns the folded response. See `examples/server` and the `echo` package.
 
 The handler:
 
@@ -135,9 +168,11 @@ handler and WebSocket transport with in-process servers.
 | `errors.go` | `Error`, `ErrorPayload`, error types and codes |
 | `events.go` | the 24 streaming events, `ErrorEvent`, `UnknownEvent`, `DecodeEvent` |
 | `sse.go`, `stream.go` | SSE framing, `EventStream`, `Accumulator` |
+| `emitter.go` | `Emitter` and the item writers for streaming adapters |
 | `client.go` | `Client` |
 | `handler.go` | `Handler`, `Adapter`, `EventSink` |
 | `websocket.go` | WebSocket server session and `WebSocketConn` |
+| `streamtest/` | recording sink and stream validator for adapter tests |
 | `echo/` | deterministic adapter used by the compliance run |
 | `cmd/openresponses-echo` | server binary for the compliance run |
 

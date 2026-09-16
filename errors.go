@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // ErrorType classifies an error on the wire and maps to an HTTP status.
@@ -101,8 +102,10 @@ type Error struct {
 	Message    string
 	Param      string
 
-	// Headers holds the response headers when the error came from an
-	// HTTP response.
+	// Headers are HTTP headers attached to the error. On the client they
+	// are the response headers. On the server they are written to the
+	// HTTP response and carried in the error event payload, so an adapter
+	// can forward Retry-After from an upstream 429.
 	Headers http.Header
 	// Body holds the raw response body when it was not a spec envelope.
 	Body []byte
@@ -135,7 +138,34 @@ func (e *Error) Payload() ErrorPayload {
 	if typ == "" {
 		typ = ErrorTypeServerError
 	}
-	return ErrorPayload{Type: typ, Code: e.Code, Message: e.Message, Param: e.Param}
+	payload := ErrorPayload{Type: typ, Code: e.Code, Message: e.Message, Param: e.Param}
+	if len(e.Headers) > 0 {
+		payload.Headers = make(map[string]string, len(e.Headers))
+		for k, vs := range e.Headers {
+			payload.Headers[k] = strings.Join(vs, ", ")
+		}
+	}
+	return payload
+}
+
+// WithHeader returns e with the header added, for chaining:
+//
+//	return openresponses.TooManyRequests("rate_limited", msg).WithHeader("Retry-After", "30")
+func (e *Error) WithHeader(name, value string) *Error {
+	if e.Headers == nil {
+		e.Headers = http.Header{}
+	}
+	e.Headers.Add(name, value)
+	return e
+}
+
+// Err converts a wire payload into an *Error.
+func (p ErrorPayload) Err(status int) *Error {
+	e := &Error{StatusCode: status, Type: p.Type, Code: p.Code, Message: p.Message, Param: p.Param}
+	for k, v := range p.Headers {
+		e.WithHeader(k, v)
+	}
+	return e
 }
 
 // Is reports whether target is an *Error with the same Type and, when

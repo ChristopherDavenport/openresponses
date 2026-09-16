@@ -22,49 +22,18 @@ func (r reverser) Create(ctx context.Context, req openresponses.Request) (*openr
 }
 
 func (reverser) CreateStream(_ context.Context, req openresponses.Request, sink openresponses.EventSink) error {
-	resp := openresponses.NewResponse(req)
-	resp.ID = openresponses.NewID("resp")
-	if err := sink.Send(&openresponses.ResponseCreatedEvent{Response: resp}); err != nil {
+	em := openresponses.NewEmitter(sink, openresponses.NewResponse(req))
+	msg, err := em.Message(openresponses.PhaseFinalAnswer)
+	if err != nil {
 		return err
 	}
-
-	text := reverse(lastUserText(req.Input))
-	msg := &openresponses.Message{
-		ID:     openresponses.NewID("msg"),
-		Status: openresponses.StatusInProgress,
-		Role:   openresponses.RoleAssistant,
-		Phase:  openresponses.PhaseFinalAnswer,
-	}
-	if err := sink.Send(&openresponses.OutputItemAddedEvent{Item: msg}); err != nil {
-		return err
-	}
-	if err := sink.Send(&openresponses.ContentPartAddedEvent{ItemID: msg.ID, Part: &openresponses.OutputText{}}); err != nil {
-		return err
-	}
-	for _, r := range text {
-		if err := sink.Send(&openresponses.OutputTextDeltaEvent{ItemID: msg.ID, Delta: string(r)}); err != nil {
+	for _, r := range reverse(lastUserText(req.Input)) {
+		if err := msg.Text(string(r)); err != nil {
 			return err
 		}
 	}
-	part := &openresponses.OutputText{Text: text}
-	if err := sink.Send(&openresponses.OutputTextDoneEvent{ItemID: msg.ID, Text: text}); err != nil {
-		return err
-	}
-	if err := sink.Send(&openresponses.ContentPartDoneEvent{ItemID: msg.ID, Part: part}); err != nil {
-		return err
-	}
-	msg.Content = openresponses.Contents{part}
-	msg.Status = openresponses.StatusCompleted
-	if err := sink.Send(&openresponses.OutputItemDoneEvent{Item: msg}); err != nil {
-		return err
-	}
-
-	resp.Output = openresponses.Items{msg}
-	resp.Status = openresponses.ResponseStatusCompleted
-	now := time.Now().Unix()
-	resp.CompletedAt = &now
-	resp.Usage = &openresponses.Usage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}
-	return sink.Send(&openresponses.ResponseCompletedEvent{Response: resp})
+	em.Response().Usage = &openresponses.Usage{InputTokens: 1, OutputTokens: 1, TotalTokens: 2}
+	return em.Complete()
 }
 
 func lastUserText(items openresponses.Items) string {

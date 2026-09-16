@@ -28,7 +28,7 @@ type Request struct {
 	Background         bool              `json:"background,omitempty"`
 	MaxOutputTokens    *int              `json:"max_output_tokens,omitempty"`
 	MaxToolCalls       *int              `json:"max_tool_calls,omitempty"`
-	Reasoning          *ReasoningConfig  `json:"reasoning,omitempty"`
+	Reasoning          ReasoningConfig   `json:"reasoning,omitzero"`
 	SafetyIdentifier   string            `json:"safety_identifier,omitempty"`
 	PromptCacheKey     string            `json:"prompt_cache_key,omitempty"`
 	Truncation         Truncation        `json:"truncation,omitempty"`
@@ -60,6 +60,16 @@ func (r *Request) UnmarshalJSON(data []byte) error {
 	*r = Request(p)
 	r.Extra = extra
 	return nil
+}
+
+// Includes reports whether inc appears in the include list.
+func (r Request) Includes(inc Include) bool {
+	for _, v := range r.Include {
+		if v == inc {
+			return true
+		}
+	}
+	return false
 }
 
 // Stored reports the effective value of store, which defaults to true.
@@ -163,7 +173,11 @@ func validateMessage(m *Message, param string) error {
 	return nil
 }
 
-// CompactRequest is the body of POST /responses/compact.
+// CompactRequest is the body of POST /responses/compact. When
+// PreviousResponseID is set the conversation to compact is the stored
+// one it names plus Input; nothing in this package expands it, so a
+// server adapter must resolve it or reject it with
+// [PreviousResponseNotFound].
 type CompactRequest struct {
 	Model              string `json:"model,omitempty"`
 	Input              Items  `json:"input,omitempty"`

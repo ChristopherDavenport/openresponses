@@ -29,40 +29,57 @@ func (a *Adapter) Create(ctx context.Context, req openresponses.Request) (*openr
 }
 
 // CreateStream streams the canned response to sink.
-func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, sink openresponses.EventSink) error {
+func (a *Adapter) CreateStream(_ context.Context, req openresponses.Request, sink openresponses.EventSink) error {
 	input, err := expandCompactions(req.Input)
 	if err != nil {
 		return err
 	}
-	resp := openresponses.NewResponse(req)
-	resp.ID = openresponses.NewID("resp")
-	if err := sink.Send(&openresponses.ResponseCreatedEvent{Response: resp}); err != nil {
-		return err
-	}
-	if err := sink.Send(&openresponses.ResponseInProgressEvent{Response: resp}); err != nil {
-		return err
-	}
+	em := openresponses.NewEmitter(sink, openresponses.NewResponse(req))
 
 	var item openresponses.Item
 	if tool, ok := pendingTool(req, input); ok {
-		item, err = a.streamFunctionCall(sink, resp, tool, input)
+		call, err := em.FunctionCall("", tool.Name)
+		if err != nil {
+			return err
+		}
+		if err := call.Arguments(arguments(tool, lastUserText(input))); err != nil {
+			return err
+		}
+		if err := call.Close(); err != nil {
+			return err
+		}
+		item = call.Item()
 	} else {
-		item, err = a.streamMessage(sink, resp, reply(input))
+		phase := a.Phase
+		if phase == "" {
+			phase = openresponses.PhaseFinalAnswer
+		}
+		msg, err := em.Message(phase)
+		if err != nil {
+			return err
+		}
+		for _, chunk := range chunks(reply(input)) {
+			if err := msg.Text(chunk); err != nil {
+				return err
+			}
+		}
+		if err := msg.Close(); err != nil {
+			return err
+		}
+		item = msg.Item()
 	}
-	if err != nil {
-		return err
-	}
-	resp.Output = openresponses.Items{item}
-	resp.Status = openresponses.ResponseStatusCompleted
-	now := time.Now().Unix()
-	resp.CompletedAt = &now
 	u := usage(input, item)
-	resp.Usage = &u
-	return sink.Send(&openresponses.ResponseCompletedEvent{Response: resp})
+	em.Response().Usage = &u
+	return em.Complete()
 }
 
-// Compact encodes the conversation into a single compaction item.
+// Compact encodes the conversation into a single compaction item. The
+// adapter is stateless, so a previous_response_id cannot be resolved and
+// is rejected.
 func (a *Adapter) Compact(_ context.Context, req openresponses.CompactRequest) (*openresponses.CompactResponse, error) {
+	if req.PreviousResponseID != "" {
+		return nil, openresponses.PreviousResponseNotFound(req.PreviousResponseID)
+	}
 	input, err := expandCompactions(req.Input)
 	if err != nil {
 		return nil, err
@@ -76,77 +93,14 @@ func (a *Adapter) Compact(_ context.Context, req openresponses.CompactRequest) (
 		EncryptedContent: base64.StdEncoding.EncodeToString(encoded),
 		CreatedBy:        "echo",
 	}
+	u := usage(input, item)
 	return &openresponses.CompactResponse{
 		ID:        openresponses.NewID("resp"),
 		Object:    openresponses.ObjectCompaction,
 		Output:    openresponses.Items{item},
 		CreatedAt: time.Now().Unix(),
-		Usage:     usage(input, item),
+		Usage:     &u,
 	}, nil
-}
-
-func (a *Adapter) streamMessage(sink openresponses.EventSink, resp *openresponses.Response, text string) (openresponses.Item, error) {
-	phase := a.Phase
-	if phase == "" {
-		phase = openresponses.PhaseFinalAnswer
-	}
-	msg := &openresponses.Message{
-		ID:      openresponses.NewID("msg"),
-		Status:  openresponses.StatusInProgress,
-		Role:    openresponses.RoleAssistant,
-		Phase:   phase,
-		Content: openresponses.Contents{},
-	}
-	if err := sink.Send(&openresponses.OutputItemAddedEvent{Item: msg}); err != nil {
-		return nil, err
-	}
-	part := &openresponses.OutputText{}
-	if err := sink.Send(&openresponses.ContentPartAddedEvent{ItemID: msg.ID, Part: part}); err != nil {
-		return nil, err
-	}
-	for _, chunk := range chunks(text) {
-		if err := sink.Send(&openresponses.OutputTextDeltaEvent{ItemID: msg.ID, Delta: chunk}); err != nil {
-			return nil, err
-		}
-	}
-	part.Text = text
-	if err := sink.Send(&openresponses.OutputTextDoneEvent{ItemID: msg.ID, Text: text}); err != nil {
-		return nil, err
-	}
-	if err := sink.Send(&openresponses.ContentPartDoneEvent{ItemID: msg.ID, Part: part}); err != nil {
-		return nil, err
-	}
-	msg.Content = openresponses.Contents{part}
-	msg.Status = openresponses.StatusCompleted
-	if err := sink.Send(&openresponses.OutputItemDoneEvent{Item: msg}); err != nil {
-		return nil, err
-	}
-	return msg, nil
-}
-
-func (a *Adapter) streamFunctionCall(sink openresponses.EventSink, resp *openresponses.Response, tool *openresponses.FunctionTool, input []openresponses.Item) (openresponses.Item, error) {
-	args := arguments(tool, lastUserText(input))
-	call := &openresponses.FunctionCall{
-		ID:     openresponses.NewID("fc"),
-		Status: openresponses.StatusInProgress,
-		CallID: openresponses.NewID("call"),
-		Name:   tool.Name,
-	}
-	if err := sink.Send(&openresponses.OutputItemAddedEvent{Item: call}); err != nil {
-		return nil, err
-	}
-	if err := sink.Send(&openresponses.FunctionCallArgumentsDeltaEvent{ItemID: call.ID, Delta: args}); err != nil {
-		return nil, err
-	}
-	if err := sink.Send(&openresponses.FunctionCallArgumentsDoneEvent{ItemID: call.ID, Arguments: args}); err != nil {
-		return nil, err
-	}
-	call.Arguments = args
-	call.Status = openresponses.StatusCompleted
-	if err := sink.Send(&openresponses.OutputItemDoneEvent{Item: call}); err != nil {
-		return nil, err
-	}
-	return call, nil
 }
 
 // pendingTool returns the first function tool when the model should call

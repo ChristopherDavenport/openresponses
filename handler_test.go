@@ -161,6 +161,50 @@ func TestHandlerAdapterErrorMapping(t *testing.T) {
 	}
 }
 
+func TestHandlerErrorHeaders(t *testing.T) {
+	h := NewHandler(&fakeAdapter{
+		create: func(context.Context, Request) (*Response, error) {
+			return nil, TooManyRequests("rate_limited", "slow down").WithHeader("Retry-After", "30")
+		},
+		stream: func(_ context.Context, req Request, sink EventSink) error {
+			resp := NewResponse(req)
+			if err := sink.Send(&ResponseCreatedEvent{Response: resp}); err != nil {
+				return err
+			}
+			return TooManyRequests("rate_limited", "slow down").WithHeader("Retry-After", "30")
+		},
+	})
+	t.Run("json", func(t *testing.T) {
+		rec := postJSON(t, h, "/responses", `{"model":"m","input":"hi"}`)
+		if rec.Code != 429 || rec.Header().Get("Retry-After") != "30" {
+			t.Errorf("status %d headers %v", rec.Code, rec.Header())
+		}
+		if p := decodeErrorEnvelope(t, rec); p.Headers["Retry-After"] != "30" {
+			t.Errorf("payload = %+v", p)
+		}
+	})
+	t.Run("stream", func(t *testing.T) {
+		rec := postJSON(t, h, "/responses", `{"model":"m","input":"hi","stream":true}`)
+		frames, _ := readFrames(t, rec.Body.String())
+		var ev ErrorEvent
+		if err := json.Unmarshal([]byte(frames[1].Data), &ev); err != nil {
+			t.Fatal(err)
+		}
+		if ev.Err().Headers.Get("Retry-After") != "30" {
+			t.Errorf("error event = %+v", ev)
+		}
+	})
+	t.Run("client", func(t *testing.T) {
+		srv := httptest.NewServer(h)
+		defer srv.Close()
+		_, err := NewClient(srv.URL).Create(context.Background(), Request{Model: "m", Input: Items{UserText("hi")}})
+		var e *Error
+		if !errors.As(err, &e) || e.Headers.Get("Retry-After") != "30" || !IsRateLimited(err) {
+			t.Errorf("err = %v", err)
+		}
+	})
+}
+
 type statusErr int
 
 func (s statusErr) Error() string   { return "status" }

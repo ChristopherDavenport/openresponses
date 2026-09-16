@@ -719,15 +719,7 @@ func (e *ErrorEvent) MarshalJSON() ([]byte, error) {
 }
 
 // Err converts the event into an *Error.
-func (e *ErrorEvent) Err() *Error {
-	return &Error{
-		StatusCode: e.Status,
-		Type:       e.Error.Type,
-		Code:       e.Error.Code,
-		Message:    e.Error.Message,
-		Param:      e.Error.Param,
-	}
-}
+func (e *ErrorEvent) Err() *Error { return e.Error.Err(e.Status) }
 
 // UnknownEvent is an event whose type is not registered. Raw holds the
 // original bytes and is re-emitted verbatim.

@@ -163,9 +163,7 @@ func (s *webSocketSession) turn(ctx context.Context, data []byte) error {
 			resp = NewResponse(req)
 			resp.ID = NewID("resp")
 		}
-		resp.Status = ResponseStatusCompleted
-		now := time.Now().Unix()
-		resp.CompletedAt = &now
+		resp.Complete()
 		if err := sink.Send(&ResponseCompletedEvent{Response: resp}); err != nil {
 			return err
 		}

@@ -12,7 +12,7 @@ func TestNewResponseDoesNotMutateRequest(t *testing.T) {
 		Tools:      Tools{tool},
 		ToolChoice: ToolChoiceFunction("f"),
 		Text:       TextConfig{Format: JSONSchemaFormat("out", json.RawMessage(`{}`), true)},
-		Reasoning:  &ReasoningConfig{Effort: ReasoningEffortLow},
+		Reasoning:  ReasoningConfig{Effort: ReasoningEffortLow},
 		Metadata:   map[string]string{"k": "v"},
 	}
 	resp := NewResponse(req)

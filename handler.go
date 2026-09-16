@@ -24,7 +24,9 @@ type Adapter interface {
 	// CreateStream emits events to sink and returns when the response is
 	// terminal. The sink assigns sequence numbers.
 	CreateStream(ctx context.Context, req Request, sink EventSink) error
-	// Compact produces a compacted conversation.
+	// Compact produces a compacted conversation. The library is stateless
+	// over HTTP, so resolving req.PreviousResponseID is the adapter's job:
+	// look it up in your store, or return [PreviousResponseNotFound].
 	Compact(ctx context.Context, req CompactRequest) (*CompactResponse, error)
 }
 
@@ -304,8 +306,7 @@ func (s *sseSink) finish(adapterErr error) {
 			resp = NewResponse(s.req)
 			resp.ID = NewID("resp")
 		}
-		resp.Status = ResponseStatusFailed
-		resp.Error = &payload
+		resp.Fail(e)
 		_ = s.writeLocked(&ResponseFailedEvent{Response: resp})
 	} else if !s.terminal {
 		resp := s.acc.Response()
@@ -313,9 +314,7 @@ func (s *sseSink) finish(adapterErr error) {
 			resp = NewResponse(s.req)
 			resp.ID = NewID("resp")
 		}
-		resp.Status = ResponseStatusCompleted
-		now := time.Now().Unix()
-		resp.CompletedAt = &now
+		resp.Complete()
 		_ = s.writeLocked(&ResponseCompletedEvent{Response: resp})
 	}
 	_ = s.w.WriteDone()
@@ -344,9 +343,14 @@ func (h *Handler) decodeBody(w http.ResponseWriter, r *http.Request, v any) erro
 }
 
 // writeError writes the spec error envelope with the status derived from
-// err.
+// err, plus any headers the error carries.
 func writeError(w http.ResponseWriter, err error) {
 	e := AsError(err)
+	for k, vs := range e.Headers {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
 	writeJSON(w, e.HTTPStatus(), errorEnvelope{Error: e.Payload()})
 }
 
