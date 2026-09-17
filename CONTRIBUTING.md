@@ -1,14 +1,13 @@
 # Contributing
 
-Thanks for taking the time. Issues and pull requests are welcome.
+Issues and pull requests are welcome.
 
 ## Before you start
 
 The library tracks the Open Responses specification, version
-2026-04-24. Changes to the wire shapes should follow the specification,
-not a particular provider, and anything a provider adds beyond the
-specification must keep flowing through the extension types rather than
-becoming a first-class field.
+2026-04-24. Wire shapes follow the specification, not any one provider.
+Anything a provider adds beyond it goes through the extension types
+and never becomes a first-class field.
 
 For anything larger than a bug fix, open an issue first so the shape of
 the change can be discussed before you spend time on it.
