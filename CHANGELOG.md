@@ -7,6 +7,10 @@ versions may break the API.
 
 ## Unreleased
 
+Nothing yet.
+
+## v0.0.8 - 2026-09-16
+
 - CI tests the minimum (1.25) and current Go versions, runs staticcheck
   and govulncheck, and pins the official compliance suite to a fixed
   upstream commit. A weekly workflow tracks upstream drift instead.
