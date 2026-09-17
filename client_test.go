@@ -233,3 +233,19 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func bytesReader(b []byte) io.Reader { return strings.NewReader(string(b)) }
+
+func TestClientResponseTooLarge(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"r","object":"response","status":"completed","output":[],"model":"m","created_at":1,"metadata":{"pad":"`+strings.Repeat("x", 4096)+`"}}`)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, WithMaxResponseBytes(1024))
+	_, err := c.Create(context.Background(), Request{Model: "m"})
+	if err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := NewClient(srv.URL).Create(context.Background(), Request{Model: "m"}); err != nil {
+		t.Fatalf("default cap rejected a small body: %v", err)
+	}
+}

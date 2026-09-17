@@ -39,21 +39,24 @@ type Request struct {
 
 	// Extra holds top-level keys not defined by the spec. They are
 	// captured on decode and flattened into the object on encode, so a
-	// proxy can pass provider-specific parameters through.
+	// proxy can pass provider-specific parameters through. That is a
+	// policy decision: a server that does not trust its clients should
+	// clear or filter Extra before forwarding a request upstream, since
+	// any key a client sends otherwise reaches the provider.
 	Extra map[string]any `json:"-"`
 }
 
 // MarshalJSON flattens Extra into the object.
 func (r Request) MarshalJSON() ([]byte, error) {
 	type plain Request
-	return jsonx.MarshalWithExtra(plain(r), r.Extra)
+	return jsonx.MarshalWithExtra(plain(r), r.Extra, nil)
 }
 
 // UnmarshalJSON captures unknown keys into Extra.
 func (r *Request) UnmarshalJSON(data []byte) error {
 	type plain Request
 	var p plain
-	extra, err := jsonx.UnmarshalExtra(data, &p)
+	extra, _, err := jsonx.UnmarshalExtra(data, &p)
 	if err != nil {
 		return err
 	}
@@ -78,13 +81,21 @@ func (r Request) Stored() bool {
 }
 
 // Validate checks the request against the rules of the specification and
-// returns an invalid_request *Error naming the offending field.
+// returns an invalid_request *Error naming the offending field. When the
+// request is self-contained (no previous_response_id) every
+// function_call_output must follow the function_call it answers; with a
+// previous_response_id that check runs once the history is resolved.
 func (r Request) Validate() error {
 	if r.Model == "" {
 		return InvalidRequest(CodeMissingRequiredParameter, "model is required", "model")
 	}
 	if err := validateItems(r.Input); err != nil {
 		return err
+	}
+	if r.PreviousResponseID == "" {
+		if err := checkFunctionCallOutputs(r.Input); err != nil {
+			return err
+		}
 	}
 	for i, tool := range r.Tools {
 		if ft, ok := tool.(*FunctionTool); ok && ft.Name == "" {
@@ -175,8 +186,9 @@ func validateMessage(m *Message, param string) error {
 
 // CompactRequest is the body of POST /responses/compact. When
 // PreviousResponseID is set the conversation to compact is the stored
-// one it names plus Input; nothing in this package expands it, so a
-// server adapter must resolve it or reject it with
+// one it names plus Input. A [Handler] with a [ResponseStore] inlines
+// that history and clears the field before the adapter runs; without a
+// store the adapter must resolve it or reject it with
 // [PreviousResponseNotFound].
 type CompactRequest struct {
 	Model              string `json:"model,omitempty"`
@@ -192,14 +204,14 @@ type CompactRequest struct {
 // MarshalJSON flattens Extra into the object.
 func (r CompactRequest) MarshalJSON() ([]byte, error) {
 	type plain CompactRequest
-	return jsonx.MarshalWithExtra(plain(r), r.Extra)
+	return jsonx.MarshalWithExtra(plain(r), r.Extra, nil)
 }
 
 // UnmarshalJSON captures unknown keys into Extra.
 func (r *CompactRequest) UnmarshalJSON(data []byte) error {
 	type plain CompactRequest
 	var p plain
-	extra, err := jsonx.UnmarshalExtra(data, &p)
+	extra, _, err := jsonx.UnmarshalExtra(data, &p)
 	if err != nil {
 		return err
 	}
@@ -213,5 +225,36 @@ func (r CompactRequest) Validate() error {
 	if r.Model == "" {
 		return InvalidRequest(CodeMissingRequiredParameter, "model is required", "model")
 	}
-	return validateItems(r.Input)
+	if err := validateItems(r.Input); err != nil {
+		return err
+	}
+	if r.PreviousResponseID == "" {
+		return checkFunctionCallOutputs(r.Input)
+	}
+	return nil
+}
+
+// checkFunctionCallOutputs verifies that every function_call_output
+// answers a function_call earlier in the conversation. Items that stand
+// for history this package cannot see (compaction, item_reference and
+// extension items) make later outputs unverifiable, so they are accepted
+// from that point on.
+func checkFunctionCallOutputs(items []Item) error {
+	calls := map[string]bool{}
+	opaque := false
+	for i, item := range items {
+		switch v := item.(type) {
+		case *FunctionCall:
+			calls[v.CallID] = true
+		case *FunctionCallOutput:
+			if !calls[v.CallID] && !opaque {
+				return InvalidRequest(CodeInvalidValue,
+					fmt.Sprintf("no function_call with call_id %q precedes this function_call_output", v.CallID),
+					fmt.Sprintf("input[%d].call_id", i))
+			}
+		case *Compaction, *ItemReference, *UnknownItem:
+			opaque = true
+		}
+	}
+	return nil
 }

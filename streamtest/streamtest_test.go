@@ -59,7 +59,7 @@ func broken(t *testing.T, mutate func([]openresponses.StreamEvent) []openrespons
 	}
 	events := mutate(sink.Events())
 	for i, ev := range events {
-		if setter, ok := ev.(interface{ SetSequence(int64) }); ok {
+		if setter, ok := ev.(openresponses.SequenceSetter); ok {
 			setter.SetSequence(int64(i))
 		}
 	}

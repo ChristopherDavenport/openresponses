@@ -37,9 +37,11 @@
 // slug-prefixed (for example "acme:search_result"). They decode to
 // [UnknownItem], [UnknownContent], [UnknownTool], [UnknownAnnotation] and
 // [UnknownEvent], which retain the original bytes and re-marshal them
-// verbatim, so a proxy built on this package never drops data. Packages
-// may register their own types with [RegisterItem], [RegisterContent],
-// [RegisterTool], [RegisterAnnotation] and [RegisterEvent].
+// verbatim, and a decoded [Response] re-encodes without the keys its
+// source left out, so a proxy built on this package neither drops nor
+// invents data. Packages may register their own types with
+// [RegisterItem], [RegisterContent], [RegisterTool], [RegisterAnnotation]
+// and [RegisterEvent].
 //
 // # Streaming lifecycle
 //
@@ -78,7 +80,7 @@
 //   - [Accumulator] folds a stream of events back into a [Response]; the
 //     client, [CollectStream] and the handler use it.
 //   - [CollectStream] derives a non-streaming Create from a streaming
-//     adapter, and [Stream] exposes a streaming adapter as an in-process
+//     adapter, and [Events] exposes a streaming adapter as an in-process
 //     iterator, the pull-shaped counterpart of [Client.CreateStream].
 //   - [ClientAdapter], from [Client.AsAdapter], serves a remote server as
 //     an [Adapter], so every participant, local backend, remote server or

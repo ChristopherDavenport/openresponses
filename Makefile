@@ -2,17 +2,26 @@ GO ?= go
 BUN ?= $(HOME)/.bun/bin/bun
 COMPLIANCE_DIR ?= .cache/openresponses
 COMPLIANCE_PORT ?= 8000
+# Nested modules that are tested alongside the library but keep their own
+# dependencies out of it.
+SUBMODULES = conformance
 
-.PHONY: build test vet fmt compliance spec-update clean
+.PHONY: build test vet fmt tidy compliance spec-update clean
 
 build:
 	$(GO) build ./...
 
 test:
 	$(GO) test -race ./...
+	@for m in $(SUBMODULES); do (cd $$m && $(GO) test -race ./...) || exit 1; done
 
 vet:
 	$(GO) vet ./...
+	@for m in $(SUBMODULES); do (cd $$m && $(GO) vet ./...) || exit 1; done
+
+tidy:
+	$(GO) mod tidy
+	@for m in $(SUBMODULES); do (cd $$m && $(GO) mod tidy) || exit 1; done
 
 fmt:
 	gofmt -l . && test -z "$$(gofmt -l .)"
@@ -32,7 +41,7 @@ compliance: build
 # schema drift.
 spec-update:
 	curl -fsSL https://raw.githubusercontent.com/openresponses/openresponses/main/public/openapi/2026-04-24/openapi.json -o testdata/openapi-2026-04-24.json
-	$(GO) test ./...
+	cd conformance && $(GO) test ./...
 
 clean:
 	rm -rf .cache

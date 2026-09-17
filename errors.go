@@ -104,11 +104,14 @@ type Error struct {
 
 	// Headers are HTTP headers that belong to the error and travel with
 	// it: a server writes them to the HTTP response and carries them in
-	// the error event payload, and a client fills them from the response
-	// headers that describe the failure (Retry-After, RateLimit-* and
-	// X-RateLimit-*, X-Request-Id and Request-Id). Forwarding an *Error
-	// therefore keeps Retry-After from an upstream 429 intact without
-	// leaking entity or hop-by-hop headers.
+	// the error event payload. An error built from a remote source (an
+	// HTTP error response, an error event or a WebSocket error frame)
+	// only picks up the headers that describe a failure: Retry-After,
+	// RateLimit-* and X-RateLimit-*, X-Request-Id and Request-Id.
+	// Forwarding an *Error therefore keeps Retry-After from an upstream
+	// 429 intact, while a peer cannot plant Set-Cookie or a CORS header
+	// on a server that forwards its error. Errors built locally carry
+	// whatever WithHeader adds.
 	Headers http.Header
 	// ResponseHeaders holds every header of the failing HTTP response
 	// when the error came from one. It is never forwarded.
@@ -120,7 +123,8 @@ type Error struct {
 // errorHeader reports whether an HTTP response header describes an error
 // and should travel with it.
 func errorHeader(name string) bool {
-	switch http.CanonicalHeaderKey(name) {
+	name = http.CanonicalHeaderKey(name)
+	switch name {
 	case "Retry-After", "X-Request-Id", "Request-Id":
 		return true
 	}
@@ -175,11 +179,14 @@ func (e *Error) WithHeader(name, value string) *Error {
 	return e
 }
 
-// Err converts a wire payload into an *Error.
+// Err converts a wire payload into an *Error. Only the headers that
+// describe a failure are carried over; see [Error.Headers].
 func (p ErrorPayload) Err(status int) *Error {
 	e := &Error{StatusCode: status, Type: p.Type, Code: p.Code, Message: p.Message, Param: p.Param}
 	for k, v := range p.Headers {
-		e.WithHeader(k, v)
+		if errorHeader(k) {
+			e.WithHeader(k, v)
+		}
 	}
 	return e
 }

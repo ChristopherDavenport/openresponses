@@ -211,7 +211,7 @@ func TestStreamIterator(t *testing.T) {
 	ctx := testContext(t)
 	var types []string
 	var final *Response
-	for ev, err := range Stream(ctx, echoAdapter{}, Request{Model: "m", Input: Items{UserText("hi")}}) {
+	for ev, err := range Events(ctx, echoAdapter{}, Request{Model: "m", Input: Items{UserText("hi")}}) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -233,7 +233,7 @@ func TestStreamIterator(t *testing.T) {
 	}}
 	var got []error
 	n := 0
-	for _, err := range Stream(ctx, failing, Request{Model: "m"}) {
+	for _, err := range Events(ctx, failing, Request{Model: "m"}) {
 		n++
 		if err != nil {
 			got = append(got, err)
@@ -254,7 +254,7 @@ func TestStreamIterator(t *testing.T) {
 		cancelled <- err
 		return err
 	}}
-	for range Stream(ctx, slow, Request{Model: "m"}) {
+	for range Events(ctx, slow, Request{Model: "m"}) {
 		break
 	}
 	if err := <-cancelled; !errors.Is(err, context.Canceled) {
@@ -271,7 +271,7 @@ func TestStreamIterator(t *testing.T) {
 		live.Content[0].(*OutputText).Text = "after"
 		return nil
 	}}
-	for ev, err := range Stream(ctx, mutating, Request{Model: "m"}) {
+	for ev, err := range Events(ctx, mutating, Request{Model: "m"}) {
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -281,5 +281,59 @@ func TestStreamIterator(t *testing.T) {
 				t.Errorf("yielded item was mutated: %s", data)
 			}
 		}
+	}
+}
+
+func TestStoreIsolatedFromAdapterMutation(t *testing.T) {
+	store := NewMemoryStore(8)
+	var lastOutput *Message
+	scribbler := &fakeAdapter{stream: func(ctx context.Context, req Request, sink EventSink) error {
+		if len(req.Input) > 1 {
+			// A continuation: scribble on the history we were handed.
+			for _, item := range req.Input {
+				if m, ok := item.(*Message); ok {
+					for _, part := range m.Content {
+						if txt, ok := part.(*InputText); ok {
+							txt.Text = "scribbled"
+						}
+					}
+				}
+			}
+		}
+		em := NewEmitter(sink, NewResponse(req))
+		msg, err := em.Message("")
+		if err != nil {
+			return err
+		}
+		if err := msg.Text("hello"); err != nil {
+			return err
+		}
+		return em.Complete()
+	}}
+	srv := httptest.NewServer(NewHandler(scribbler, WithResponseStore(store)))
+	defer srv.Close()
+	ctx := testContext(t)
+	c := NewClient(srv.URL)
+	first, err := c.Create(ctx, Request{Model: "m", Input: Items{UserText("first")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lastOutput = first.Output[0].(*Message)
+	if _, err := c.Create(ctx, Request{Model: "m", PreviousResponseID: first.ID, Input: Items{UserText("second")}}); err != nil {
+		t.Fatal(err)
+	}
+	// Mutating what the adapter (or the client) still holds must not
+	// reach the store either.
+	lastOutput.Content[0].(*OutputText).Text = "later"
+
+	hist, ok, err := store.Load(ctx, first.ID)
+	if err != nil || !ok {
+		t.Fatalf("load: ok=%v err=%v", ok, err)
+	}
+	if got := hist[0].(*Message).Text(); got != "first" {
+		t.Errorf("stored input became %q", got)
+	}
+	if got := hist[1].(*Message).Text(); got != "hello" {
+		t.Errorf("stored output became %q", got)
 	}
 }

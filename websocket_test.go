@@ -178,7 +178,7 @@ func TestWebSocketRejectsForbiddenFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer raw.CloseNow()
-	conn := &WebSocketConn{conn: raw}
+	conn := newWebSocketConn(raw)
 	for _, body := range []string{
 		`{"type":"response.create","model":"m","input":"x","stream":true}`,
 		`{"type":"response.create","model":"m","input":"x","background":false}`,
@@ -254,5 +254,59 @@ func TestWebSocketDialError(t *testing.T) {
 	var e *Error
 	if !errors.As(err, &e) || e.StatusCode != 401 || e.Code != "unauthorized" {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestWebSocketSendDoesNotMutateRequest(t *testing.T) {
+	_, c := wsServer(t)
+	ctx := testContext(t)
+	conn, err := c.Dial(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	req := Request{Model: "m", Input: Items{UserText("hi")}, Extra: map[string]any{"x": 1}}
+	if _, err := conn.Turn(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := req.Extra["type"]; ok || len(req.Extra) != 1 {
+		t.Errorf("caller's Extra was modified: %v", req.Extra)
+	}
+}
+
+func TestWebSocketKeepaliveDropsSilentPeer(t *testing.T) {
+	srv, _ := wsServer(t, WithWebSocketKeepalive(20*time.Millisecond))
+	ctx := testContext(t)
+	raw, _, err := websocket.Dial(ctx, "ws"+srv.URL[len("http"):]+"/v1/responses", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.CloseNow()
+	// A peer that never reads never answers pings.
+	time.Sleep(200 * time.Millisecond)
+	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	_, _, err = raw.Read(readCtx)
+	if err == nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected the server to have closed the connection, got %v", err)
+	}
+}
+
+func TestWebSocketKeepaliveSparesIdleClient(t *testing.T) {
+	_, c := wsServer(t, WithWebSocketKeepalive(20*time.Millisecond))
+	ctx := testContext(t)
+	conn, err := c.Dial(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Idle for many keepalive intervals; the background reader answers.
+	time.Sleep(200 * time.Millisecond)
+	resp, err := conn.Turn(ctx, Request{Model: "m", Input: Items{UserText("still here")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.OutputText() != "still here" {
+		t.Errorf("got %q", resp.OutputText())
 	}
 }

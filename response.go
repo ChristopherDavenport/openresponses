@@ -16,7 +16,12 @@ const (
 
 // Response is the response resource returned by POST /responses and
 // carried by the response.* streaming events. The spec requires most
-// fields to be present, so they are emitted even when null or zero.
+// fields to be present, so a Response built in Go emits them even when
+// null or zero. A Response decoded from the wire remembers which keys
+// its source left out and re-encodes without them for as long as those
+// fields keep their zero value, so a proxy passes a lenient upstream
+// through unchanged instead of inventing a temperature of 0 or store of
+// false. Setting such a field makes it appear again.
 type Response struct {
 	ID                 string             `json:"id"`
 	Object             string             `json:"object"`
@@ -52,11 +57,16 @@ type Response struct {
 
 	// Extra holds top-level keys not defined by the spec.
 	Extra map[string]any `json:"-"`
+
+	// absent records the spec keys a decoded response did not carry. It
+	// is read-only after decode and shared by clones.
+	absent map[string]bool
 }
 
 // MarshalJSON emits the resource with spec-shaped defaults: object is
 // always "response", nil slices become [], nil metadata becomes {}, and
-// empty enums take their documented defaults.
+// empty enums take their documented defaults. Keys that were absent when
+// the response was decoded and whose fields are still zero are left out.
 func (r Response) MarshalJSON() ([]byte, error) {
 	type plain Response
 	cp := plain(r)
@@ -82,19 +92,21 @@ func (r Response) MarshalJSON() ([]byte, error) {
 	if cp.Status == "" {
 		cp.Status = ResponseStatusInProgress
 	}
-	return jsonx.MarshalWithExtra(cp, r.Extra)
+	return jsonx.MarshalWithExtra(cp, r.Extra, jsonx.ZeroFields(&r, r.absent))
 }
 
-// UnmarshalJSON captures unknown keys into Extra.
+// UnmarshalJSON captures unknown keys into Extra and remembers which
+// spec keys were absent.
 func (r *Response) UnmarshalJSON(data []byte) error {
 	type plain Response
 	var p plain
-	extra, err := jsonx.UnmarshalExtra(data, &p)
+	extra, absent, err := jsonx.UnmarshalExtra(data, &p)
 	if err != nil {
 		return err
 	}
 	*r = Response(p)
 	r.Extra = extra
+	r.absent = absent
 	return nil
 }
 
@@ -321,10 +333,14 @@ type CompactResponse struct {
 
 	// Extra holds top-level keys not defined by the spec.
 	Extra map[string]any `json:"-"`
+
+	absent map[string]bool
 }
 
 // MarshalJSON emits the resource with object fixed to
-// "response.compaction" and a non-null output array.
+// "response.compaction" and a non-null output array. Keys absent at
+// decode time whose fields are still zero are left out, as for
+// [Response].
 func (r CompactResponse) MarshalJSON() ([]byte, error) {
 	type plain CompactResponse
 	cp := plain(r)
@@ -335,19 +351,20 @@ func (r CompactResponse) MarshalJSON() ([]byte, error) {
 	if cp.Usage == nil {
 		cp.Usage = &Usage{}
 	}
-	return jsonx.MarshalWithExtra(cp, r.Extra)
+	return jsonx.MarshalWithExtra(cp, r.Extra, jsonx.ZeroFields(&r, r.absent))
 }
 
 // UnmarshalJSON captures unknown keys into Extra.
 func (r *CompactResponse) UnmarshalJSON(data []byte) error {
 	type plain CompactResponse
 	var p plain
-	extra, err := jsonx.UnmarshalExtra(data, &p)
+	extra, absent, err := jsonx.UnmarshalExtra(data, &p)
 	if err != nil {
 		return err
 	}
 	*r = CompactResponse(p)
 	r.Extra = extra
+	r.absent = absent
 	return nil
 }
 

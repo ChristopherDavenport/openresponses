@@ -3,6 +3,7 @@ package openresponses
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
 )
@@ -15,10 +16,14 @@ type StreamEvent interface {
 	Sequence() int64
 }
 
-// sequenceSetter is implemented by every built-in event so that server
-// sinks can assign sequence numbers. Extension events that do not
-// implement it are sent with whatever sequence number they carry.
-type sequenceSetter interface {
+// SequenceSetter is implemented by every built-in event, [UnknownEvent]
+// included, so that a sink can assign sequence numbers: they are
+// per-stream, and a sink that forwards or injects events numbers the
+// stream it produces from zero. The transports and streamtest do this;
+// a custom [EventSink] should too. Extension events registered with
+// [RegisterEvent] that do not implement it are sent with whatever
+// sequence number they carry.
+type SequenceSetter interface {
 	SetSequence(int64)
 }
 
@@ -722,11 +727,15 @@ func (e *ErrorEvent) MarshalJSON() ([]byte, error) {
 func (e *ErrorEvent) Err() *Error { return e.Error.Err(e.Status) }
 
 // UnknownEvent is an event whose type is not registered. Raw holds the
-// original bytes and is re-emitted verbatim.
+// original bytes and is re-emitted verbatim, except that a sequence
+// number assigned with SetSequence replaces the one in Raw, so an
+// extension event forwarded by a proxy is numbered like its neighbours.
 type UnknownEvent struct {
 	Type           string
 	SequenceNumber int64
 	Raw            json.RawMessage
+
+	renumbered bool
 }
 
 // EventType returns the wire type.
@@ -735,14 +744,29 @@ func (e *UnknownEvent) EventType() string { return e.Type }
 // Sequence returns the sequence number.
 func (e *UnknownEvent) Sequence() int64 { return e.SequenceNumber }
 
-// MarshalJSON emits the original bytes.
+// SetSequence sets the sequence number; the next MarshalJSON writes it
+// into the raw bytes.
+func (e *UnknownEvent) SetSequence(n int64) {
+	e.SequenceNumber = n
+	e.renumbered = true
+}
+
+// MarshalJSON emits the original bytes with the current sequence number.
 func (e *UnknownEvent) MarshalJSON() ([]byte, error) {
 	if len(e.Raw) == 0 {
 		return jsonx.MarshalTyped(e.Type, struct {
 			SequenceNumber int64 `json:"sequence_number"`
 		}{e.SequenceNumber})
 	}
-	return e.Raw, nil
+	if !e.renumbered {
+		return e.Raw, nil
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(e.Raw, &members); err != nil {
+		return nil, fmt.Errorf("event %q: %w", e.Type, err)
+	}
+	members["sequence_number"] = json.RawMessage(strconv.FormatInt(e.SequenceNumber, 10))
+	return json.Marshal(members)
 }
 
 // UnmarshalJSON records the type, sequence number and raw bytes.

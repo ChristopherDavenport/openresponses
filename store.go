@@ -9,7 +9,9 @@ import (
 // ResponseStore remembers the conversation history of completed responses
 // keyed by response ID, so a later request may continue with
 // previous_response_id and only new input. History is the request's
-// input followed by the response's output.
+// input followed by the response's output. The handler hands Save a copy
+// it will not touch again and copies what Load returns before an adapter
+// sees it, so an implementation may keep the slices it is given.
 //
 // Give the [Handler] a store with [WithResponseStore] and it resolves
 // previous_response_id itself over HTTP, on the compaction endpoint and
@@ -108,10 +110,11 @@ type continuation struct {
 }
 
 // resolveContinuation looks req.PreviousResponseID up in stores in order.
-// On a hit the history is inlined ahead of req.Input, function call
-// outputs are checked against it, and the field is cleared so the
-// adapter sees a self-contained request. A miss leaves req untouched;
-// the caller decides whether that is an error.
+// On a hit a copy of the history is inlined ahead of req.Input, function
+// call outputs are checked against it, and the field is cleared so the
+// adapter sees a self-contained request. The copy means an adapter that
+// mutates its input never reaches into the store. A miss leaves req
+// untouched; the caller decides whether that is an error.
 func resolveContinuation(ctx context.Context, req *Request, stores ...ResponseStore) (continuation, error) {
 	c := continuation{id: req.PreviousResponseID}
 	if c.id == "" {
@@ -129,7 +132,7 @@ func resolveContinuation(ctx context.Context, req *Request, stores ...ResponseSt
 			continue
 		}
 		merged := make(Items, 0, len(history)+len(req.Input))
-		merged = append(merged, history...)
+		merged = append(merged, history.Clone()...)
 		merged = append(merged, req.Input...)
 		c.resolved = true
 		c.source = store
@@ -143,31 +146,14 @@ func resolveContinuation(ctx context.Context, req *Request, stores ...ResponseSt
 	return c, nil
 }
 
-// checkFunctionCallOutputs verifies that every function_call_output
-// refers to a function_call earlier in the conversation.
-func checkFunctionCallOutputs(items []Item) error {
-	calls := map[string]bool{}
-	for i, item := range items {
-		switch v := item.(type) {
-		case *FunctionCall:
-			calls[v.CallID] = true
-		case *FunctionCallOutput:
-			if !calls[v.CallID] {
-				return InvalidRequest(CodeInvalidValue,
-					fmt.Sprintf("no function_call with call_id %q precedes this function_call_output", v.CallID),
-					fmt.Sprintf("input[%d].call_id", i))
-			}
-		}
-	}
-	return nil
-}
-
-// history returns the conversation to remember for a completed response.
+// history returns the conversation to remember for a completed response:
+// a copy, so the store never shares items with the adapter that produced
+// them.
 func history(req Request, resp *Response) Items {
 	out := make(Items, 0, len(req.Input)+len(resp.Output))
 	out = append(out, req.Input...)
 	out = append(out, resp.Output...)
-	return out
+	return out.Clone()
 }
 
 // stampPreviousID restores previous_response_id on response snapshots

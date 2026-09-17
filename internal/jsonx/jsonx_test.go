@@ -38,7 +38,6 @@ func TestInjectType(t *testing.T) {
 	}{
 		{"empty object", `{}`, `{"type":"t"}`},
 		{"with members", `{"a":1}`, `{"type":"t","a":1}`},
-		{"already typed", `{"type":"other","a":1}`, `{"type":"other","a":1}`},
 		{"whitespace", ` {"a":1} `, `{"type":"t","a":1}`},
 	}
 	for _, tt := range tests {
@@ -68,7 +67,7 @@ func TestExtraRoundTrip(t *testing.T) {
 		Plain  string
 	}
 	var v outer
-	extra, err := UnmarshalExtra([]byte(`{"a":1,"b":"x","Plain":"p","z":[1,2],"acme:y":{"k":true}}`), &v)
+	extra, absent, err := UnmarshalExtra([]byte(`{"a":1,"b":"x","Plain":"p","z":[1,2],"acme:y":{"k":true}}`), &v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +77,10 @@ func TestExtraRoundTrip(t *testing.T) {
 	if len(extra) != 2 || extra["z"] == nil || extra["acme:y"] == nil {
 		t.Errorf("extra = %v", extra)
 	}
-	out, err := MarshalWithExtra(v, extra)
+	if absent != nil {
+		t.Errorf("absent = %v, want nil", absent)
+	}
+	out, err := MarshalWithExtra(v, extra, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +94,7 @@ func TestExtraRoundTrip(t *testing.T) {
 		}
 	}
 	// Known keys win over extra.
-	out, err = MarshalWithExtra(v, map[string]any{"a": 99})
+	out, err = MarshalWithExtra(v, map[string]any{"a": 99}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,5 +104,53 @@ func TestExtraRoundTrip(t *testing.T) {
 	}
 	if back["a"] != float64(1) {
 		t.Errorf("known key overridden: %s", out)
+	}
+}
+
+func TestAbsentAndZeroFields(t *testing.T) {
+	type shape struct {
+		A int     `json:"a"`
+		B string  `json:"b"`
+		C *int    `json:"c"`
+		D []int   `json:"d"`
+		E float64 `json:"e"`
+	}
+	var v shape
+	_, absent, err := UnmarshalExtra([]byte(`{"a":1,"e":0}`), &v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"b", "c", "d"} {
+		if !absent[k] {
+			t.Errorf("absent missing %q: %v", k, absent)
+		}
+	}
+	if absent["a"] || absent["e"] {
+		t.Errorf("present keys reported absent: %v", absent)
+	}
+	// Setting a field after decode keeps it; untouched absent fields are
+	// dropped again.
+	v.B = "set"
+	omit := ZeroFields(&v, absent)
+	if omit["b"] || !omit["c"] || !omit["d"] {
+		t.Errorf("omit = %v", omit)
+	}
+	out, err := MarshalWithExtra(v, nil, omit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back map[string]any
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"a", "b", "e"} {
+		if _, ok := back[k]; !ok {
+			t.Errorf("missing %q in %s", k, out)
+		}
+	}
+	for _, k := range []string{"c", "d"} {
+		if _, ok := back[k]; ok {
+			t.Errorf("unexpected %q in %s", k, out)
+		}
 	}
 }

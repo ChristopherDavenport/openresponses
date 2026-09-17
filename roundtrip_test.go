@@ -265,3 +265,36 @@ func replaceJSON(t *testing.T, data []byte, old, new string) []byte {
 	}
 	return []byte(replaceAll(s, old, new))
 }
+
+func TestValidateFunctionCallOutputs(t *testing.T) {
+	output := NewFunctionCallOutput("c1", "x")
+	cases := []struct {
+		name string
+		req  Request
+		ok   bool
+	}{
+		{"orphan", Request{Model: "m", Input: Items{output}}, false},
+		{"paired", Request{Model: "m", Input: Items{&FunctionCall{CallID: "c1", Name: "f"}, output}}, true},
+		{"continued", Request{Model: "m", PreviousResponseID: "resp_1", Input: Items{output}}, true},
+		{"after compaction", Request{Model: "m", Input: Items{&Compaction{EncryptedContent: "e"}, output}}, true},
+		{"after item_reference", Request{Model: "m", Input: Items{&ItemReference{ID: "fc_1"}, output}}, true},
+		{"after extension item", Request{Model: "m", Input: Items{&UnknownItem{Type: "acme:call"}, output}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.req.Validate()
+			if tc.ok && err != nil {
+				t.Fatalf("unexpected %v", err)
+			}
+			if !tc.ok {
+				e := AsError(err)
+				if !IsInvalidRequest(err) || e.Param != "input[0].call_id" {
+					t.Fatalf("got %v", err)
+				}
+			}
+		})
+	}
+	if err := (CompactRequest{Model: "m", Input: Items{output}}).Validate(); !IsInvalidRequest(err) {
+		t.Errorf("compact request with orphan output: %v", err)
+	}
+}

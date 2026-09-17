@@ -233,3 +233,22 @@ func TestEventStreamContextCancel(t *testing.T) {
 	}
 	_ = pw.Close()
 }
+
+func TestSSEScannerMixedLineEndings(t *testing.T) {
+	in := "event: a\r\ndata: 1\r\n\r\nevent: b\ndata: 2\n\nevent: c\r\ndata: 3\r\n\r\n"
+	sc := newSSEScanner(strings.NewReader(in))
+	var got []string
+	for {
+		f, ok := sc.Next()
+		if !ok {
+			break
+		}
+		got = append(got, f.Event+"="+f.Data)
+	}
+	if err := sc.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"a=1", "b=2", "c=3"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}

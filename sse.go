@@ -64,11 +64,15 @@ func scanSSEFrames(data []byte, atEOF bool) (advance int, token []byte, err erro
 	if atEOF && len(data) == 0 {
 		return 0, nil, nil
 	}
-	if i := bytes.Index(data, []byte("\n\n")); i >= 0 {
-		return i + 2, data[:i], nil
-	}
-	if i := bytes.Index(data, []byte("\r\n\r\n")); i >= 0 {
-		return i + 4, data[:i], nil
+	// Whichever terminator comes first ends the frame, so a stream that
+	// mixes line endings still splits at every blank line.
+	lf := bytes.Index(data, []byte("\n\n"))
+	crlf := bytes.Index(data, []byte("\r\n\r\n"))
+	switch {
+	case lf >= 0 && (crlf < 0 || lf < crlf):
+		return lf + 2, data[:lf], nil
+	case crlf >= 0:
+		return crlf + 4, data[:crlf], nil
 	}
 	if atEOF {
 		return len(data), data, nil
