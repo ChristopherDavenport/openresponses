@@ -160,6 +160,31 @@ The handler:
   `websocket_connection_limit_reached`, and pings idle connections every
   30 seconds so a vanished peer is dropped (`WithWebSocketKeepalive`).
 
+## Running the examples
+
+The client examples read `OPENRESPONSES_BASE_URL`, `OPENRESPONSES_API_KEY`
+and `OPENRESPONSES_MODEL`, so the same programs run against any server
+that implements the specification. Against OpenAI:
+
+```sh
+OPENRESPONSES_API_KEY=sk-... go run ./examples/tools
+```
+
+Against a local [Ollama](https://ollama.com), which serves Open Responses
+under `/v1` with no API key (it does not offer the WebSocket transport):
+
+```sh
+OPENRESPONSES_BASE_URL=http://localhost:11434/v1 OPENRESPONSES_MODEL=qwen3:1.7b go run ./examples/tools
+```
+
+Against the example server in this repository, which speaks all three
+transports:
+
+```sh
+go run ./examples/server &
+OPENRESPONSES_BASE_URL=http://localhost:8000/v1 go run ./examples/websocket
+```
+
 ## Extensions
 
 Unknown types decode to `UnknownItem`, `UnknownContent`, `UnknownTool`,
