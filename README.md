@@ -50,8 +50,7 @@ for ev := range stream.Events() {
         fmt.Print(d.Delta)
     }
 }
-if err := stream.Err(); err != nil { /* ... */ }
-final := stream.Response() // accumulated from the events
+final, err := stream.Wait() // the response folded from the events, or the failure
 ```
 
 WebSocket turns run one at a time on a connection and support

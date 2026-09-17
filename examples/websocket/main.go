@@ -1,56 +1,57 @@
 // Command websocket runs two turns on one WebSocket connection, using
 // previous_response_id to continue a store:false conversation.
+//
+// Environment: OPENRESPONSES_BASE_URL (default https://api.openai.com/v1),
+// OPENRESPONSES_API_KEY, OPENRESPONSES_MODEL (default gpt-5).
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/ChristopherDavenport/openresponses"
 )
 
 func main() {
-	ctx := context.Background()
-	client := openresponses.NewClient(env("OPENRESPONSES_BASE_URL", "https://api.openai.com/v1"),
-		openresponses.WithAPIKey(os.Getenv("OPENRESPONSES_API_KEY")))
+	if err := run(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+}
 
+func run(ctx context.Context) error {
+	client := openresponses.NewClient(
+		cmp.Or(os.Getenv("OPENRESPONSES_BASE_URL"), "https://api.openai.com/v1"),
+		openresponses.WithAPIKey(os.Getenv("OPENRESPONSES_API_KEY")),
+	)
 	conn, err := client.Dial(ctx)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
 	defer conn.Close()
 
-	store := false
-	model := env("OPENRESPONSES_MODEL", "gpt-5")
+	model := cmp.Or(os.Getenv("OPENRESPONSES_MODEL"), "gpt-5")
 	first, err := conn.Turn(ctx, openresponses.Request{
 		Model: model,
-		Store: &store,
+		Store: new(bool), // store:false; the connection remembers the turn
 		Input: openresponses.Items{openresponses.UserText("Remember the code word: cobalt. Reply with OK.")},
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
 	fmt.Println("turn 1:", first.OutputText())
 
 	second, err := conn.Turn(ctx, openresponses.Request{
 		Model:              model,
-		Store:              &store,
+		Store:              new(bool),
 		PreviousResponseID: first.ID,
 		Input:              openresponses.Items{openresponses.UserText("What is the code word?")},
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
 	fmt.Println("turn 2:", second.OutputText())
-}
-
-func env(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
+	return nil
 }

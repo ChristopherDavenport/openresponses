@@ -1,34 +1,36 @@
-// Command server exposes a tiny adapter as an Open Responses endpoint.
-// It answers every request with the reversed user text, over plain JSON,
-// SSE and WebSocket.
+// Command server exposes a small adapter as an Open Responses endpoint
+// on :8000. It shouts the last user message back, over plain JSON, SSE
+// and WebSocket alike; the handler supplies the transports.
 package main
 
 import (
 	"context"
-	"log/slog"
+	"log"
 	"net/http"
-	"os"
+	"strings"
 	"time"
 
 	"github.com/ChristopherDavenport/openresponses"
 )
 
-type reverser struct {
+// shouter is the whole backend: a streaming implementation, Create
+// derived from it, and no compaction.
+type shouter struct {
 	openresponses.UnsupportedCompaction
 }
 
-func (r reverser) Create(ctx context.Context, req openresponses.Request) (*openresponses.Response, error) {
-	return openresponses.CollectStream(ctx, r, req)
+func (s shouter) Create(ctx context.Context, req openresponses.Request) (*openresponses.Response, error) {
+	return openresponses.CollectStream(ctx, s, req)
 }
 
-func (reverser) CreateStream(_ context.Context, req openresponses.Request, sink openresponses.EventSink) error {
+func (shouter) CreateStream(_ context.Context, req openresponses.Request, sink openresponses.EventSink) error {
 	em := openresponses.NewEmitter(sink, openresponses.NewResponse(req))
 	msg, err := em.Message(openresponses.PhaseFinalAnswer)
 	if err != nil {
 		return err
 	}
-	for _, r := range reverse(lastUserText(req.Input)) {
-		if err := msg.Text(string(r)); err != nil {
+	for _, word := range strings.Fields(strings.ToUpper(lastUserText(req.Input))) {
+		if err := msg.Text(word + " "); err != nil {
 			return err
 		}
 	}
@@ -45,25 +47,12 @@ func lastUserText(items openresponses.Items) string {
 	return ""
 }
 
-func reverse(s string) string {
-	r := []rune(s)
-	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
-		r[i], r[j] = r[j], r[i]
-	}
-	return string(r)
-}
-
 func main() {
-	mux := http.NewServeMux()
-	mux.Handle("/v1/", openresponses.NewHandler(reverser{}))
 	srv := &http.Server{
 		Addr:              ":8000",
-		Handler:           mux,
+		Handler:           openresponses.NewHandler(shouter{}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	slog.Info("listening", "addr", srv.Addr)
-	if err := srv.ListenAndServe(); err != nil {
-		slog.Error("serve", "err", err)
-		os.Exit(1)
-	}
+	log.Println("listening on", srv.Addr)
+	log.Fatal(srv.ListenAndServe())
 }

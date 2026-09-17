@@ -5,31 +5,33 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"log"
 	"os"
 
 	"github.com/ChristopherDavenport/openresponses"
 )
 
 func main() {
-	client := openresponses.NewClient(env("OPENRESPONSES_BASE_URL", "https://api.openai.com/v1"),
-		openresponses.WithAPIKey(os.Getenv("OPENRESPONSES_API_KEY")))
+	if err := run(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+}
 
-	resp, err := client.Create(context.Background(), openresponses.Request{
-		Model: env("OPENRESPONSES_MODEL", "gpt-5"),
+func run(ctx context.Context) error {
+	client := openresponses.NewClient(
+		cmp.Or(os.Getenv("OPENRESPONSES_BASE_URL"), "https://api.openai.com/v1"),
+		openresponses.WithAPIKey(os.Getenv("OPENRESPONSES_API_KEY")),
+	)
+	resp, err := client.Create(ctx, openresponses.Request{
+		Model: cmp.Or(os.Getenv("OPENRESPONSES_MODEL"), "gpt-5"),
 		Input: openresponses.Items{openresponses.UserText("Say hello in exactly three words.")},
 	})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
 	fmt.Println(resp.OutputText())
-}
-
-func env(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
+	return nil
 }
