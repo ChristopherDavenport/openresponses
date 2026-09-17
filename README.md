@@ -185,6 +185,16 @@ go run ./examples/server &
 OPENRESPONSES_BASE_URL=http://localhost:8000/v1 go run ./examples/websocket
 ```
 
+`examples/proxy` is a `Handler` over `client.AsAdapter()` with a
+`ResponseStore`, forwarding to Ollama by default. It adds what the
+upstream lacks, the WebSocket transport and stored continuation, so the
+WebSocket example runs against Ollama through it:
+
+```sh
+go run ./examples/proxy &
+OPENRESPONSES_BASE_URL=http://localhost:8000/v1 OPENRESPONSES_MODEL=qwen3:1.7b go run ./examples/websocket
+```
+
 ## Extensions
 
 Unknown types decode to `UnknownItem`, `UnknownContent`, `UnknownTool`,
@@ -238,6 +248,7 @@ library itself depends only on the standard library and
 | `streamtest/` | recording sink and stream validator for adapter tests |
 | `echo/` | deterministic adapter used by the compliance run |
 | `cmd/openresponses-echo` | server binary for the compliance run |
+| `examples/` | client programs, a server, and a proxy over `ClientAdapter` |
 | `conformance/` | nested module: schema validation of every wire shape against the OpenAPI document |
 
 ## License

@@ -121,6 +121,10 @@ func defaultTransport() http.RoundTripper {
 	return t
 }
 
+// BaseURL returns the server the client talks to, without a trailing
+// slash.
+func (c *Client) BaseURL() string { return c.baseURL }
+
 // Create sends a non-streaming request and returns the final response.
 func (c *Client) Create(ctx context.Context, req Request) (*Response, error) {
 	req.Stream = false
