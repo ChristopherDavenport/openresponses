@@ -375,6 +375,12 @@ func (h *Handler) serveCompact(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, req Request, cont continuation) {
 	sink := newSSESink(w, req)
 	sink.previousID = cont.id
+	// The response is saved before its terminal event is written, so a
+	// client that continues from it the moment the event arrives finds
+	// it. A store failure cannot be reported inside a stream that is
+	// already running, so it is dropped here; a store that can fail
+	// should log inside Save.
+	sink.beforeTerminal = func(resp *Response) { _ = h.save(r.Context(), req, resp) }
 	err := h.adapter.CreateStream(r.Context(), req, sink)
 	if err != nil && !sink.started() {
 		if r.Context().Err() == nil {
@@ -382,11 +388,7 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, req Req
 		}
 		return
 	}
-	resp := sink.finish(err)
-	// The stream is already complete; a store failure cannot be reported
-	// to this client, so it is dropped here. A store that can fail should
-	// log inside Save.
-	_ = h.save(r.Context(), req, resp)
+	sink.finish(err)
 }
 
 // sseSink is the EventSink for HTTP streaming.
@@ -394,6 +396,9 @@ type sseSink struct {
 	w          *sseWriter
 	req        Request
 	previousID string
+	// beforeTerminal runs with the final response just before the
+	// terminal event is written.
+	beforeTerminal func(*Response)
 
 	mu       sync.Mutex
 	seq      int64
@@ -434,15 +439,18 @@ func (s *sseSink) writeLocked(ev StreamEvent) error {
 	if err != nil {
 		return fmt.Errorf("openresponses: encode %s: %w", ev.EventType(), err)
 	}
+	s.acc.Add(ev)
+	if _, ok := TerminalResponse(ev); ok {
+		s.terminal = true
+		if s.beforeTerminal != nil {
+			s.beforeTerminal(s.acc.Response())
+		}
+	}
 	if err := s.w.WriteEvent(ev.EventType(), data); err != nil {
 		s.failed = fmt.Errorf("openresponses: write event: %w", err)
 		return s.failed
 	}
 	s.sent = true
-	s.acc.Add(ev)
-	if _, ok := TerminalResponse(ev); ok {
-		s.terminal = true
-	}
 	return nil
 }
 
@@ -452,15 +460,15 @@ func (s *sseSink) started() bool {
 	return s.sent
 }
 
-// finish closes out the stream after the adapter returns and returns
-// the response as the client saw it. When a write failed the stream is
-// left as it is; the response then holds only the events that reached
-// the client, which is terminal only if the terminal event did.
-func (s *sseSink) finish(adapterErr error) *Response {
+// finish closes out the stream after the adapter returns: an adapter
+// error becomes error + response.failed, a missing terminal event is
+// synthesized, and [DONE] ends the stream. When a write already failed
+// the stream is left as it is.
+func (s *sseSink) finish(adapterErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failed != nil {
-		return s.acc.Response()
+		return
 	}
 	if adapterErr != nil && !s.terminal {
 		e := AsError(adapterErr)
@@ -483,7 +491,6 @@ func (s *sseSink) finish(adapterErr error) *Response {
 		_ = s.writeLocked(&ResponseCompletedEvent{Response: resp})
 	}
 	_ = s.w.WriteDone()
-	return s.acc.Response()
 }
 
 // decodeBody reads a JSON body into v, returning an invalid_request
