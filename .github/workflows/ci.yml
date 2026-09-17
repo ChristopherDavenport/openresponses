@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build, vet and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          # The conformance module has its own go.sum; cache both.
+          cache-dependency-path: |
+            go.sum
+            conformance/go.sum
+      - name: Check formatting
+        run: make fmt
+      - name: Check go.mod and go.sum are tidy in every module
+        run: |
+          make tidy
+          git diff --exit-code
+      - name: Build
+        run: make build
+      - name: Vet (library and nested modules)
+        run: make vet
+      - name: Test (library and nested modules)
+        run: make test
+
+  compliance:
+    name: Official compliance suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+      - name: Run the openresponses compliance tests against the echo adapter
+        run: make compliance BUN=bun
