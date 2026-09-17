@@ -62,30 +62,28 @@ func (s *EventStream) Next() bool {
 	}
 	s.mu.Unlock()
 
-	for {
-		frame, ok := s.scanner.Next()
-		if !ok {
-			s.finish(s.scanner.Err(), false)
-			return false
-		}
-		if frame.Data == sseDone {
-			s.finish(nil, true)
-			return false
-		}
-		ev, err := DecodeEvent([]byte(frame.Data))
-		if err != nil {
-			s.finish(fmt.Errorf("decode SSE frame: %w", err), false)
-			return false
-		}
-		s.mu.Lock()
-		s.cur = ev
-		s.acc.Add(ev)
-		if _, isTerminal := TerminalResponse(ev); isTerminal {
-			s.terminal = true
-		}
-		s.mu.Unlock()
-		return true
+	frame, ok := s.scanner.Next()
+	if !ok {
+		s.finish(s.scanner.Err(), false)
+		return false
 	}
+	if frame.Data == sseDone {
+		s.finish(nil, true)
+		return false
+	}
+	ev, err := DecodeEvent([]byte(frame.Data))
+	if err != nil {
+		s.finish(fmt.Errorf("decode SSE frame: %w", err), false)
+		return false
+	}
+	s.mu.Lock()
+	s.cur = ev
+	s.acc.Add(ev)
+	if _, isTerminal := TerminalResponse(ev); isTerminal {
+		s.terminal = true
+	}
+	s.mu.Unlock()
+	return true
 }
 
 // finish records the end of the stream. An EOF without [DONE] and without

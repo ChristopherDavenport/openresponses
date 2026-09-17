@@ -2,11 +2,18 @@ GO ?= go
 BUN ?= $(HOME)/.bun/bin/bun
 COMPLIANCE_DIR ?= .cache/openresponses
 COMPLIANCE_PORT ?= 8000
+COMPLIANCE_REPO ?= https://github.com/openresponses/openresponses.git
+# Commit of openresponses/openresponses the compliance run is pinned to, so
+# an upstream change cannot break CI on its own. Override with
+# COMPLIANCE_REF=main to track upstream (the upstream-drift workflow does).
+COMPLIANCE_REF ?= 92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c
+STATICCHECK ?= $(GO) run honnef.co/go/tools/cmd/staticcheck@latest
+GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@latest
 # Nested modules that are tested alongside the library but keep their own
 # dependencies out of it.
 SUBMODULES = conformance
 
-.PHONY: build test vet fmt tidy compliance spec-update clean
+.PHONY: build test vet fmt tidy lint vuln check compliance spec-update clean
 
 build:
 	$(GO) build ./...
@@ -26,10 +33,22 @@ tidy:
 fmt:
 	gofmt -l . && test -z "$$(gofmt -l .)"
 
-# Runs the official compliance suite from openresponses/openresponses
-# against the echo adapter. Requires bun.
+lint:
+	$(STATICCHECK) ./...
+	@for m in $(SUBMODULES); do (cd $$m && $(STATICCHECK) ./...) || exit 1; done
+
+vuln:
+	$(GOVULNCHECK) ./...
+	@for m in $(SUBMODULES); do (cd $$m && $(GOVULNCHECK) ./...) || exit 1; done
+
+# Everything CI runs, minus the compliance suite.
+check: fmt vet lint vuln test
+
+# Runs the official compliance suite from openresponses/openresponses at
+# COMPLIANCE_REF against the echo adapter. Requires bun.
 compliance: build
-	@test -d $(COMPLIANCE_DIR) || git clone --depth 1 https://github.com/openresponses/openresponses.git $(COMPLIANCE_DIR)
+	@test -d $(COMPLIANCE_DIR)/.git || (git init -q $(COMPLIANCE_DIR) && git -C $(COMPLIANCE_DIR) remote add origin $(COMPLIANCE_REPO))
+	@git -C $(COMPLIANCE_DIR) fetch -q --depth 1 origin $(COMPLIANCE_REF) && git -C $(COMPLIANCE_DIR) checkout -q --detach FETCH_HEAD
 	@cd $(COMPLIANCE_DIR) && $(BUN) install --ignore-scripts --silent
 	$(GO) build -o .cache/openresponses-echo ./cmd/openresponses-echo
 	@.cache/openresponses-echo -addr :$(COMPLIANCE_PORT) & echo $$! > .cache/echo.pid; \

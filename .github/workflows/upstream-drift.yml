@@ -1,0 +1,32 @@
+name: Upstream drift
+
+# Tracks the head of openresponses/openresponses rather than the pinned
+# commit CI uses: runs the compliance suite from upstream main and checks
+# whether the published OpenAPI document has moved away from the copy in
+# testdata/. A failure here means the pin (COMPLIANCE_REF in the Makefile)
+# and the spec copy need a look, not that main is broken.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Compliance and schema against upstream main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: oven-sh/setup-bun@v2
+      - name: Compliance suite from upstream main
+        run: make compliance BUN=bun COMPLIANCE_REF=main
+      - name: Fetch the current OpenAPI document and run the conformance module
+        run: make spec-update
+      - name: Fail if the OpenAPI document changed
+        run: git diff --exit-code -- testdata/

@@ -129,7 +129,6 @@ type validator struct {
 	open      *itemState
 	terminal  bool
 	errorSeen bool
-	lastSeq   int64
 }
 
 type itemState struct {

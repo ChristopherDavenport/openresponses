@@ -1,0 +1,13 @@
+openresponses (Go)
+Copyright (c) 2026 Christopher Davenport
+Licensed under the MIT License; see LICENSE.
+
+This repository redistributes the following third-party material:
+
+testdata/openapi-2026-04-24.json
+    The Open Responses OpenAPI document, version 2026-04-24, copied from
+    https://github.com/openresponses/openresponses
+    (public/openapi/2026-04-24/openapi.json). Copyright the Open Responses
+    project contributors. Licensed under the Apache License, Version 2.0;
+    a copy is at testdata/LICENSE.openresponses. It is used only by the
+    test suite and is not part of the library.
