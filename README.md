@@ -9,9 +9,11 @@ all three transports in both directions:
   `Adapter` interface, with request validation, SSE framing, sequence
   numbering, error envelopes and the WebSocket turn protocol handled for
   you.
-- **Lossless extensions**: slug-prefixed items, content parts, tools,
+- **Lossless passthrough**: slug-prefixed items, content parts, tools,
   annotations and events that the spec does not define are kept verbatim,
-  so a proxy built on this package never drops data.
+  unknown top-level keys survive in `Extra`, and a decoded response
+  re-encodes without keys its source never sent, so a proxy built on
+  this package never drops or invents data.
 
 The server side passes all 17 scenarios of the official compliance suite.
 The core depends only on the standard library plus
@@ -108,7 +110,7 @@ the error event and `response.failed` with the right transport
 semantics, and forwards any `Error.Headers` (for example `Retry-After`
 from an upstream 429) to the HTTP response and the error payload.
 
-`CollectStream` derives `Create` from `CreateStream`, `Stream` turns a
+`CollectStream` derives `Create` from `CreateStream`, `Events` turns a
 streaming adapter into a pull-shaped `iter.Seq2` for in-process use,
 `client.AsAdapter()` serves a remote server as an `Adapter` (so a proxy,
 fallback chain or fan-out composes through one interface, WebSocket
@@ -144,7 +146,9 @@ The handler:
 
 - routes `POST .../responses`, `POST .../responses/compact` and the
   WebSocket upgrade on `GET .../responses`;
-- validates requests and returns `invalid_request` errors with `param`;
+- validates requests and returns `invalid_request` errors with `param`,
+  rejects `background` (it runs every response to completion) and caps
+  bodies at 16 MiB by default (`WithMaxBodyBytes`);
 - assigns `sequence_number`, frames SSE, emits `error` +
   `response.failed` when an adapter fails mid-stream, synthesizes a
   terminal event if the adapter forgets one, and always ends with
@@ -153,16 +157,26 @@ The handler:
   `stream_options` and `background` fields, keeps a per-connection cache
   for `previous_response_id` (consulted before the shared store), returns
   `previous_response_not_found` and evicts the cache entry after a failed
-  continuation, and enforces the 60-minute lifetime with
-  `websocket_connection_limit_reached`.
+  continuation, enforces the 60-minute lifetime with
+  `websocket_connection_limit_reached`, and pings idle connections every
+  30 seconds so a vanished peer is dropped (`WithWebSocketKeepalive`).
 
 ## Extensions
 
 Unknown types decode to `UnknownItem`, `UnknownContent`, `UnknownTool`,
 `UnknownAnnotation` and `UnknownEvent`, which re-marshal their original
-bytes. Register your own decoders with `RegisterItem`, `RegisterContent`,
-`RegisterTool`, `RegisterAnnotation` and `RegisterEvent`. Unknown
-top-level request and response keys are preserved in `Extra`.
+bytes (an `UnknownEvent` takes the sequence number a sink assigns it, so
+a proxied extension event stays in order). Register your own decoders
+with `RegisterItem`, `RegisterContent`, `RegisterTool`,
+`RegisterAnnotation` and `RegisterEvent`. Unknown top-level request and
+response keys are preserved in `Extra`. That passthrough is a policy
+decision for a server: any key a client sends reaches the upstream
+provider unless the adapter clears or filters `Extra`.
+
+Errors built from remote data (an HTTP error response, an error event or
+a WebSocket error frame) carry only the headers that describe a failure,
+such as `Retry-After` and the rate-limit family, so a peer cannot plant
+headers on a server that forwards its error.
 
 ## Compliance
 
@@ -171,10 +185,14 @@ top-level request and response keys are preserved in `Extra`.
 repository, serves the `echo` adapter on port 8000 and runs
 `bin/compliance-test.ts` against it. It needs [bun](https://bun.sh).
 
-`make test` runs the Go suite, which validates every marshalled shape
-against the OpenAPI document in `testdata/`, round-trips golden fixtures
-that include extension types, and exercises the SSE parser, client,
-handler and WebSocket transport with in-process servers.
+`make test` runs the Go suite, which round-trips golden fixtures that
+include extension types and exercises the SSE parser, client, handler
+and WebSocket transport with in-process servers, and then the
+`conformance` module, which validates every marshalled shape against the
+OpenAPI document in `testdata/`. That module is nested so the JSON Schema
+validator it needs stays out of the library's dependency graph; the
+library itself depends only on the standard library and
+`github.com/coder/websocket`.
 
 ## Layout
 
@@ -190,12 +208,13 @@ handler and WebSocket transport with in-process servers.
 | `emitter.go` | `Emitter` and the item writers for streaming adapters |
 | `client.go` | `Client` |
 | `clientadapter.go` | `ClientAdapter`, a remote server as an `Adapter` |
-| `handler.go` | `Handler`, `Adapter`, `EventSink`, `Stream` |
+| `handler.go` | `Handler`, `Adapter`, `EventSink`, `Events` |
 | `store.go` | `ResponseStore`, `MemoryStore`, continuation resolution |
 | `websocket.go` | WebSocket server session and `WebSocketConn` |
 | `streamtest/` | recording sink and stream validator for adapter tests |
 | `echo/` | deterministic adapter used by the compliance run |
 | `cmd/openresponses-echo` | server binary for the compliance run |
+| `conformance/` | nested module: schema validation of every wire shape against the OpenAPI document |
 
 ## License
 

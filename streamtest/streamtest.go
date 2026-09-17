@@ -37,7 +37,7 @@ func (s *Sink) Send(ev openresponses.StreamEvent) error {
 	if s.terminal {
 		return openresponses.ErrTerminalEventSent
 	}
-	if setter, ok := ev.(interface{ SetSequence(int64) }); ok {
+	if setter, ok := ev.(openresponses.SequenceSetter); ok {
 		setter.SetSequence(s.seq)
 	}
 	s.seq++

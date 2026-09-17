@@ -25,9 +25,11 @@ type Adapter interface {
 	// CreateStream emits events to sink and returns when the response is
 	// terminal. The sink assigns sequence numbers.
 	CreateStream(ctx context.Context, req Request, sink EventSink) error
-	// Compact produces a compacted conversation. The library is stateless
-	// over HTTP, so resolving req.PreviousResponseID is the adapter's job:
-	// look it up in your store, or return [PreviousResponseNotFound].
+	// Compact produces a compacted conversation. When the handler has a
+	// [ResponseStore] it resolves req.PreviousResponseID first and the
+	// adapter sees a self-contained input; otherwise resolving it is the
+	// adapter's job: look it up in your own store, or return
+	// [PreviousResponseNotFound].
 	Compact(ctx context.Context, req CompactRequest) (*CompactResponse, error)
 }
 
@@ -75,14 +77,19 @@ func CollectStream(ctx context.Context, s Streamer, req Request) (*Response, err
 	return resp, nil
 }
 
-// Stream runs a streaming adapter in-process and yields its events as
-// they arrive, the pull-shaped counterpart of [Client.CreateStream]. The
-// sequence ends after the terminal event, or with a non-nil error when
-// the adapter fails. Breaking out of the loop cancels the adapter, whose
-// next Send returns the cancellation. Events are delivered through their
-// wire form, so the consumer sees what a client would and later mutation
-// by the adapter is invisible.
-func Stream(ctx context.Context, s Streamer, req Request) iter.Seq2[StreamEvent, error] {
+// Events runs a streaming adapter in-process and yields its events as
+// they arrive, the pull-shaped counterpart of [Client.CreateStream]:
+//
+//	for ev, err := range openresponses.Events(ctx, adapter, req) {
+//		...
+//	}
+//
+// The sequence ends after the terminal event, or with a non-nil error
+// when the adapter fails. Breaking out of the loop cancels the adapter,
+// whose next Send returns the cancellation. Events are delivered through
+// their wire form, so the consumer sees what a client would and later
+// mutation by the adapter is invisible.
+func Events(ctx context.Context, s Streamer, req Request) iter.Seq2[StreamEvent, error] {
 	return func(yield func(StreamEvent, error) bool) {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -172,9 +179,23 @@ func WithResponseStore(store ResponseStore) HandlerOption {
 	return func(h *Handler) { h.store = store }
 }
 
-// WithMaxBodyBytes caps request bodies. The default is 64 MiB.
+// WithMaxBodyBytes caps request bodies and WebSocket frames. The default
+// is 16 MiB, room for a request with several base64 file parts; a body
+// is held in memory whole and parsed more than once, so raise it only as
+// far as the inputs you expect need.
 func WithMaxBodyBytes(n int64) HandlerOption {
 	return func(h *Handler) { h.maxBodyBytes = n }
+}
+
+// WithWebSocketKeepalive sets how often the server pings a WebSocket
+// client. A client that does not answer within the next interval is
+// disconnected, so a peer that vanished without closing does not hold
+// its connection, cache and goroutines until the lifetime expires. The
+// default is 30 seconds; zero disables pings. An idle client is not
+// affected: pings are answered from inside its read call, which
+// [WebSocketConn] keeps running between turns.
+func WithWebSocketKeepalive(d time.Duration) HandlerOption {
+	return func(h *Handler) { h.ws.keepalive = d }
 }
 
 // WithWebSocketLifetime sets the maximum lifetime of a WebSocket
@@ -203,9 +224,10 @@ func WithWebSocketCacheSize(n int) HandlerOption {
 func NewHandler(adapter Adapter, opts ...HandlerOption) *Handler {
 	h := &Handler{
 		adapter:      adapter,
-		maxBodyBytes: 64 << 20,
+		maxBodyBytes: 16 << 20,
 		ws: webSocketConfig{
 			lifetime:  60 * time.Minute,
+			keepalive: 30 * time.Second,
 			cacheSize: 4,
 		},
 	}
@@ -244,6 +266,13 @@ func (h *Handler) serveResponses(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := req.Validate(); err != nil {
 		writeError(w, err)
+		return
+	}
+	if req.Background {
+		// The handler runs every response to completion before answering,
+		// so it cannot honour a request to return immediately; saying so
+		// beats returning a finished response labelled background.
+		writeError(w, InvalidRequest(CodeUnsupportedParameter, "background responses are not supported", "background"))
 		return
 	}
 	cont, err := h.resolve(r.Context(), &req)
@@ -286,12 +315,18 @@ func (h *Handler) resolve(ctx context.Context, req *Request) (continuation, erro
 	return cont, nil
 }
 
-// save records a completed, stored response in the shared store.
+// save records a stored response that reached completed or incomplete in
+// the shared store. The save outlives the request's context: a client
+// that disconnects after the terminal event still produced a response it
+// may continue from.
 func (h *Handler) save(ctx context.Context, req Request, resp *Response) error {
-	if h.store == nil || resp == nil || resp.ID == "" || !req.Stored() || resp.Status == ResponseStatusFailed {
+	if h.store == nil || resp == nil || resp.ID == "" || !req.Stored() {
 		return nil
 	}
-	if err := h.store.Save(ctx, resp.ID, history(req, resp)); err != nil {
+	if !resp.Status.Terminal() || resp.Status == ResponseStatusFailed {
+		return nil
+	}
+	if err := h.store.Save(context.WithoutCancel(ctx), resp.ID, history(req, resp)); err != nil {
 		return fmt.Errorf("save response %q: %w", resp.ID, err)
 	}
 	return nil
@@ -341,11 +376,10 @@ func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, req Req
 	sink := newSSESink(w, req)
 	sink.previousID = cont.id
 	err := h.adapter.CreateStream(r.Context(), req, sink)
-	if r.Context().Err() != nil {
-		return
-	}
 	if err != nil && !sink.started() {
-		writeError(w, err)
+		if r.Context().Err() == nil {
+			writeError(w, err)
+		}
 		return
 	}
 	resp := sink.finish(err)
@@ -391,7 +425,7 @@ func (s *sseSink) Send(ev StreamEvent) error {
 }
 
 func (s *sseSink) writeLocked(ev StreamEvent) error {
-	if setter, ok := ev.(sequenceSetter); ok {
+	if setter, ok := ev.(SequenceSetter); ok {
 		setter.SetSequence(s.seq)
 	}
 	s.seq++
@@ -419,12 +453,14 @@ func (s *sseSink) started() bool {
 }
 
 // finish closes out the stream after the adapter returns and returns
-// the final response, or nil when the client went away.
+// the response as the client saw it. When a write failed the stream is
+// left as it is; the response then holds only the events that reached
+// the client, which is terminal only if the terminal event did.
 func (s *sseSink) finish(adapterErr error) *Response {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.failed != nil {
-		return nil
+		return s.acc.Response()
 	}
 	if adapterErr != nil && !s.terminal {
 		e := AsError(adapterErr)
@@ -509,10 +545,6 @@ func isWebSocketUpgrade(r *http.Request) bool {
 // "resp_3f9a...". Adapters may use it for response and item IDs.
 func NewID(prefix string) string {
 	var b [12]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand only fails when the OS entropy source is broken;
-		// fall back to time so IDs stay unique enough for correlation.
-		return fmt.Sprintf("%s_%x", prefix, time.Now().UnixNano())
-	}
+	rand.Read(b[:]) // never fails since Go 1.24
 	return prefix + "_" + hex.EncodeToString(b[:])
 }

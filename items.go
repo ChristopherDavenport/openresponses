@@ -52,6 +52,20 @@ func (it *Items) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Clone returns a deep copy of the items made through their wire form,
+// so the copy shares nothing with the original. An item that fails to
+// re-encode, which the built-in types never do, is shared instead.
+func (it Items) Clone() Items {
+	if it == nil {
+		return nil
+	}
+	out := make(Items, len(it))
+	for i, item := range it {
+		out[i] = cloneItem(item)
+	}
+	return out
+}
+
 // Message is a message to or from the model. Non-assistant messages carry
 // input_* content parts; assistant messages carry output_text and refusal
 // parts and may be labelled with a Phase.

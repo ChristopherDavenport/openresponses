@@ -16,7 +16,7 @@ func (s *recordingSink) Send(ev StreamEvent) error {
 	if s.fail != nil {
 		return s.fail
 	}
-	if setter, ok := ev.(sequenceSetter); ok {
+	if setter, ok := ev.(SequenceSetter); ok {
 		setter.SetSequence(int64(len(s.events)))
 	}
 	data, err := EncodeEvent(ev)

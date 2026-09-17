@@ -24,6 +24,8 @@ type Client struct {
 	http       *http.Client
 	userAgent  string
 	middleware []func(http.RoundTripper) http.RoundTripper
+
+	maxResponseBytes int64
 }
 
 // ClientOption configures a Client.
@@ -50,6 +52,14 @@ func WithHTTPClient(hc *http.Client) ClientOption {
 	return func(c *Client) { c.http = hc }
 }
 
+// WithMaxResponseBytes caps the size of a JSON response body and of a
+// WebSocket frame the client will accept. The default is 64 MiB. A body
+// over the cap fails with an error rather than growing memory without
+// bound; SSE frames have a separate fixed cap of 16 MiB.
+func WithMaxResponseBytes(n int64) ClientOption {
+	return func(c *Client) { c.maxResponseBytes = n }
+}
+
 // WithHeader adds a header to every request.
 func WithHeader(name, value string) ClientOption {
 	return func(c *Client) { c.headers.Add(name, value) }
@@ -71,15 +81,14 @@ func WithMiddleware(mw func(http.RoundTripper) http.RoundTripper) ClientOption {
 // NewClient returns a client for the server at baseURL, for example
 // "https://api.openai.com/v1". Endpoint paths are appended to it.
 func NewClient(baseURL string, opts ...ClientOption) *Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.ResponseHeaderTimeout = 2 * time.Minute
 	c := &Client{
-		baseURL:    strings.TrimRight(baseURL, "/"),
-		authHeader: "Authorization",
-		authPrefix: "Bearer ",
-		headers:    http.Header{},
-		http:       &http.Client{Transport: transport},
-		userAgent:  "openresponses-go/" + SpecVersion,
+		baseURL:          strings.TrimRight(baseURL, "/"),
+		authHeader:       "Authorization",
+		authPrefix:       "Bearer ",
+		headers:          http.Header{},
+		http:             &http.Client{Transport: defaultTransport()},
+		userAgent:        "openresponses-go/" + SpecVersion,
+		maxResponseBytes: 64 << 20,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -99,6 +108,19 @@ func NewClient(baseURL string, opts ...ClientOption) *Client {
 	return c
 }
 
+// defaultTransport clones http.DefaultTransport with a response header
+// timeout. A program that replaced http.DefaultTransport with another
+// RoundTripper gets that as it is.
+func defaultTransport() http.RoundTripper {
+	t, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultTransport
+	}
+	t = t.Clone()
+	t.ResponseHeaderTimeout = 2 * time.Minute
+	return t
+}
+
 // Create sends a non-streaming request and returns the final response.
 func (c *Client) Create(ctx context.Context, req Request) (*Response, error) {
 	req.Stream = false
@@ -108,7 +130,7 @@ func (c *Client) Create(ctx context.Context, req Request) (*Response, error) {
 	}
 	defer drainAndClose(res.Body)
 	var out Response
-	if err := decodeJSON(res, &out); err != nil {
+	if err := decodeJSON(res, &out, c.maxResponseBytes); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -127,7 +149,7 @@ func (c *Client) CreateStream(ctx context.Context, req Request) (*EventStream, e
 		// stream=true; surface it as a completed stream of one response.
 		defer drainAndClose(res.Body)
 		var out Response
-		if err := decodeJSON(res, &out); err != nil {
+		if err := decodeJSON(res, &out, c.maxResponseBytes); err != nil {
 			return nil, err
 		}
 		return synthesizedStream(ctx, &out), nil
@@ -143,7 +165,7 @@ func (c *Client) Compact(ctx context.Context, req CompactRequest) (*CompactRespo
 	}
 	defer drainAndClose(res.Body)
 	var out CompactResponse
-	if err := decodeJSON(res, &out); err != nil {
+	if err := decodeJSON(res, &out, c.maxResponseBytes); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -252,8 +274,13 @@ func errorTypeForStatus(status int) ErrorType {
 	}
 }
 
-func decodeJSON(res *http.Response, v any) error {
-	if err := json.NewDecoder(res.Body).Decode(v); err != nil {
+// decodeJSON decodes a body of at most max bytes into v.
+func decodeJSON(res *http.Response, v any, max int64) error {
+	lr := &io.LimitedReader{R: res.Body, N: max + 1}
+	if err := json.NewDecoder(lr).Decode(v); err != nil {
+		if lr.N <= 0 {
+			return fmt.Errorf("openresponses: response body exceeds %d bytes", max)
+		}
 		return fmt.Errorf("openresponses: decode response: %w", err)
 	}
 	return nil

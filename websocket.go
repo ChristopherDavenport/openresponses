@@ -14,6 +14,7 @@ import (
 // webSocketConfig holds the server-side WebSocket settings.
 type webSocketConfig struct {
 	lifetime       time.Duration
+	keepalive      time.Duration
 	originPatterns []string
 	cacheSize      int
 }
@@ -34,6 +35,22 @@ type webSocketCreate struct {
 	Background    json.RawMessage `json:"background"`
 }
 
+// forbidden lists the fields a response.create frame must not carry, in
+// the order they are reported.
+func (c webSocketCreate) forbidden() []struct {
+	name string
+	raw  json.RawMessage
+} {
+	return []struct {
+		name string
+		raw  json.RawMessage
+	}{
+		{"stream", c.Stream},
+		{"stream_options", c.StreamOptions},
+		{"background", c.Background},
+	}
+}
+
 // serveWebSocket upgrades the connection and runs turns until the client
 // disconnects or the lifetime expires.
 func (h *Handler) serveWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -51,7 +68,7 @@ func (h *Handler) serveWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn:    conn,
 		cache:   NewMemoryStore(h.ws.cacheSize),
 	}
-	session.run(r.Context(), h.ws.lifetime)
+	session.run(r.Context(), h.ws)
 }
 
 // webSocketSession is one server-side connection. cache is the
@@ -64,7 +81,13 @@ type webSocketSession struct {
 	cache   *MemoryStore
 }
 
-func (s *webSocketSession) run(parent context.Context, lifetime time.Duration) {
+// wsFrame is one message read from a connection.
+type wsFrame struct {
+	typ  websocket.MessageType
+	data []byte
+}
+
+func (s *webSocketSession) run(parent context.Context, cfg webSocketConfig) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	defer func() { _ = s.conn.CloseNow() }()
@@ -72,25 +95,67 @@ func (s *webSocketSession) run(parent context.Context, lifetime time.Duration) {
 	// coder/websocket closes the connection when a Read context expires,
 	// which would drop the lifetime error frame. A separate timer sends
 	// the frame first and then cancels the read loop.
-	timer := time.AfterFunc(lifetime, func() {
+	timer := time.AfterFunc(cfg.lifetime, func() {
 		s.expire(parent)
 		cancel()
 	})
 	defer timer.Stop()
 
-	for {
-		typ, data, err := s.conn.Read(ctx)
-		if err != nil {
-			return
+	// A dedicated reader keeps control frames flowing while a turn runs:
+	// coder/websocket answers pings and collects pongs only inside Read,
+	// and the keepalive below waits for a pong. The channel is unbuffered,
+	// so at most one client frame is read ahead of the turn that consumes
+	// it and turns stay sequential.
+	frames := make(chan wsFrame)
+	go func() {
+		defer close(frames)
+		for {
+			typ, data, err := s.conn.Read(ctx)
+			if err != nil {
+				return
+			}
+			select {
+			case frames <- wsFrame{typ: typ, data: data}:
+			case <-ctx.Done():
+				return
+			}
 		}
-		if typ != websocket.MessageText {
+	}()
+	if cfg.keepalive > 0 {
+		go s.keepalive(ctx, cancel, cfg.keepalive)
+	}
+
+	for f := range frames {
+		if f.typ != websocket.MessageText {
 			if err := s.writeError(ctx, InvalidRequest("invalid_message", "expected a text frame", "")); err != nil {
 				return
 			}
 			continue
 		}
-		if err := s.turn(ctx, data); err != nil {
+		if err := s.turn(ctx, f.data); err != nil {
 			return
+		}
+	}
+}
+
+// keepalive pings the client every interval and ends the session when
+// the pong does not arrive within the next interval. See
+// [WithWebSocketKeepalive].
+func (s *webSocketSession) keepalive(ctx context.Context, cancel context.CancelFunc, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pingCtx, done := context.WithTimeout(ctx, interval)
+			err := s.conn.Ping(pingCtx)
+			done()
+			if err != nil {
+				cancel()
+				return
+			}
 		}
 	}
 }
@@ -119,9 +184,9 @@ func (s *webSocketSession) turn(ctx context.Context, data []byte) error {
 	if head.Type != EventWebSocketResponseCreate {
 		return s.writeError(ctx, InvalidRequest(CodeInvalidValue, fmt.Sprintf("unknown client event type %q", head.Type), "type"))
 	}
-	for name, raw := range map[string]json.RawMessage{"stream": head.Stream, "stream_options": head.StreamOptions, "background": head.Background} {
-		if len(raw) > 0 && string(raw) != "null" {
-			return s.writeError(ctx, InvalidRequest(CodeUnsupportedParameter, name+" must not be sent over WebSocket", name))
+	for _, f := range head.forbidden() {
+		if len(f.raw) > 0 && string(f.raw) != "null" {
+			return s.writeError(ctx, InvalidRequest(CodeUnsupportedParameter, f.name+" must not be sent over WebSocket", f.name))
 		}
 	}
 	var req Request
@@ -177,9 +242,12 @@ func (s *webSocketSession) turn(ctx context.Context, data []byte) error {
 		}
 		return nil
 	}
-	_ = s.cache.Save(ctx, resp.ID, history(req, resp))
+	// The response exists once its terminal event went out; a client
+	// that drops the connection right after may still continue from it.
+	saveCtx := context.WithoutCancel(ctx)
+	_ = s.cache.Save(saveCtx, resp.ID, history(req, resp))
 	if s.store != nil && req.Stored() {
-		if err := s.store.Save(ctx, resp.ID, history(req, resp)); err != nil {
+		if err := s.store.Save(saveCtx, resp.ID, history(req, resp)); err != nil {
 			return s.writeError(ctx, fmt.Errorf("save response %q: %w", resp.ID, err))
 		}
 	}
@@ -219,7 +287,7 @@ func (s *webSocketSink) Send(ev StreamEvent) error {
 	if s.terminal {
 		return ErrTerminalEventSent
 	}
-	if setter, ok := ev.(sequenceSetter); ok {
+	if setter, ok := ev.(SequenceSetter); ok {
 		setter.SetSequence(s.seq)
 	}
 	s.seq++
@@ -241,12 +309,22 @@ func (s *webSocketSink) Send(ev StreamEvent) error {
 
 // WebSocketConn is a client-side WebSocket connection. Turns run one at
 // a time: call Send then read events with Next until a terminal event or
-// error, or use Turn to do both.
+// error, or use Turn to do both. The connection is read continuously in
+// the background, so server pings are answered between turns and a
+// server that closes the connection is noticed at the next Next.
 type WebSocketConn struct {
-	conn *websocket.Conn
+	conn   *websocket.Conn
+	frames chan wsResult
+	stop   context.CancelFunc
 
 	mu     sync.Mutex
 	closed bool
+}
+
+// wsResult is one frame or the error that ended reading.
+type wsResult struct {
+	data []byte
+	err  error
 }
 
 // Dial opens a WebSocket connection to the server's /responses endpoint.
@@ -268,12 +346,49 @@ func (c *Client) Dial(ctx context.Context) (*WebSocketConn, error) {
 		}
 		return nil, fmt.Errorf("openresponses: dial %s: %w", u, err)
 	}
-	conn.SetReadLimit(64 << 20)
-	return &WebSocketConn{conn: conn}, nil
+	conn.SetReadLimit(c.maxResponseBytes)
+	return newWebSocketConn(conn), nil
+}
+
+// newWebSocketConn wraps an open connection and starts its reader.
+func newWebSocketConn(conn *websocket.Conn) *WebSocketConn {
+	readCtx, stop := context.WithCancel(context.Background())
+	w := &WebSocketConn{conn: conn, frames: make(chan wsResult), stop: stop}
+	go w.read(readCtx)
+	return w
+}
+
+// read delivers frames to Next for the life of the connection and ends
+// with the error that stopped it.
+func (w *WebSocketConn) read(ctx context.Context) {
+	defer close(w.frames)
+	for {
+		typ, data, err := w.conn.Read(ctx)
+		if err != nil {
+			w.deliver(ctx, wsResult{err: fmt.Errorf("openresponses: read frame: %w", err)})
+			return
+		}
+		if typ != websocket.MessageText {
+			w.deliver(ctx, wsResult{err: fmt.Errorf("openresponses: unexpected %s frame", typ)})
+			return
+		}
+		if !w.deliver(ctx, wsResult{data: data}) {
+			return
+		}
+	}
+}
+
+func (w *WebSocketConn) deliver(ctx context.Context, r wsResult) bool {
+	select {
+	case w.frames <- r:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 // Send starts a turn. The stream, stream_options and background fields
-// are cleared because the protocol forbids them.
+// are cleared because the protocol forbids them. req is not modified.
 func (w *WebSocketConn) Send(ctx context.Context, req Request) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -283,10 +398,12 @@ func (w *WebSocketConn) Send(ctx context.Context, req Request) error {
 	req.Stream = false
 	req.StreamOptions = nil
 	req.Background = false
-	if req.Extra == nil {
-		req.Extra = map[string]any{}
+	extra := make(map[string]any, len(req.Extra)+1)
+	for k, v := range req.Extra {
+		extra[k] = v
 	}
-	req.Extra["type"] = EventWebSocketResponseCreate
+	extra["type"] = EventWebSocketResponseCreate
+	req.Extra = extra
 	data, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("openresponses: encode response.create: %w", err)
@@ -295,16 +412,21 @@ func (w *WebSocketConn) Send(ctx context.Context, req Request) error {
 }
 
 // Next reads and decodes the next event. Server error frames decode to
-// *ErrorEvent with Status set.
+// *ErrorEvent with Status set. Once reading has failed, or after Close,
+// Next returns the failure and then [ErrStreamClosed].
 func (w *WebSocketConn) Next(ctx context.Context) (StreamEvent, error) {
-	typ, data, err := w.conn.Read(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("openresponses: read frame: %w", err)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case r, ok := <-w.frames:
+		if !ok {
+			return nil, ErrStreamClosed
+		}
+		if r.err != nil {
+			return nil, r.err
+		}
+		return DecodeEvent(r.data)
 	}
-	if typ != websocket.MessageText {
-		return nil, fmt.Errorf("openresponses: unexpected %s frame", typ)
-	}
-	return DecodeEvent(data)
 }
 
 // Turn sends req and drains events until the turn ends. It returns the
@@ -337,5 +459,7 @@ func (w *WebSocketConn) Close() error {
 		return nil
 	}
 	w.closed = true
-	return w.conn.Close(websocket.StatusNormalClosure, "")
+	err := w.conn.Close(websocket.StatusNormalClosure, "")
+	w.stop()
+	return err
 }

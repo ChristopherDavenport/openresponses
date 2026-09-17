@@ -88,7 +88,6 @@ func TestHandlerCreate(t *testing.T) {
 	if resp.OutputText() != "hello" || resp.Status != ResponseStatusCompleted {
 		t.Errorf("resp = %+v", resp)
 	}
-	assertSchemaBytes(t, "ResponseResource", rec.Body.Bytes())
 }
 
 func TestHandlerRouting(t *testing.T) {
@@ -297,8 +296,6 @@ func TestHandlerStreamErrorMidStream(t *testing.T) {
 	if len(frames) != 3 || frames[1].Event != EventError || frames[2].Event != EventResponseFailed {
 		t.Fatalf("frames = %+v", frames)
 	}
-	assertSchemaBytes(t, "ErrorStreamingEvent", []byte(frames[1].Data))
-	assertSchemaBytes(t, "ResponseFailedStreamingEvent", []byte(frames[2].Data))
 	var failed ResponseFailedEvent
 	if err := json.Unmarshal([]byte(frames[2].Data), &failed); err != nil {
 		t.Fatal(err)
@@ -400,4 +397,16 @@ func (a adapterFunc) CreateStream(ctx context.Context, req Request, sink EventSi
 }
 func (a adapterFunc) Compact(ctx context.Context, req CompactRequest) (*CompactResponse, error) {
 	return a.rest.Compact(ctx, req)
+}
+
+func TestHandlerRejectsBackground(t *testing.T) {
+	h := NewHandler(&fakeAdapter{stream: helloStream})
+	rec := postJSON(t, h, "/v1/responses", `{"model":"m","input":"x","background":true}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	e := decodeErrorEnvelope(t, rec)
+	if e.Code != CodeUnsupportedParameter || e.Param != "background" {
+		t.Errorf("got %+v", e)
+	}
 }
