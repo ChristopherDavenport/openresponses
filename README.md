@@ -1,5 +1,10 @@
 # openresponses
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/ChristopherDavenport/openresponses.svg)](https://pkg.go.dev/github.com/ChristopherDavenport/openresponses)
+[![CI](https://github.com/ChristopherDavenport/openresponses/actions/workflows/ci.yml/badge.svg)](https://github.com/ChristopherDavenport/openresponses/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/ChristopherDavenport/openresponses)](https://goreportcard.com/report/github.com/ChristopherDavenport/openresponses)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A small Go library for the [Open Responses](https://www.openresponses.org)
 specification (version 2026-04-24). It models the wire format and speaks
 all three transports in both directions:
@@ -25,7 +30,8 @@ The core depends only on the standard library plus
 go get github.com/ChristopherDavenport/openresponses
 ```
 
-Requires Go 1.25.
+Requires Go 1.25. The library is pre-1.0: minor versions may change the
+API, and [CHANGELOG.md](CHANGELOG.md) records every break.
 
 ## Client
 
@@ -214,10 +220,14 @@ headers on a server that forwards its error.
 
 ## Compliance
 
-`make compliance` clones the official
+`make compliance` fetches the official
 [openresponses/openresponses](https://github.com/openresponses/openresponses)
-repository, serves the `echo` adapter on port 8000 and runs
-`bin/compliance-test.ts` against it. It needs [bun](https://bun.sh).
+repository at the commit pinned in the Makefile, serves the `echo`
+adapter on port 8000 and runs `bin/compliance-test.ts` against it. It
+needs [bun](https://bun.sh). CI runs the same pinned commit; a weekly
+workflow runs the suite from upstream `main` and checks the published
+OpenAPI document against the copy in `testdata/` so drift surfaces
+without breaking pull requests.
 
 `make test` runs the Go suite, which round-trips golden fixtures that
 include extension types and exercises the SSE parser, client, handler
@@ -251,6 +261,14 @@ library itself depends only on the standard library and
 | `examples/` | client programs, a server, and a proxy over `ClientAdapter` |
 | `conformance/` | nested module: schema validation of every wire shape against the OpenAPI document |
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
+the release process, and [SECURITY.md](SECURITY.md) for reporting
+vulnerabilities.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The OpenAPI document under `testdata/` is
+redistributed from the Open Responses project under the Apache License
+2.0; see [NOTICE](NOTICE).
