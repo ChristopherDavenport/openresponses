@@ -166,12 +166,12 @@ type HandlerOption func(*Handler)
 // against store over every transport and save the history of every
 // stored response into it. See [ResponseStore].
 //
-// This option changes what clients observe, not just how the server is
-// wired. With a store, an unknown previous_response_id is answered with
-// previous_response_not_found on every transport. Without one, HTTP
-// requests reach the adapter with the field untouched and the adapter
-// must resolve or reject it, while WebSocket connections still resolve
-// their own recent responses from connection memory as the spec asks.
+// This option changes what clients observe. With a store, an unknown
+// previous_response_id is answered with previous_response_not_found on
+// every transport. Without one, HTTP requests reach the adapter with
+// the field untouched and the adapter must resolve or reject it, while
+// WebSocket connections still resolve their own recent responses from
+// connection memory as the spec asks.
 // Adapters that do not keep history should reject an unresolved
 // previous_response_id with [PreviousResponseNotFound] rather than
 // assume a store is configured.
