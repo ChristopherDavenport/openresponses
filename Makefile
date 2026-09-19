@@ -13,10 +13,16 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@latest
 # dependencies out of it.
 SUBMODULES = conformance
 
-.PHONY: build test vet fmt tidy lint vuln check compliance spec-update clean
+.PHONY: build deps test vet fmt tidy lint vuln check compliance spec-update clean
 
 build:
 	$(GO) build ./...
+
+# The root package is the shared vocabulary and must build from the
+# standard library alone; the WebSocket library belongs to ./websocket.
+deps:
+	@deps=$$($(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' . | grep -v '^github.com/ChristopherDavenport/openresponses' || true); \
+	  test -z "$$deps" || { echo "root package depends on: $$deps"; exit 1; }
 
 test:
 	$(GO) test -race ./...
@@ -42,7 +48,7 @@ vuln:
 	@for m in $(SUBMODULES); do (cd $$m && $(GOVULNCHECK) ./...) || exit 1; done
 
 # Everything CI runs, minus the compliance suite.
-check: fmt vet lint vuln test
+check: fmt vet deps lint vuln test
 
 # Runs the official compliance suite from openresponses/openresponses at
 # COMPLIANCE_REF against the echo adapter. Requires bun.

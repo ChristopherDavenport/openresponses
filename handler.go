@@ -13,7 +13,6 @@ import (
 	"path"
 	"strings"
 	"sync"
-	"time"
 )
 
 // Adapter is what a backend implements to be served by [Handler]. Errors
@@ -147,16 +146,17 @@ func (UnsupportedCompaction) Compact(context.Context, CompactRequest) (*CompactR
 	return nil, InvalidRequest(CodeCompactionNotSupported, "compaction is not supported", "")
 }
 
-// Handler serves an [Adapter] over HTTP. It routes POST .../responses,
-// POST .../responses/compact and the WebSocket upgrade on GET
-// .../responses, so it can be mounted under any prefix:
+// Handler serves an [Adapter] over HTTP. It routes POST .../responses
+// and POST .../responses/compact, so it can be mounted under any prefix:
 //
 //	http.Handle("/v1/", openresponses.NewHandler(adapter))
+//
+// The WebSocket transport lives in the websocket package, which wraps a
+// Handler and adds the upgrade on GET .../responses.
 type Handler struct {
 	adapter      Adapter
 	store        ResponseStore
 	maxBodyBytes int64
-	ws           webSocketConfig
 }
 
 // HandlerOption configures a Handler.
@@ -170,8 +170,8 @@ type HandlerOption func(*Handler)
 // previous_response_id is answered with previous_response_not_found on
 // every transport. Without one, HTTP requests reach the adapter with
 // the field untouched and the adapter must resolve or reject it, while
-// WebSocket connections still resolve their own recent responses from
-// connection memory as the spec asks.
+// WebSocket connections (see the websocket package) still resolve their
+// own recent responses from connection memory as the spec asks.
 // Adapters that do not keep history should reject an unresolved
 // previous_response_id with [PreviousResponseNotFound] rather than
 // assume a store is configured.
@@ -179,45 +179,13 @@ func WithResponseStore(store ResponseStore) HandlerOption {
 	return func(h *Handler) { h.store = store }
 }
 
-// WithMaxBodyBytes caps request bodies and WebSocket frames. The default
-// is 16 MiB, room for a request with several base64 file parts; a body
-// is held in memory whole and parsed more than once, so raise it only as
-// far as the inputs you expect need.
+// WithMaxBodyBytes caps request bodies, and WebSocket frames when the
+// handler is wrapped by the websocket package. The default is 16 MiB,
+// room for a request with several base64 file parts; a body is held in
+// memory whole and parsed more than once, so raise it only as far as
+// the inputs you expect need.
 func WithMaxBodyBytes(n int64) HandlerOption {
 	return func(h *Handler) { h.maxBodyBytes = n }
-}
-
-// WithWebSocketKeepalive sets how often the server pings a WebSocket
-// client. A client that does not answer within the next interval is
-// disconnected, so a peer that vanished without closing does not hold
-// its connection, cache and goroutines until the lifetime expires. The
-// default is 30 seconds; zero disables pings. An idle client is not
-// affected: pings are answered from inside its read call, which
-// [WebSocketConn] keeps running between turns.
-func WithWebSocketKeepalive(d time.Duration) HandlerOption {
-	return func(h *Handler) { h.ws.keepalive = d }
-}
-
-// WithWebSocketLifetime sets the maximum lifetime of a WebSocket
-// connection. The spec fixes it at 60 minutes; shorter values are useful
-// in tests.
-func WithWebSocketLifetime(d time.Duration) HandlerOption {
-	return func(h *Handler) { h.ws.lifetime = d }
-}
-
-// WithWebSocketOrigins sets the origin patterns accepted for WebSocket
-// upgrades, as understood by github.com/coder/websocket. By default only
-// same-origin requests and requests without an Origin header are
-// accepted.
-func WithWebSocketOrigins(patterns ...string) HandlerOption {
-	return func(h *Handler) { h.ws.originPatterns = patterns }
-}
-
-// WithWebSocketCacheSize sets how many recent responses a WebSocket
-// connection remembers for previous_response_id continuation. The
-// default is 4.
-func WithWebSocketCacheSize(n int) HandlerOption {
-	return func(h *Handler) { h.ws.cacheSize = n }
 }
 
 // NewHandler returns a handler serving adapter.
@@ -225,17 +193,23 @@ func NewHandler(adapter Adapter, opts ...HandlerOption) *Handler {
 	h := &Handler{
 		adapter:      adapter,
 		maxBodyBytes: 16 << 20,
-		ws: webSocketConfig{
-			lifetime:  60 * time.Minute,
-			keepalive: 30 * time.Second,
-			cacheSize: 4,
-		},
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
 	return h
 }
+
+// Adapter returns the adapter the handler serves.
+func (h *Handler) Adapter() Adapter { return h.adapter }
+
+// Store returns the shared [ResponseStore] set by [WithResponseStore],
+// or nil. Other transports over the same adapter consult it so a stored
+// response can be continued from any of them.
+func (h *Handler) Store() ResponseStore { return h.store }
+
+// MaxBodyBytes returns the request body limit set by [WithMaxBodyBytes].
+func (h *Handler) MaxBodyBytes() int64 { return h.maxBodyBytes }
 
 // ServeHTTP routes the request by path suffix.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -252,7 +226,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) serveResponses(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet && isWebSocketUpgrade(r) {
-		h.serveWebSocket(w, r)
+		// The upgrade is served by the websocket package; reaching this
+		// handler means it was not wrapped.
+		writeError(w, &Error{StatusCode: http.StatusMethodNotAllowed, Type: ErrorTypeInvalidRequest, Code: "method_not_allowed", Message: "WebSocket is not enabled on this endpoint; use POST"})
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -289,8 +265,8 @@ func (h *Handler) serveResponses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if cont.resolved && resp.PreviousResponseID == nil {
-		resp.PreviousResponseID = &cont.id
+	if cont.Resolved && resp.PreviousResponseID == nil {
+		resp.PreviousResponseID = &cont.ID
 	}
 	if err := h.save(r.Context(), req, resp); err != nil {
 		writeError(w, err)
@@ -301,16 +277,16 @@ func (h *Handler) serveResponses(w http.ResponseWriter, r *http.Request) {
 
 // resolve applies the shared store to a request's previous_response_id.
 // With no store the request passes through untouched.
-func (h *Handler) resolve(ctx context.Context, req *Request) (continuation, error) {
+func (h *Handler) resolve(ctx context.Context, req *Request) (Continuation, error) {
 	if h.store == nil {
-		return continuation{id: req.PreviousResponseID}, nil
+		return Continuation{ID: req.PreviousResponseID}, nil
 	}
-	cont, err := resolveContinuation(ctx, req, h.store)
+	cont, err := ResolveContinuation(ctx, req, h.store)
 	if err != nil {
 		return cont, err
 	}
-	if cont.id != "" && !cont.resolved {
-		return cont, PreviousResponseNotFound(cont.id)
+	if cont.ID != "" && !cont.Resolved {
+		return cont, PreviousResponseNotFound(cont.ID)
 	}
 	return cont, nil
 }
@@ -326,7 +302,7 @@ func (h *Handler) save(ctx context.Context, req Request, resp *Response) error {
 	if !resp.Status.Terminal() || resp.Status == ResponseStatusFailed {
 		return nil
 	}
-	if err := h.store.Save(context.WithoutCancel(ctx), resp.ID, history(req, resp)); err != nil {
+	if err := h.store.Save(context.WithoutCancel(ctx), resp.ID, History(req, resp)); err != nil {
 		return fmt.Errorf("save response %q: %w", resp.ID, err)
 	}
 	return nil
@@ -348,13 +324,13 @@ func (h *Handler) serveCompact(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.store != nil && req.PreviousResponseID != "" {
 		probe := Request{Input: req.Input, PreviousResponseID: req.PreviousResponseID}
-		cont, err := resolveContinuation(r.Context(), &probe, h.store)
+		cont, err := ResolveContinuation(r.Context(), &probe, h.store)
 		if err != nil {
 			writeError(w, err)
 			return
 		}
-		if !cont.resolved {
-			writeError(w, PreviousResponseNotFound(cont.id))
+		if !cont.Resolved {
+			writeError(w, PreviousResponseNotFound(cont.ID))
 			return
 		}
 		req.Input = probe.Input
@@ -372,9 +348,9 @@ func (h *Handler) serveCompact(w http.ResponseWriter, r *http.Request) {
 // stream according to the spec: an adapter error after the first frame
 // becomes error + response.failed; a missing terminal event is
 // synthesized; every stream ends with [DONE].
-func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, req Request, cont continuation) {
+func (h *Handler) streamResponse(w http.ResponseWriter, r *http.Request, req Request, cont Continuation) {
 	sink := newSSESink(w, req)
-	sink.previousID = cont.id
+	sink.previousID = cont.ID
 	// The response is saved before its terminal event is written, so a
 	// client that continues from it the moment the event arrives finds
 	// it. A store failure cannot be reported inside a stream that is
@@ -434,7 +410,7 @@ func (s *sseSink) writeLocked(ev StreamEvent) error {
 		setter.SetSequence(s.seq)
 	}
 	s.seq++
-	stampPreviousID(ev, s.previousID)
+	StampPreviousID(ev, s.previousID)
 	data, err := EncodeEvent(ev)
 	if err != nil {
 		return fmt.Errorf("openresponses: encode %s: %w", ev.EventType(), err)

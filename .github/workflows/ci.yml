@@ -28,6 +28,8 @@ jobs:
             conformance/go.sum
       - name: Build
         run: make build
+      - name: Root package depends on the standard library only
+        run: make deps
       - name: Vet (library and nested modules)
         run: make vet
       - name: Test (library and nested modules)
