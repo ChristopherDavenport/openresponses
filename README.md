@@ -9,11 +9,12 @@ A small Go library for the [Open Responses](https://www.openresponses.org)
 specification (version 2026-04-24). It models the wire format and speaks
 all three transports in both directions:
 
-- **Client**: JSON over HTTP, Server-Sent Events, WebSocket.
+- **Client**: JSON over HTTP, Server-Sent Events, and WebSocket through
+  the `websocket` subpackage.
 - **Server**: an `http.Handler` that exposes any backend through a small
   `Adapter` interface, with request validation, SSE framing, sequence
-  numbering, error envelopes and the WebSocket turn protocol handled for
-  you.
+  numbering and error envelopes handled for you; `websocket.Handler`
+  wraps it and adds the WebSocket turn protocol.
 - **Lossless passthrough**: slug-prefixed items, content parts, tools,
   annotations and events that the spec does not define are kept verbatim,
   unknown top-level keys survive in `Extra`, and a decoded response
@@ -21,8 +22,9 @@ all three transports in both directions:
   this package never drops or invents data.
 
 The server side passes all 17 scenarios of the official compliance suite.
-The core depends only on the standard library plus
-`github.com/coder/websocket`.
+The root package depends on the standard library alone, so it can be the
+shared vocabulary of tool libraries that never open a socket; only the
+`websocket` subpackage pulls in `github.com/coder/websocket`.
 
 ## Install
 
@@ -60,10 +62,12 @@ final, err := stream.Wait() // the response folded from the events, or the failu
 ```
 
 WebSocket turns run one at a time on a connection and support
-`previous_response_id` continuation even with `store: false`:
+`previous_response_id` continuation even with `store: false`. The
+transport is the `websocket` subpackage and dials through the same
+client:
 
 ```go
-conn, err := client.Dial(ctx)
+conn, err := websocket.Dial(ctx, client)
 first, err := conn.Turn(ctx, req)
 second, err := conn.Turn(ctx, openresponses.Request{
     Model: "gpt-5", PreviousResponseID: first.ID,
@@ -86,6 +90,14 @@ type Adapter interface {
 }
 
 http.Handle("/v1/", openresponses.NewHandler(myAdapter))
+```
+
+To serve WebSocket as well, wrap the handler; the wrapper shares the
+adapter, body limit and response store, and passes everything but the
+upgrade through:
+
+```go
+http.Handle("/v1/", websocket.Handler(openresponses.NewHandler(myAdapter), websocket.WithOrigins("app.example")))
 ```
 
 Streaming adapters should not hand-roll the item lifecycle. `Emitter`
@@ -149,8 +161,8 @@ lifecycle ordering, and returns the folded response. See `examples/server` and t
 
 The handler:
 
-- routes `POST .../responses`, `POST .../responses/compact` and the
-  WebSocket upgrade on `GET .../responses`;
+- routes `POST .../responses` and `POST .../responses/compact`, with
+  `websocket.Handler` adding the upgrade on `GET .../responses`;
 - validates requests and returns `invalid_request` errors with `param`,
   rejects `background` (it runs every response to completion) and caps
   bodies at 16 MiB by default (`WithMaxBodyBytes`);
@@ -158,13 +170,14 @@ The handler:
   `response.failed` when an adapter fails mid-stream, synthesizes a
   terminal event if the adapter forgets one, and always ends with
   `[DONE]`;
-- runs WebSocket turns sequentially, rejects the forbidden `stream`,
-  `stream_options` and `background` fields, keeps a per-connection cache
-  for `previous_response_id` (consulted before the shared store), returns
-  `previous_response_not_found` and evicts the cache entry after a failed
-  continuation, enforces the 60-minute lifetime with
-  `websocket_connection_limit_reached`, and pings idle connections every
-  30 seconds so a vanished peer is dropped (`WithWebSocketKeepalive`).
+- with `websocket.Handler`, runs WebSocket turns sequentially, rejects
+  the forbidden `stream`, `stream_options` and `background` fields,
+  keeps a per-connection cache for `previous_response_id` (consulted
+  before the shared store), returns `previous_response_not_found` and
+  evicts the cache entry after a failed continuation, enforces the
+  60-minute lifetime with `websocket_connection_limit_reached`, and
+  pings idle connections every 30 seconds so a vanished peer is dropped
+  (`websocket.WithKeepalive`).
 
 ## Running the examples
 
@@ -234,9 +247,10 @@ include extension types and exercises the SSE parser, client, handler
 and WebSocket transport with in-process servers, and then the
 `conformance` module, which validates every marshalled shape against the
 OpenAPI document in `testdata/`. That module is nested so the JSON Schema
-validator it needs stays out of the library's dependency graph; the
-library itself depends only on the standard library and
-`github.com/coder/websocket`.
+validator it needs stays out of the library's dependency graph. `make
+deps` checks that the root package builds from the standard library
+alone; `github.com/coder/websocket` is reachable only through the
+`websocket` subpackage.
 
 ## Layout
 
@@ -254,7 +268,7 @@ library itself depends only on the standard library and
 | `clientadapter.go` | `ClientAdapter`, a remote server as an `Adapter` |
 | `handler.go` | `Handler`, `Adapter`, `EventSink`, `Events` |
 | `store.go` | `ResponseStore`, `MemoryStore`, continuation resolution |
-| `websocket.go` | WebSocket server session and `WebSocketConn` |
+| `websocket/` | the WebSocket transport: `Handler` wraps the HTTP handler, `Dial` opens a client `Conn` |
 | `streamtest/` | recording sink and stream validator for adapter tests |
 | `echo/` | deterministic adapter used by the compliance run |
 | `cmd/openresponses-echo` | server binary for the compliance run |

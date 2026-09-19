@@ -8,7 +8,6 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 )
@@ -214,23 +213,29 @@ func (c *Client) applyHeaders(h http.Header) {
 	}
 }
 
-// webSocketURL converts the base URL to the ws(s) scheme and appends
-// /responses.
-func (c *Client) webSocketURL() (string, error) {
-	u, err := url.Parse(c.baseURL + "/responses")
-	if err != nil {
-		return "", fmt.Errorf("openresponses: parse base URL: %w", err)
-	}
-	switch u.Scheme {
-	case "http":
-		u.Scheme = "ws"
-	case "https":
-		u.Scheme = "wss"
-	case "ws", "wss":
-	default:
-		return "", fmt.Errorf("openresponses: unsupported scheme %q for WebSocket", u.Scheme)
-	}
-	return u.String(), nil
+// RequestHeaders returns the headers the client adds to every request:
+// those set by [WithHeader], the authorization header and the user
+// agent. Transports built on the client, such as the websocket
+// package, send them on their own requests.
+func (c *Client) RequestHeaders() http.Header {
+	h := http.Header{}
+	c.applyHeaders(h)
+	return h
+}
+
+// HTTPClient returns the underlying HTTP client with any middleware
+// applied, for transports that open their own connections.
+func (c *Client) HTTPClient() *http.Client { return c.http }
+
+// MaxResponseBytes returns the response size limit set by
+// [WithMaxResponseBytes].
+func (c *Client) MaxResponseBytes() int64 { return c.maxResponseBytes }
+
+// ErrorFromResponse decodes a non-2xx response into an *Error. Bodies
+// that are not a spec envelope are kept verbatim in Error.Body. It reads
+// up to 1 MiB of the body and leaves closing it to the caller.
+func ErrorFromResponse(res *http.Response) *Error {
+	return errorFromHTTP(res)
 }
 
 // errorFromHTTP decodes a non-2xx response into an *Error. Bodies that

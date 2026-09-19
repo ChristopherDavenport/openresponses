@@ -3,9 +3,12 @@
 //
 // The package models the request and response envelopes, every item,
 // content part, tool and streaming event defined by the specification,
-// and the three transports: JSON over HTTP, Server-Sent Events, and
-// WebSocket. It is deliberately small: there is no agent loop, no tool
-// runner and no retry policy. Those are consumers of this package.
+// and the HTTP transports: JSON over HTTP and Server-Sent Events. The
+// WebSocket transport is the websocket subpackage, so this package
+// builds from the standard library alone and can be the shared
+// vocabulary of tool libraries that never open a socket. It is
+// deliberately small: there is no agent loop, no tool runner and no
+// retry policy. Those are consumers of this package.
 //
 // # Clients
 //
@@ -19,7 +22,8 @@
 //	fmt.Println(resp.OutputText())
 //
 // [Client.CreateStream] returns an [EventStream] that yields decoded
-// [StreamEvent] values, and [Client.Dial] opens a WebSocket connection.
+// [StreamEvent] values, and websocket.Dial opens a WebSocket connection
+// through the same client.
 //
 // # Servers
 //
@@ -27,9 +31,10 @@
 //
 //	http.Handle("/v1/", openresponses.NewHandler(myAdapter))
 //
-// The handler routes POST /responses, POST /responses/compact and the
-// WebSocket upgrade on GET /responses, validates requests, assigns
-// sequence numbers, frames SSE and maps errors to the spec envelope.
+// The handler routes POST /responses and POST /responses/compact,
+// validates requests, assigns sequence numbers, frames SSE and maps
+// errors to the spec envelope. websocket.Handler wraps it to add the
+// WebSocket upgrade on GET /responses.
 //
 // # Extensions
 //
@@ -91,7 +96,9 @@
 //     with the field untouched while WebSocket connections resolve their
 //     own recent responses regardless, so whether a stale ID yields
 //     previous_response_not_found or reaches the adapter depends on this
-//     option and the transport.
+//     option and the transport. [ResolveContinuation], [History] and
+//     [StampPreviousID] are the pieces a transport outside this package
+//     uses to behave the same way.
 //   - [NewResponse], [NewID], the Response.Complete, Incomplete and Fail
 //     methods and the error constructors ([InvalidRequest],
 //     [PreviousResponseNotFound], [TooManyRequests], [ModelError], ...)

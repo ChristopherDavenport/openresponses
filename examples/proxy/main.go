@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/ChristopherDavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses/websocket"
 )
 
 func main() {
@@ -27,9 +28,9 @@ func main() {
 	)
 	srv := &http.Server{
 		Addr: ":8000",
-		Handler: openresponses.NewHandler(upstream.AsAdapter(),
+		Handler: websocket.Handler(openresponses.NewHandler(upstream.AsAdapter(),
 			openresponses.WithResponseStore(openresponses.NewMemoryStore(256)),
-		),
+		)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Println("proxying", srv.Addr, "to", upstream.BaseURL())

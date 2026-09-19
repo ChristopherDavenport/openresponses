@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"github.com/ChristopherDavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses/websocket"
 )
 
 func main() {
@@ -26,7 +27,7 @@ func run(ctx context.Context) error {
 		cmp.Or(os.Getenv("OPENRESPONSES_BASE_URL"), "https://api.openai.com/v1"),
 		openresponses.WithAPIKey(os.Getenv("OPENRESPONSES_API_KEY")),
 	)
-	conn, err := client.Dial(ctx)
+	conn, err := websocket.Dial(ctx, client)
 	if err != nil {
 		return err
 	}

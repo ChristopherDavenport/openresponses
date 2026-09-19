@@ -56,16 +56,6 @@ func TestClientAdapterProxy(t *testing.T) {
 		t.Fatalf("Compact: %v %+v", err, compact)
 	}
 
-	// WebSocket downstream over HTTP upstream.
-	conn, err := c.Dial(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	turn, err := conn.Turn(ctx, Request{Model: "m", Input: Items{UserText("ws")}})
-	if err != nil || turn.OutputText() != "ws" {
-		t.Fatalf("Turn: %v %+v", err, turn)
-	}
 }
 
 func TestClientAdapterErrorFidelity(t *testing.T) {

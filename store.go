@@ -98,35 +98,37 @@ func (m *MemoryStore) Len() int {
 	return len(m.items)
 }
 
-// continuation is the outcome of resolving a request's
-// previous_response_id.
-type continuation struct {
-	// id is the previous_response_id the client sent, or "".
-	id string
-	// resolved reports that history was found and inlined.
-	resolved bool
-	// source is the store that answered, for eviction on failure.
-	source ResponseStore
+// Continuation is the outcome of [ResolveContinuation].
+type Continuation struct {
+	// ID is the previous_response_id the client sent, or "".
+	ID string
+	// Resolved reports that history was found and inlined.
+	Resolved bool
 }
 
-// resolveContinuation looks req.PreviousResponseID up in stores in order.
+// ResolveContinuation looks req.PreviousResponseID up in stores in order.
 // On a hit a copy of the history is inlined ahead of req.Input, function
 // call outputs are checked against it, and the field is cleared so the
 // adapter sees a self-contained request. The copy means an adapter that
 // mutates its input never reaches into the store. A miss leaves req
-// untouched; the caller decides whether that is an error.
-func resolveContinuation(ctx context.Context, req *Request, stores ...ResponseStore) (continuation, error) {
-	c := continuation{id: req.PreviousResponseID}
-	if c.id == "" {
+// untouched; the caller decides whether that is an error. Nil stores
+// are skipped.
+//
+// [Handler] resolves continuation this way over HTTP; the function is
+// exported for transports built outside this package, such as the
+// websocket package, which consults a connection-local store first.
+func ResolveContinuation(ctx context.Context, req *Request, stores ...ResponseStore) (Continuation, error) {
+	c := Continuation{ID: req.PreviousResponseID}
+	if c.ID == "" {
 		return c, nil
 	}
 	for _, store := range stores {
 		if store == nil {
 			continue
 		}
-		history, ok, err := store.Load(ctx, c.id)
+		history, ok, err := store.Load(ctx, c.ID)
 		if err != nil {
-			return c, fmt.Errorf("load previous response %q: %w", c.id, err)
+			return c, fmt.Errorf("load previous response %q: %w", c.ID, err)
 		}
 		if !ok {
 			continue
@@ -134,8 +136,7 @@ func resolveContinuation(ctx context.Context, req *Request, stores ...ResponseSt
 		merged := make(Items, 0, len(history)+len(req.Input))
 		merged = append(merged, history.Clone()...)
 		merged = append(merged, req.Input...)
-		c.resolved = true
-		c.source = store
+		c.Resolved = true
 		if err := checkFunctionCallOutputs(merged); err != nil {
 			return c, err
 		}
@@ -146,20 +147,23 @@ func resolveContinuation(ctx context.Context, req *Request, stores ...ResponseSt
 	return c, nil
 }
 
-// history returns the conversation to remember for a completed response:
+// History returns the conversation to remember for a completed response
+// under a [ResponseStore]: the request input followed by the output, as
 // a copy, so the store never shares items with the adapter that produced
 // them.
-func history(req Request, resp *Response) Items {
+func History(req Request, resp *Response) Items {
 	out := make(Items, 0, len(req.Input)+len(resp.Output))
 	out = append(out, req.Input...)
 	out = append(out, resp.Output...)
 	return out.Clone()
 }
 
-// stampPreviousID restores previous_response_id on response snapshots
-// when the server resolved the continuation itself and cleared the
-// field before the adapter ran.
-func stampPreviousID(ev StreamEvent, id string) {
+// StampPreviousID restores previous_response_id on the response snapshot
+// an event carries, when the server resolved the continuation itself and
+// cleared the field before the adapter ran. Events without a snapshot,
+// an empty id and a snapshot that already names a previous response are
+// left alone. Transports call it on every event they send.
+func StampPreviousID(ev StreamEvent, id string) {
 	if id == "" {
 		return
 	}

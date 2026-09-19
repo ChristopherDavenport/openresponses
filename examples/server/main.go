@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ChristopherDavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses/websocket"
 )
 
 // shouter is the whole backend: a streaming implementation, Create
@@ -50,7 +51,7 @@ func lastUserText(items openresponses.Items) string {
 func main() {
 	srv := &http.Server{
 		Addr:              ":8000",
-		Handler:           openresponses.NewHandler(shouter{}),
+		Handler:           websocket.Handler(openresponses.NewHandler(shouter{})),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Println("listening on", srv.Addr)

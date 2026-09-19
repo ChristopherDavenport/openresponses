@@ -20,6 +20,7 @@ import (
 
 	"github.com/ChristopherDavenport/openresponses"
 	"github.com/ChristopherDavenport/openresponses/echo"
+	"github.com/ChristopherDavenport/openresponses/websocket"
 )
 
 func main() {
@@ -28,9 +29,9 @@ func main() {
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	handler := openresponses.NewHandler(&echo.Adapter{},
-		openresponses.WithWebSocketLifetime(*lifetime),
-		openresponses.WithWebSocketOrigins("*"),
+	handler := websocket.Handler(openresponses.NewHandler(&echo.Adapter{}),
+		websocket.WithLifetime(*lifetime),
+		websocket.WithOrigins("*"),
 	)
 	srv := &http.Server{
 		Addr:              *addr,

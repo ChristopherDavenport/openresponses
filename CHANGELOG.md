@@ -7,7 +7,23 @@ versions may break the API.
 
 ## Unreleased
 
-Nothing yet.
+- **Breaking**: the WebSocket transport moved to the `websocket`
+  subpackage so the root package depends on the standard library alone.
+  `client.Dial(ctx)` is now `websocket.Dial(ctx, client)` and returns a
+  `*websocket.Conn` (was `*WebSocketConn`); the handler options
+  `WithWebSocketKeepalive`, `WithWebSocketLifetime`,
+  `WithWebSocketOrigins` and `WithWebSocketCacheSize` are now
+  `websocket.WithKeepalive`, `WithLifetime`, `WithOrigins` and
+  `WithCacheSize` on `websocket.Handler`, which wraps a `Handler` to add
+  the upgrade on `GET .../responses`. A bare `Handler` answers an upgrade
+  request with `method_not_allowed`.
+- For transports built outside the package: `ResolveContinuation`,
+  `History` and `StampPreviousID` are exported, as are the `Adapter`,
+  `Store` and `MaxBodyBytes` accessors on `Handler` and `RequestHeaders`,
+  `HTTPClient` and `MaxResponseBytes` on `Client`, plus
+  `ErrorFromResponse`.
+- `make deps` (also in CI) fails if the root package ever depends on
+  anything outside the standard library.
 
 ## v0.0.8 - 2026-09-16
 

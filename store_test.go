@@ -165,48 +165,6 @@ func (recordingAdapter) Compact(_ context.Context, req CompactRequest) (*Compact
 	return nil, InvalidRequest("seen", "previous_response_id="+req.PreviousResponseID, "")
 }
 
-func TestHandlerStoreWebSocketAcrossConnections(t *testing.T) {
-	store := NewMemoryStore(8)
-	srv := httptest.NewServer(NewHandler(echoAdapter{}, WithResponseStore(store)))
-	defer srv.Close()
-	c := NewClient(srv.URL)
-	ctx := testContext(t)
-
-	conn, err := c.Dial(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	first, err := conn.Turn(ctx, Request{Model: "m", Input: Items{UserText("x")}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = conn.Close()
-
-	// A stored response is reachable from a new connection through the
-	// shared store; a store:false one is not.
-	conn2, err := c.Dial(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn2.Close()
-	second, err := conn2.Turn(ctx, Request{Model: "m", PreviousResponseID: first.ID, Input: Items{UserText("y")}})
-	if err != nil || second.OutputText() != "y" {
-		t.Fatalf("continuation via store: %v %+v", err, second)
-	}
-	off := false
-	local, err := conn2.Turn(ctx, Request{Model: "m", Store: &off, Input: Items{UserText("z")}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok, _ := store.Load(ctx, local.ID); ok {
-		t.Error("store:false turn saved to the shared store")
-	}
-	// Still continuable on the same connection through the local cache.
-	if _, err := conn2.Turn(ctx, Request{Model: "m", Store: &off, PreviousResponseID: local.ID, Input: Items{UserText("w")}}); err != nil {
-		t.Errorf("local continuation: %v", err)
-	}
-}
-
 func TestStreamIterator(t *testing.T) {
 	ctx := testContext(t)
 	var types []string
