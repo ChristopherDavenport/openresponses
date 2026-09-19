@@ -5,7 +5,7 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
-## Unreleased
+## v0.0.9 - 2026-09-18
 
 - **Breaking**: the WebSocket transport moved to the `websocket`
   subpackage so the root package depends on the standard library alone.
