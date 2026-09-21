@@ -7,6 +7,8 @@ import (
 	"io"
 	"iter"
 	"sync"
+
+	"github.com/ChristopherDavenport/openresponses/internal/sse"
 )
 
 // EventStream reads decoded events from a Server-Sent Events body.
@@ -23,7 +25,7 @@ import (
 //	final := stream.Response()
 type EventStream struct {
 	body    io.ReadCloser
-	scanner *sseScanner
+	scanner *sse.Scanner
 	acc     Accumulator
 	stop    func() bool
 

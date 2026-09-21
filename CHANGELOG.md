@@ -7,6 +7,12 @@ versions may break the API.
 
 ## Unreleased
 
+- `chatcompletions`: an `Adapter` that serves any Chat Completions
+  endpoint, built on `Client` for address, authentication and
+  transport. `WithMaxTokensField`, `WithReasoningReplay` and `WithExtra`
+  cover the places providers differ. Reasoning items round-trip only
+  into the field `WithReasoningReplay` names, since the protocol has
+  none.
 - Provider adapters for Claude (`providers/anthropic`) and Gemini
   (`providers/gemini`) as separate modules, so their SDKs stay out of
   this module's dependency graph; each has its own changelog. A

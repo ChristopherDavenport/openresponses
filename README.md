@@ -159,6 +159,25 @@ The `streamtest` package unit-tests an adapter's stream without a
 server: `streamtest.Run` records the events, validates the item
 lifecycle ordering, and returns the folded response. See `examples/server` and the `echo` package.
 
+Adapters for model APIs that do not speak Open Responses come with the
+repository. `chatcompletions` serves any Chat Completions endpoint, the
+protocol most providers offer, over the same `Client` options used for
+an Open Responses upstream:
+
+```go
+upstream := openresponses.NewClient("https://api.deepseek.com/v1", openresponses.WithAPIKey(key))
+http.Handle("/v1/", openresponses.NewHandler(chatcompletions.New(upstream)))
+```
+
+`providers/anthropic` and `providers/gemini` serve Claude and Gemini
+through their own SDKs (Vertex AI and Bedrock included) and are
+separate modules so those SDKs stay out of this one's dependency
+graph. Every adapter maps fields it cannot express to an
+`invalid_request` naming the field rather than dropping them, and
+carries provider-specific tools, blocks and reasoning signatures
+through slug-prefixed extension types so a conversation replays without
+loss; each README lists the exceptions.
+
 The handler:
 
 - routes `POST .../responses` and `POST .../responses/compact`, with
@@ -269,6 +288,7 @@ alone; `github.com/coder/websocket` is reachable only through the
 | `handler.go` | `Handler`, `Adapter`, `EventSink`, `Events` |
 | `store.go` | `ResponseStore`, `MemoryStore`, continuation resolution |
 | `websocket/` | the WebSocket transport: `Handler` wraps the HTTP handler, `Dial` opens a client `Conn` |
+| `chatcompletions/` | adapter serving a Chat Completions endpoint, built on `Client` |
 | `streamtest/` | recording sink and stream validator for adapter tests |
 | `echo/` | deterministic adapter used by the compliance run |
 | `cmd/openresponses-echo` | server binary for the compliance run |
