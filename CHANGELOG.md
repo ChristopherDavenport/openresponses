@@ -5,7 +5,7 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
-## Unreleased
+## v0.0.10 - 2026-09-21
 
 - `chatcompletions`: an `Adapter` that serves any Chat Completions
   endpoint, built on `Client` for address, authentication and
