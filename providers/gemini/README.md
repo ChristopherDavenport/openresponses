@@ -35,6 +35,32 @@ or the metadata server). The SDK reads `GOOGLE_API_KEY` or
 `genai.NewClient(ctx, &genai.ClientConfig{})` works from the environment
 alone.
 
+## Reasoning effort
+
+`reasoning.effort` reaches Gemini as one of two mutually exclusive
+fields, and sending the wrong one is a 400. Gemini 3 and later take
+`thinkingLevel`; Gemini 2.5 and earlier reject it and take
+`thinkingBudget`, in tokens. The adapter reads which from the model ID:
+
+| effort | Gemini 3+ (`thinkingLevel`) | Gemini 2.5 (`thinkingBudget`) |
+|---|---|---|
+| `none` | rejected — it always thinks | 0 |
+| `minimal` | `MINIMAL` | 512 |
+| `low` | `LOW` | 4096 |
+| `medium` | `MEDIUM` | 8192 |
+| `high` | `HIGH` | 24576 |
+
+The budgets are the widest values legal across the 2.5 family, which
+Google documents neither a mapping nor per-model ceilings for. `xhigh`
+is rejected in both: there is no level above `high`.
+
+A model ID that does not name its generation — a tuned model, a private
+endpoint — is assumed to take levels. Override it when that is wrong:
+
+```go
+gemini.New(client, gemini.WithThinking(gemini.ThinkingBudget))
+```
+
 ## What the request mapping rejects and ignores
 
 A request field Gemini has no equivalent for comes back as an
@@ -43,9 +69,11 @@ naming the field, rather than being dropped: `parallel_tool_calls:
 false`, `max_tool_calls`, `safety_identifier`, `prompt_cache_key`,
 `truncation: auto`, `text.verbosity`, `file_id` on images and files,
 `compaction` and `item_reference` items, tools and items from other
-providers' slugs, and `reasoning.effort: xhigh`, which has no thinking
-level. `previous_response_id` reaching the adapter means the handler
-has no `ResponseStore`, and is `previous_response_not_found`.
+providers' slugs, and the `reasoning.effort` values the model's
+generation cannot express (see above). `reasoning.summary` alongside
+`reasoning.effort: none` is rejected as contradictory.
+`previous_response_id` reaching the adapter means the handler has no
+`ResponseStore`, and is `previous_response_not_found`.
 
 Accepted without effect: `strict` on function tools and on
 `text.format`, `include`, `stream_options` and `store` (the handler's
@@ -92,6 +120,10 @@ served.
 
 Upstream errors keep their HTTP status; the gRPC status in lower case
 is the code, and a `RetryInfo` detail on a 429 becomes `Retry-After`.
+The exception is 401 and 403, which are the adapter's own credentials
+failing rather than anything the caller sent: those become a
+`server_error` with a 502, so a caller that never supplied a Google
+credential is not told to go and rotate one.
 
 ## Versioning
 

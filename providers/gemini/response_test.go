@@ -359,22 +359,33 @@ func TestMapError(t *testing.T) {
 		typ    openresponses.ErrorType
 		code   string
 		retry  string
+		// want is the status the caller sees, when it differs from the
+		// status Gemini returned.
+		want int
 	}{
-		{"rate limited", 429, `{"error":{"code":429,"message":"quota","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"6.2s"}]}}`, openresponses.ErrorTypeTooManyRequests, "resource_exhausted", "7"},
-		{"invalid", 400, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, "invalid_argument", ""},
-		{"not found", 404, `{"error":{"code":404,"message":"no model","status":"NOT_FOUND"}}`, openresponses.ErrorTypeNotFound, "not_found", ""},
-		{"unauthenticated", 401, `{"error":{"code":401,"message":"key","status":"UNAUTHENTICATED"}}`, openresponses.ErrorTypeInvalidRequest, "unauthenticated", ""},
-		{"unavailable", 503, `{"error":{"code":503,"message":"down","status":"UNAVAILABLE"}}`, openresponses.ErrorTypeServerError, "unavailable", ""},
+		{"rate limited", 429, `{"error":{"code":429,"message":"quota","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"6.2s"}]}}`, openresponses.ErrorTypeTooManyRequests, "resource_exhausted", "7", 0},
+		{"invalid", 400, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, "invalid_argument", "", 0},
+		{"not found", 404, `{"error":{"code":404,"message":"no model","status":"NOT_FOUND"}}`, openresponses.ErrorTypeNotFound, "not_found", "", 0},
+		// 401 and 403 are the adapter's own credentials failing. The caller
+		// never supplied a Google credential, so it reads as a gateway
+		// failure rather than as something the caller got wrong.
+		{"unauthenticated", 401, `{"error":{"code":401,"message":"key","status":"UNAUTHENTICATED"}}`, openresponses.ErrorTypeServerError, "unauthenticated", "", http.StatusBadGateway},
+		{"permission denied", 403, `{"error":{"code":403,"message":"no access","status":"PERMISSION_DENIED"}}`, openresponses.ErrorTypeServerError, "permission_denied", "", http.StatusBadGateway},
+		{"unavailable", 503, `{"error":{"code":503,"message":"down","status":"UNAVAILABLE"}}`, openresponses.ErrorTypeServerError, "unavailable", "", 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			want := tc.want
+			if want == 0 {
+				want = tc.status
+			}
 			_, err := streamtest.Run(context.Background(), newAdapter(t, apiError(tc.status, tc.body)), hello())
 			var oerr *openresponses.Error
 			if !errorsAs(err, &oerr) {
 				t.Fatalf("err = %v", err)
 			}
-			if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != tc.status {
-				t.Fatalf("err = %+v", oerr)
+			if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != want {
+				t.Fatalf("err = %+v (status %d, want %d)", oerr, oerr.HTTPStatus(), want)
 			}
 			if got := oerr.Headers.Get("Retry-After"); got != tc.retry {
 				t.Fatalf("Retry-After = %q, want %q", got, tc.retry)
