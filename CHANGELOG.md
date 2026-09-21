@@ -7,10 +7,11 @@ versions may break the API.
 
 ## Unreleased
 
-- A provider adapter for Gemini (`providers/gemini`) as a separate
-  module, so its SDK stays out of this module's dependency graph; it has
-  its own changelog. A committed `go.work` builds it against the local
-  root, and `make release-check` builds it the way consumers do.
+- Provider adapters for Claude (`providers/anthropic`) and Gemini
+  (`providers/gemini`) as separate modules, so their SDKs stay out of
+  this module's dependency graph; each has its own changelog. A
+  committed `go.work` builds them against the local root, and `make
+  release-check` builds them the way consumers do.
 
 ## v0.0.9 - 2026-09-18
 

@@ -26,6 +26,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             conformance/go.sum
+            providers/anthropic/go.sum
             providers/gemini/go.sum
       - name: Build
         run: make build
@@ -47,6 +48,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             conformance/go.sum
+            providers/anthropic/go.sum
             providers/gemini/go.sum
       - name: Check formatting
         run: make fmt
