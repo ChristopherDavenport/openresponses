@@ -5,6 +5,13 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- A provider adapter for Gemini (`providers/gemini`) as a separate
+  module, so its SDK stays out of this module's dependency graph; it has
+  its own changelog. A committed `go.work` builds it against the local
+  root, and `make release-check` builds it the way consumers do.
+
 ## v0.0.9 - 2026-09-18
 
 - **Breaking**: the WebSocket transport moved to the `websocket`

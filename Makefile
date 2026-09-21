@@ -12,7 +12,7 @@ GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@latest
 # Provider adapters: published nested modules under providers/, one per
 # model API, each requiring a released root version. go.work builds them
 # against the local root; release-check builds them the way consumers do.
-PROVIDERS =
+PROVIDERS = providers/gemini
 # Nested modules that are tested alongside the library but keep their own
 # dependencies out of it.
 SUBMODULES = conformance $(PROVIDERS)
