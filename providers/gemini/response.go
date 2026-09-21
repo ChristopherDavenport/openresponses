@@ -23,7 +23,7 @@ import (
 // part becomes a gemini.* extension item. The candidate's finish reason
 // ends the response.
 func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, sink openresponses.EventSink) error {
-	contents, cfg, err := encodeRequest(req)
+	contents, cfg, err := encodeRequest(req, a.thinking)
 	if err != nil {
 		return err
 	}
@@ -387,6 +387,14 @@ func mapError(err error) error {
 	}
 	var out *openresponses.Error
 	switch {
+	case apiErr.Code == http.StatusUnauthorized, apiErr.Code == http.StatusForbidden:
+		// The adapter's own credentials failing, not the caller's request.
+		// Forwarding the status would send a caller that never supplied a
+		// Google credential off to rotate one it does not hold, so this
+		// reads as what it is: this server cannot reach its upstream.
+		out = openresponses.ServerError(code, apiErr.Message)
+		out.StatusCode = http.StatusBadGateway
+		return out
 	case apiErr.Code == http.StatusNotFound:
 		out = openresponses.NotFound(code, apiErr.Message, "")
 	case apiErr.Code == http.StatusTooManyRequests:

@@ -21,13 +21,13 @@ const slug = "gemini."
 // of one GenerateContent call. Fields Gemini has no equivalent for are
 // rejected with invalid_request naming the field; nothing is dropped
 // silently.
-func encodeRequest(req openresponses.Request) ([]*genai.Content, *genai.GenerateContentConfig, error) {
+func encodeRequest(req openresponses.Request, thinking Thinking) ([]*genai.Content, *genai.GenerateContentConfig, error) {
 	if req.PreviousResponseID != "" {
 		// The handler resolves continuation when it has a store. Reaching
 		// here means it has none, and Gemini keeps no conversation state.
 		return nil, nil, openresponses.PreviousResponseNotFound(req.PreviousResponseID)
 	}
-	cfg, err := encodeConfig(req)
+	cfg, err := encodeConfig(req, thinking)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -55,7 +55,7 @@ func invalid(param, message string) *openresponses.Error {
 
 // encodeConfig maps the request's settings. Model is not part of the
 // config; the caller passes it to the SDK directly.
-func encodeConfig(req openresponses.Request) (*genai.GenerateContentConfig, error) {
+func encodeConfig(req openresponses.Request, thinking Thinking) (*genai.GenerateContentConfig, error) {
 	cfg := &genai.GenerateContentConfig{CandidateCount: 1}
 
 	if req.MaxOutputTokens != nil {
@@ -107,11 +107,11 @@ func encodeConfig(req openresponses.Request) (*genai.GenerateContentConfig, erro
 		return nil, invalid("service_tier", fmt.Sprintf("unknown service_tier %q", req.ServiceTier))
 	}
 
-	thinking, err := encodeReasoning(req.Reasoning)
+	tc, err := encodeReasoning(req.Reasoning, req.Model, thinking)
 	if err != nil {
 		return nil, err
 	}
-	cfg.ThinkingConfig = thinking
+	cfg.ThinkingConfig = tc
 
 	if f := req.Text.Format; f != nil {
 		switch f.Type {
@@ -153,32 +153,69 @@ func f32(p *float64) *float32 {
 	return genai.Ptr(float32(*p))
 }
 
-// encodeReasoning maps effort onto thinking levels. Which levels a model
-// accepts is the model's business: "none" becomes a zero budget and is
-// rejected upstream by models that cannot stop thinking.
-func encodeReasoning(r openresponses.ReasoningConfig) (*genai.ThinkingConfig, error) {
+// effortBudgets is the thinking-token ladder for the generations that take
+// a budget rather than a level. Gemini documents neither a mapping nor the
+// per-model ceilings, so these are the widest values legal across the 2.5
+// family: flash-lite's floor is 512 and flash and flash-lite cap at 24576,
+// where pro would allow 32768.
+var effortBudgets = map[openresponses.ReasoningEffort]int32{
+	openresponses.ReasoningEffortNone:    0,
+	openresponses.ReasoningEffortMinimal: 512,
+	openresponses.ReasoningEffortLow:     4096,
+	openresponses.ReasoningEffortMedium:  8192,
+	openresponses.ReasoningEffortHigh:    24576,
+}
+
+var effortLevels = map[openresponses.ReasoningEffort]genai.ThinkingLevel{
+	openresponses.ReasoningEffortMinimal: genai.ThinkingLevelMinimal,
+	openresponses.ReasoningEffortLow:     genai.ThinkingLevelLow,
+	openresponses.ReasoningEffortMedium:  genai.ThinkingLevelMedium,
+	openresponses.ReasoningEffortHigh:    genai.ThinkingLevelHigh,
+}
+
+// encodeReasoning maps effort onto a thinking level or a thinking budget,
+// whichever the model's generation takes. Sending both is a 400 and
+// sending the wrong one is a 400, so exactly one field is ever set.
+//
+// Which values within an encoding a model accepts stays the model's
+// business: "minimal" exists only on some Gemini 3 models and a budget
+// below a model's floor is raised by Gemini, and both are reported
+// upstream rather than guessed at here.
+func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking) (*genai.ThinkingConfig, error) {
 	if r.IsZero() {
 		return nil, nil
 	}
-	tc := &genai.ThinkingConfig{}
-	switch r.Effort {
-	case "":
-	case openresponses.ReasoningEffortNone:
-		tc.ThinkingBudget = genai.Ptr(int32(0))
-	case openresponses.ReasoningEffortMinimal:
-		tc.ThinkingLevel = genai.ThinkingLevelMinimal
-	case openresponses.ReasoningEffortLow:
-		tc.ThinkingLevel = genai.ThinkingLevelLow
-	case openresponses.ReasoningEffortMedium:
-		tc.ThinkingLevel = genai.ThinkingLevelMedium
-	case openresponses.ReasoningEffortHigh:
-		tc.ThinkingLevel = genai.ThinkingLevelHigh
-	default:
+	if thinking == ThinkingAuto {
+		thinking = thinkingFor(model)
+	}
+	tc := &genai.ThinkingConfig{IncludeThoughts: r.Summary != ""}
+	if r.Effort == "" {
+		return tc, nil
+	}
+	if r.Effort == openresponses.ReasoningEffortNone && r.Summary != "" {
+		// Thinking off and a summary of the thinking are contradictory, and
+		// Gemini rejects the pair rather than picking one.
+		return nil, invalid("reasoning.summary", "reasoning.summary asks for thoughts that reasoning.effort \"none\" switches off")
+	}
+	if thinking == ThinkingBudget {
+		budget, ok := effortBudgets[r.Effort]
+		if !ok {
+			return nil, invalid("reasoning.effort", fmt.Sprintf("reasoning effort %q has no Gemini thinking budget", r.Effort))
+		}
+		tc.ThinkingBudget = genai.Ptr(budget)
+		return tc, nil
+	}
+	if r.Effort == openresponses.ReasoningEffortNone {
+		// A zero budget is the one way to ask for no thinking, and the
+		// generations that take levels reject it: they always think.
+		return nil, invalid("reasoning.effort",
+			"reasoning effort \"none\" has no thinking level; Gemini 3 and later cannot stop thinking")
+	}
+	level, ok := effortLevels[r.Effort]
+	if !ok {
 		return nil, invalid("reasoning.effort", fmt.Sprintf("reasoning effort %q has no Gemini thinking level", r.Effort))
 	}
-	if r.Summary != "" {
-		tc.IncludeThoughts = true
-	}
+	tc.ThinkingLevel = level
 	return tc, nil
 }
 

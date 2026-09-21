@@ -30,7 +30,7 @@ func wantErr(t *testing.T, err error, code, param string) {
 
 func encode(t *testing.T, req openresponses.Request) ([]*genai.Content, *genai.GenerateContentConfig) {
 	t.Helper()
-	contents, cfg, err := encodeRequest(req)
+	contents, cfg, err := encodeRequest(req, ThinkingAuto)
 	if err != nil {
 		t.Fatalf("encodeRequest: %v", err)
 	}
@@ -164,14 +164,14 @@ func TestEncodeInputErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := encodeRequest(openresponses.Request{Input: tc.input})
+			_, _, err := encodeRequest(openresponses.Request{Input: tc.input}, ThinkingAuto)
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
 }
 
 func TestEncodePreviousResponseID(t *testing.T) {
-	_, _, err := encodeRequest(openresponses.Request{PreviousResponseID: "resp_1"})
+	_, _, err := encodeRequest(openresponses.Request{PreviousResponseID: "resp_1"}, ThinkingAuto)
 	wantErr(t, err, openresponses.CodePreviousResponseNotFound, "previous_response_id")
 	if !openresponses.IsNotFound(err) {
 		t.Fatalf("err = %v, want not_found", err)
@@ -227,12 +227,13 @@ func TestEncodeExtensionItem(t *testing.T) {
 	}
 	_, _, err := encodeRequest(openresponses.Request{Input: openresponses.Items{
 		&openresponses.UnknownItem{Type: "gemini.executable_code", Raw: json.RawMessage(`{"type":"gemini.executable_code"}`)},
-	}})
+	}}, ThinkingAuto)
 	wantErr(t, err, openresponses.CodeInvalidValue, "input[0]")
 }
 
 func TestEncodeConfig(t *testing.T) {
 	_, cfg := encode(t, openresponses.Request{
+		Model:             "gemini-3-pro-preview",
 		MaxOutputTokens:   ptr(256),
 		Temperature:       ptr(0.5),
 		TopP:              ptr(0.9),
@@ -265,6 +266,7 @@ func TestEncodeConfig(t *testing.T) {
 	}
 
 	_, cfg = encode(t, openresponses.Request{
+		Model:     "gemini-2.5-flash",
 		Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone},
 		Text:      openresponses.TextConfig{Format: &openresponses.TextFormat{Type: openresponses.TextFormatJSONObject}},
 	})
@@ -279,6 +281,94 @@ func TestEncodeConfig(t *testing.T) {
 	if cfg.ThinkingConfig != nil || cfg.Temperature != nil || cfg.ToolConfig != nil || cfg.Tools != nil || cfg.SystemInstruction != nil {
 		t.Fatalf("empty request should leave the config empty: %+v", cfg)
 	}
+}
+
+// TestThinkingFor pins which generation takes which encoding. Sending the
+// wrong one is a 400 from Gemini, and a model ID that does not name its
+// generation has to fall to levels rather than guess.
+func TestThinkingFor(t *testing.T) {
+	cases := map[string]Thinking{
+		"gemini-2.5-pro":                          ThinkingBudget,
+		"gemini-2.5-flash-lite":                   ThinkingBudget,
+		"gemini-1.5-pro":                          ThinkingBudget,
+		"publishers/google/models/gemini-2.5-pro": ThinkingBudget,
+		"gemini-3-pro-preview":                    ThinkingLevel,
+		"gemini-3.1-flash":                        ThinkingLevel,
+		"projects/p/locations/l/endpoints/123":    ThinkingLevel,
+		"":                                        ThinkingLevel,
+	}
+	for model, want := range cases {
+		if got := thinkingFor(model); got != want {
+			t.Errorf("thinkingFor(%q) = %v, want %v", model, got, want)
+		}
+	}
+}
+
+// TestEncodeReasoning covers both encodings over the whole effort ladder.
+// Exactly one of thinkingLevel and thinkingBudget may be set: Gemini
+// rejects a request carrying both.
+func TestEncodeReasoning(t *testing.T) {
+	cases := []struct {
+		name   string
+		model  string
+		opt    Thinking
+		effort openresponses.ReasoningEffort
+		level  genai.ThinkingLevel
+		budget *int32
+		code   string
+	}{
+		{name: "3 high", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortHigh, level: genai.ThinkingLevelHigh},
+		{name: "3 minimal", model: "gemini-3-flash", effort: openresponses.ReasoningEffortMinimal, level: genai.ThinkingLevelMinimal},
+		{name: "2.5 high", model: "gemini-2.5-pro", effort: openresponses.ReasoningEffortHigh, budget: genai.Ptr(int32(24576))},
+		{name: "2.5 minimal", model: "gemini-2.5-flash", effort: openresponses.ReasoningEffortMinimal, budget: genai.Ptr(int32(512))},
+		{name: "2.5 low", model: "gemini-2.5-flash", effort: openresponses.ReasoningEffortLow, budget: genai.Ptr(int32(4096))},
+		{name: "2.5 medium", model: "gemini-2.5-flash", effort: openresponses.ReasoningEffortMedium, budget: genai.Ptr(int32(8192))},
+		{name: "2.5 none", model: "gemini-2.5-flash", effort: openresponses.ReasoningEffortNone, budget: genai.Ptr(int32(0))},
+		// An override beats the model ID, for a tuned endpoint.
+		{name: "forced budget", model: "gemini-3-pro-preview", opt: ThinkingBudget, effort: openresponses.ReasoningEffortHigh, budget: genai.Ptr(int32(24576))},
+		{name: "forced level", model: "gemini-2.5-pro", opt: ThinkingLevel, effort: openresponses.ReasoningEffortHigh, level: genai.ThinkingLevelHigh},
+		// Gemini 3 always thinks, so "none" cannot be expressed.
+		{name: "3 none", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortNone, code: openresponses.CodeInvalidValue},
+		{name: "xhigh", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortXHigh, code: openresponses.CodeInvalidValue},
+		{name: "xhigh on 2.5", model: "gemini-2.5-pro", effort: openresponses.ReasoningEffortXHigh, code: openresponses.CodeInvalidValue},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := openresponses.ReasoningConfig{Effort: tc.effort}
+			tcfg, err := encodeReasoning(r, tc.model, tc.opt)
+			if tc.code != "" {
+				wantErr(t, err, tc.code, "reasoning.effort")
+				return
+			}
+			if err != nil {
+				t.Fatalf("encodeReasoning: %v", err)
+			}
+			if tcfg.ThinkingLevel != tc.level {
+				t.Errorf("level = %q, want %q", tcfg.ThinkingLevel, tc.level)
+			}
+			switch {
+			case tc.budget == nil && tcfg.ThinkingBudget != nil:
+				t.Errorf("budget = %d, want unset", *tcfg.ThinkingBudget)
+			case tc.budget != nil && tcfg.ThinkingBudget == nil:
+				t.Errorf("budget unset, want %d", *tc.budget)
+			case tc.budget != nil && *tcfg.ThinkingBudget != *tc.budget:
+				t.Errorf("budget = %d, want %d", *tcfg.ThinkingBudget, *tc.budget)
+			}
+			if tcfg.ThinkingLevel != "" && tcfg.ThinkingBudget != nil {
+				t.Errorf("both level and budget set: %+v", tcfg)
+			}
+		})
+	}
+}
+
+// A summary of thinking that was switched off is contradictory, and
+// Gemini rejects the pair rather than picking one.
+func TestEncodeReasoningNoneWithSummary(t *testing.T) {
+	_, err := encodeReasoning(openresponses.ReasoningConfig{
+		Effort:  openresponses.ReasoningEffortNone,
+		Summary: openresponses.ReasoningSummaryAuto,
+	}, "gemini-2.5-flash", ThinkingAuto)
+	wantErr(t, err, openresponses.CodeInvalidValue, "reasoning.summary")
 }
 
 func TestEncodeConfigErrors(t *testing.T) {
@@ -300,7 +390,7 @@ func TestEncodeConfigErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := encodeRequest(tc.req)
+			_, _, err := encodeRequest(tc.req, ThinkingAuto)
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
@@ -346,7 +436,7 @@ func TestEncodeTools(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := encodeRequest(openresponses.Request{Tools: openresponses.Tools{tc.tool}})
+			_, _, err := encodeRequest(openresponses.Request{Tools: openresponses.Tools{tc.tool}}, ThinkingAuto)
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
@@ -376,6 +466,6 @@ func TestEncodeToolChoice(t *testing.T) {
 	}
 	_, _, err := encodeRequest(openresponses.Request{ToolChoice: openresponses.ToolChoice{Allowed: &openresponses.AllowedTools{
 		Mode: openresponses.ToolChoiceAuto, Tools: []openresponses.ToolReference{{Type: "gemini.google_search"}},
-	}}})
+	}}}, ThinkingAuto)
 	wantErr(t, err, openresponses.CodeUnsupportedParameter, "tool_choice.tools[0].type")
 }
