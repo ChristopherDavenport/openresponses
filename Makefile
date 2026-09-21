@@ -16,8 +16,17 @@ PROVIDERS = providers/anthropic providers/gemini
 # Nested modules that are tested alongside the library but keep their own
 # dependencies out of it.
 SUBMODULES = conformance $(PROVIDERS)
+# The modules whose go.mod may replace a first-party one. Exactly one
+# qualifies, and it is named rather than inferred: conformance is not in
+# PROVIDERS, so release-check never builds it the way a consumer would,
+# and no tag shape the release workflow fires on (v*, providers/*/v*)
+# can name it, so it cannot reach the module proxy. Its replace of the
+# root at v0.0.0 is how it validates the tree it ships with. Naming the
+# module keeps a replace appearing in a provider tomorrow a failure.
+NO_REPLACE_EXEMPT = conformance
 
-.PHONY: build deps test vet fmt tidy lint vuln check release-check compliance spec-update clean
+.PHONY: build deps no-replace test vet fmt tidy tidy-check lint vuln check \
+	release-check compliance spec-update clean
 
 build:
 	$(GO) build ./...
@@ -28,6 +37,33 @@ build:
 deps:
 	@deps=$$($(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' . | grep -v '^github.com/ChristopherDavenport/openresponses' || true); \
 	  test -z "$$deps" || { echo "root package depends on: $$deps"; exit 1; }
+
+# No module in the repository may replace a first-party one, except the
+# modules named in NO_REPLACE_EXEMPT. A replace is a property of the main
+# module and consumers ignore it, so a provider carrying one builds green
+# everywhere here — including under release-check, which is the whole
+# point of release-check — while shipping a go.mod that names a root
+# version it was never built against. go.work is how the tree is built
+# against the tree. This runs in check rather than only at release
+# because re-adding a replace is exactly how the hole opens, and one
+# make tidy afterwards settles every other gate. It keys on the module
+# path rather than on "=> ..", so a replace pointing anywhere is caught
+# and a third-party pin is not; the trailing slash keeps a differently
+# named org from matching. There is deliberately no opt-out flag: the
+# exemption list above is the only one, and widening it is a change to
+# this file, reviewable in the diff.
+no-replace:
+	@for m in $(NO_REPLACE_EXEMPT); do \
+	  for p in $(PROVIDERS); do \
+	    test "$$m" != "$$p" || { echo "$$m is exempt from no-replace but is in PROVIDERS; a released module may not replace a first-party one"; exit 1; }; \
+	  done; \
+	done
+	@for m in . $(filter-out $(NO_REPLACE_EXEMPT),$(SUBMODULES)); do \
+	  if grep -v '^[[:space:]]*//' $$m/go.mod | grep -q 'github.com/ChristopherDavenport/.*=>'; then \
+	    echo "$$m/go.mod replaces a first-party module; published modules require released versions and go.work builds them against the tree (see CONTRIBUTING.md)"; \
+	    exit 1; \
+	  fi; \
+	done
 
 test:
 	$(GO) test -race ./...
@@ -41,6 +77,13 @@ tidy:
 	$(GO) mod tidy
 	@for m in $(SUBMODULES); do (cd $$m && $(GO) mod tidy) || exit 1; done
 
+# Fails when go mod tidy would change any go.mod or go.sum, without
+# writing, so a stray dependency shows up in make check and not only in
+# CI's diff.
+tidy-check:
+	$(GO) mod tidy -diff
+	@for m in $(SUBMODULES); do (cd $$m && $(GO) mod tidy -diff) || exit 1; done
+
 fmt:
 	gofmt -l . && test -z "$$(gofmt -l .)"
 
@@ -52,8 +95,12 @@ vuln:
 	$(GOVULNCHECK) ./...
 	@for m in $(SUBMODULES); do (cd $$m && $(GOVULNCHECK) ./...) || exit 1; done
 
-# Everything CI runs, minus the compliance suite.
-check: fmt vet deps lint vuln test
+# Everything CI runs except build, which vet and test already cover, and
+# compliance, which needs bun and clones a repository. Note that the
+# workflows enumerate these targets one per step rather than running
+# make check, so a target added here needs a step in ci.yml or it never
+# runs in CI.
+check: fmt tidy-check vet deps no-replace lint vuln test
 
 # Builds and tests each provider module outside the workspace, against the
 # root version its go.mod requires, which is what consumers get. Run it
