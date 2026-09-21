@@ -7,7 +7,10 @@ Issues and pull requests are welcome.
 The library tracks the Open Responses specification, version
 2026-04-24. Wire shapes follow the specification, not any one provider.
 Anything a provider adds beyond it goes through the extension types
-and never becomes a first-class field.
+and never becomes a first-class field. Adapters for particular model
+APIs live under `providers/`, each as its own module; the root package
+never imports one and never learns a provider's shapes. The design and
+the mapping each adapter follows are in `providers/PLAN.md`.
 
 For anything larger than a bug fix, open an issue first so the shape of
 the change can be discussed before you spend time on it.
@@ -24,11 +27,18 @@ The individual targets are `fmt`, `vet`, `lint`, `vuln`, `test` and
 `tidy`. `lint` and `vuln` run staticcheck and govulncheck through
 `go run`, which may download a newer Go toolchain the first time.
 
-The repository has two modules. The library is at the root; the
-`conformance` module validates every marshalled shape against the
-OpenAPI document in `testdata/` and is nested so its JSON Schema
-dependency stays out of the library's dependency graph. The Makefile
-targets cover both; a bare `go test ./...` at the root does not.
+The repository has several modules, joined by `go.work`. The library
+is at the root. The `conformance` module validates every marshalled
+shape against the OpenAPI document in `testdata/` and is nested so its
+JSON Schema dependency stays out of the library's dependency graph.
+Each directory under `providers/` is a published adapter module for
+one model API; its `go.mod` requires a released root version, and the
+workspace builds it against the local root instead, so one pull
+request can change the root and the adapters it affects. The Makefile
+targets cover every module; a bare `go test ./...` at the root does
+not cross module boundaries, even in workspace mode. Workspace mode
+rejects `-mod=mod`, so a `GOFLAGS=-mod=mod` in your environment has to
+go.
 
 The official compliance suite needs [bun](https://bun.sh):
 
@@ -67,3 +77,12 @@ git push origin v0.1.0
 The release workflow publishes the GitHub release, and the Go module
 proxy picks the version up from the tag. Before v1.0.0 the API may
 change between minor versions; the changelog records every break.
+
+Provider modules are tagged `providers/<name>/vX.Y.Z` and versioned
+independently of the root. Before tagging one, make sure its `go.mod`
+requires a root version that carries everything it uses, then run
+`make release-check`, which builds each provider outside the workspace
+the way consumers do; the release workflow runs the same check for
+provider tags. A root change that breaks a provider ships in order:
+tag the root, bump the provider's `require`, `make release-check`, tag
+the provider. Each provider keeps its own `CHANGELOG.md`.

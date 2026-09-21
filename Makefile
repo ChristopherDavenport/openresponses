@@ -9,14 +9,19 @@ COMPLIANCE_REPO ?= https://github.com/openresponses/openresponses.git
 COMPLIANCE_REF ?= 92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c
 STATICCHECK ?= $(GO) run honnef.co/go/tools/cmd/staticcheck@latest
 GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@latest
+# Provider adapters: published nested modules under providers/, one per
+# model API, each requiring a released root version. go.work builds them
+# against the local root; release-check builds them the way consumers do.
+PROVIDERS =
 # Nested modules that are tested alongside the library but keep their own
 # dependencies out of it.
-SUBMODULES = conformance
+SUBMODULES = conformance $(PROVIDERS)
 
-.PHONY: build deps test vet fmt tidy lint vuln check compliance spec-update clean
+.PHONY: build deps test vet fmt tidy lint vuln check release-check compliance spec-update clean
 
 build:
 	$(GO) build ./...
+	@for m in $(SUBMODULES); do (cd $$m && $(GO) build ./...) || exit 1; done
 
 # The root package is the shared vocabulary and must build from the
 # standard library alone; the WebSocket library belongs to ./websocket.
@@ -49,6 +54,13 @@ vuln:
 
 # Everything CI runs, minus the compliance suite.
 check: fmt vet deps lint vuln test
+
+# Builds and tests each provider module outside the workspace, against the
+# root version its go.mod requires, which is what consumers get. Run it
+# before tagging a provider; it fails while a provider depends on root
+# changes that are not tagged yet.
+release-check:
+	@for m in $(PROVIDERS); do (cd $$m && GOWORK=off $(GO) vet ./... && GOWORK=off $(GO) test ./...) || exit 1; done
 
 # Runs the official compliance suite from openresponses/openresponses at
 # COMPLIANCE_REF against the echo adapter. Requires bun.

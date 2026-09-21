@@ -2,10 +2,12 @@ name: Release
 
 # Pushing an annotated tag vX.Y.Z publishes a GitHub release whose notes are
 # the tag message. A lightweight tag gets auto-generated notes instead.
+# Provider modules are tagged providers/<name>/vX.Y.Z and are checked the
+# way consumers build them before the release is created.
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "providers/*/v*"]
 
 permissions:
   contents: write
@@ -16,6 +18,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        if: startsWith(github.ref_name, 'providers/')
+        with:
+          go-version-file: go.mod
+      - name: Build the provider modules outside the workspace
+        if: startsWith(github.ref_name, 'providers/')
+        run: make release-check
       - name: Create the release from the tag
         env:
           GH_TOKEN: ${{ github.token }}
