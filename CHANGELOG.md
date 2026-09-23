@@ -16,6 +16,15 @@ published module in the repository shares one version line.
   that fails to build with `GOWORK=off`. CI runs `make release-check` on
   every push, so `main` stays taggable rather than the check running
   after a tag is already permanent. `CLAUDE.md` documents the procedure.
+- `make no-replace`, part of `check`, refuses a `replace` of a
+  first-party module in any published module. Consumers ignore a
+  `replace`, so a provider carrying one builds green everywhere here,
+  `release-check` included, while shipping a `go.mod` naming a root
+  version it was never built against. `conformance` is the one
+  exemption, and it is never published.
+- `make tidy-check` fails when `go mod tidy` would change any `go.mod`
+  or `go.sum`, without writing, so a stray requirement surfaces in
+  `check` instead of only in CI's diff.
 - `providers/anthropic` and `providers/gemini` v0.0.11 retract their
   v0.0.1, which required root v0.0.9 and so downgraded consumers that
   resolved it.

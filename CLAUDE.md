@@ -21,13 +21,17 @@ enter the root's dependency graph.
 ## Everyday commands
 
 ```sh
-make check          # fmt, vet, deps, staticcheck, govulncheck, race tests, every module
+make check          # fmt, tidiness, vet, deps, no-replace, staticcheck, govulncheck, race tests
 make release-check  # providers built the way consumers build them (GOWORK=off)
 make compliance     # official suite, needs bun
 ```
 
 A bare `go test ./...` does not cross module boundaries even in
 workspace mode. Use the Makefile targets.
+
+The workflows enumerate targets one per step rather than running `make
+check`, so a target added to `check` needs a step in
+`.github/workflows/ci.yml` or it never runs in CI.
 
 ## Releases
 
@@ -164,4 +168,11 @@ while being unbuildable for consumers. `GOWORK=off` is the consumer's
 view, which is why `make release-check` sets it, CI runs it on every
 push, and `release-guard` runs it before a tag.
 
-Never "fix" a provider build by editing `go.work`.
+Never "fix" a provider build by editing `go.work`, and never by adding a
+`replace` of a first-party module. A `replace` belongs to the main module
+and consumers ignore it, so a provider carrying one builds green
+everywhere here — `release-check` included, which defeats the one gate
+that speaks for consumers — while shipping a `go.mod` naming a root
+version it was never built against. `make no-replace`, part of `check`,
+refuses one; `conformance` is the single exemption, and it is never
+published.
