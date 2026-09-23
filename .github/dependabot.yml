@@ -8,6 +8,16 @@ updates:
     directory: /conformance
     schedule:
       interval: weekly
+  # Named explicitly rather than left to workspace discovery, so provider
+  # updates survive any change to go.work.
+  - package-ecosystem: gomod
+    directory: /providers/anthropic
+    schedule:
+      interval: weekly
+  - package-ecosystem: gomod
+    directory: /providers/gemini
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: /
     schedule:

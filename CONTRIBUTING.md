@@ -83,10 +83,14 @@ document, and fix whatever the conformance tests report.
 
 ## Releases
 
-Releases are annotated tags. The tag message becomes the GitHub release
-notes, so write it as one:
+`CLAUDE.md` holds the full procedure, including what to do when a tag
+goes out wrong. The essentials:
+
+Releases are annotated tags; the tag message becomes the GitHub release
+notes, so write it as one. Guard every tag before pushing it:
 
 ```sh
+make release-guard TAG=v0.1.0
 git tag -a v0.1.0 -m "v0.1.0: one line per user-visible change"
 git push origin v0.1.0
 ```
@@ -95,11 +99,20 @@ The release workflow publishes the GitHub release, and the Go module
 proxy picks the version up from the tag. Before v1.0.0 the API may
 change between minor versions; the changelog records every break.
 
-Provider modules are tagged `providers/<name>/vX.Y.Z` and versioned
-independently of the root. Before tagging one, make sure its `go.mod`
-requires a root version that carries everything it uses, then run
-`make release-check`, which builds each provider outside the workspace
-the way consumers do; the release workflow runs the same check for
-provider tags. A root change that breaks a provider ships in order:
-tag the root, bump the provider's `require`, `make release-check`, tag
-the provider. Each provider keeps its own `CHANGELOG.md`.
+Provider modules are tagged `providers/<name>/vX.Y.Z` and each keeps its
+own `CHANGELOG.md`. All published modules share one version line, and a
+provider must never be numbered below the newest root release: consumers
+select the highest provider version, and its `go.mod` then pins the root,
+so a provider under the root silently downgrades them. `make
+release-guard` enforces this, along with building the provider outside
+the workspace the way consumers do.
+
+When the root and the providers ship together, tag them all from one
+commit and push with `git push origin --atomic`, rather than pushing the
+root tag and following up with the providers. Pushing in stages leaves a
+window in which the only resolvable provider version points at the
+previous root.
+
+Pushed versions are permanent — the proxy and the checksum database keep
+them forever, and deleting a tag does not withdraw one. A bad version is
+superseded and `retract`ed, never deleted.
