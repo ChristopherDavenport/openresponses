@@ -33,3 +33,8 @@ require (
 	google.golang.org/grpc v1.83.2 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+// Tagged from a commit whose go.mod still required openresponses v0.0.9,
+// so selecting it silently downgraded the root module for consumers who
+// were already on v0.0.10. Use v0.0.10 or later.
+retract v0.0.1

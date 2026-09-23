@@ -20,3 +20,8 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/sync v0.16.0 // indirect
 )
+
+// Tagged from a commit whose go.mod still required openresponses v0.0.9,
+// so selecting it silently downgraded the root module for consumers who
+// were already on v0.0.10. Use v0.0.10 or later.
+retract v0.0.1

@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.0.11 - 2026-09-23
+
+- Retracts v0.0.1. That tag was cut from a commit whose `go.mod` still
+  required `openresponses` v0.0.9, so anything selecting it pulled the
+  root module backwards from v0.0.10. The code in v0.0.1 is otherwise
+  the code in v0.0.10; only the root requirement differed. Nothing in
+  this adapter changed, so v0.0.10 and v0.0.11 are the same adapter.
+
+## v0.0.10 - 2026-09-21
 
 - `New` over the SDK's `MessageService`, `Create` over `CreateStream`,
   `WithMaxTokens` and `WithContinuations`; compaction is unsupported.

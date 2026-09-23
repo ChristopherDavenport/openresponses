@@ -73,12 +73,32 @@ jobs:
       - name: Run the pinned openresponses compliance tests against the echo adapter
         run: make compliance BUN=bun
 
+  # Provider modules build against the local root inside the workspace, which
+  # hides a provider whose go.mod requires a root version that does not carry
+  # what it uses. Building them the way consumers do keeps main taggable: the
+  # release workflow runs the same check, but only after the tag is pushed and
+  # the version is already permanent.
+  release-check:
+    name: Providers build against the published root
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            providers/anthropic/go.sum
+            providers/gemini/go.sum
+      - name: Build and test each provider outside the workspace
+        run: make release-check
+
   # Single required status check for branch protection; it fails if any job
   # above failed, was cancelled or was skipped.
   checks:
     name: Checks
     if: always()
-    needs: [test, lint, compliance]
+    needs: [test, lint, compliance, release-check]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every job succeeded

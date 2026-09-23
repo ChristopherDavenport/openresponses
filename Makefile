@@ -17,7 +17,7 @@ PROVIDERS = providers/anthropic providers/gemini
 # dependencies out of it.
 SUBMODULES = conformance $(PROVIDERS)
 
-.PHONY: build deps test vet fmt tidy lint vuln check release-check compliance spec-update clean
+.PHONY: build deps test vet fmt tidy lint vuln check release-check release-guard compliance spec-update clean
 
 build:
 	$(GO) build ./...
@@ -61,6 +61,13 @@ check: fmt vet deps lint vuln test
 # changes that are not tagged yet.
 release-check:
 	@for m in $(PROVIDERS); do (cd $$m && GOWORK=off $(GO) vet ./... && GOWORK=off $(GO) test ./...) || exit 1; done
+
+# Checks one tag is safe to push, before it is pushed. A pushed tag is
+# permanent, so this is the last point at which a mistake is free:
+#   make release-guard TAG=providers/anthropic/v0.0.11
+release-guard:
+	@test -n "$(TAG)" || { echo "usage: make release-guard TAG=<tag>"; exit 1; }
+	@scripts/release-guard.sh "$(TAG)"
 
 # Runs the official compliance suite from openresponses/openresponses at
 # COMPLIANCE_REF against the echo adapter. Requires bun.
