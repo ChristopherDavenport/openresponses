@@ -5,6 +5,21 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## v0.0.11 - 2026-09-23
+
+No library changes; the API is identical to v0.0.10. Released so every
+published module in the repository shares one version line.
+
+- Release process: `make release-guard TAG=...` checks a tag before it
+  is pushed, refusing a version that sorts below the current root
+  release, a required root version the proxy does not serve, or a module
+  that fails to build with `GOWORK=off`. CI runs `make release-check` on
+  every push, so `main` stays taggable rather than the check running
+  after a tag is already permanent. `CLAUDE.md` documents the procedure.
+- `providers/anthropic` and `providers/gemini` v0.0.11 retract their
+  v0.0.1, which required root v0.0.9 and so downgraded consumers that
+  resolved it.
+
 ## v0.0.10 - 2026-09-21
 
 - `chatcompletions`: an `Adapter` that serves any Chat Completions
