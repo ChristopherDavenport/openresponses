@@ -20,12 +20,18 @@ the change can be discussed before you spend time on it.
 Go 1.25 or later is required. The full local check is:
 
 ```sh
-make check        # gofmt, vet, staticcheck, govulncheck, race tests, both modules
+make check        # gofmt, tidiness, vet, staticcheck, govulncheck, race tests, every module
 ```
 
-The individual targets are `fmt`, `vet`, `lint`, `vuln`, `test` and
-`tidy`. `lint` and `vuln` run staticcheck and govulncheck through
-`go run`, which may download a newer Go toolchain the first time.
+The individual targets are `fmt`, `tidy-check`, `vet`, `deps`,
+`no-replace`, `lint`, `vuln`, `test` and `tidy`. `lint` and `vuln` run
+staticcheck and govulncheck through `go run`, which may download a
+newer Go toolchain the first time. `check` is everything CI runs except
+`build`, which `vet` and `test` already cover, and `compliance`, which
+needs bun and clones a repository; run that one separately before a
+release. The workflows enumerate the targets one per step rather than
+running `make check`, so a target added to `check` needs a step in
+`.github/workflows/ci.yml` too.
 
 The repository has several modules, joined by `go.work`. The library
 is at the root. The `conformance` module validates every marshalled
@@ -39,6 +45,17 @@ targets cover every module; a bare `go test ./...` at the root does
 not cross module boundaries, even in workspace mode. Workspace mode
 rejects `-mod=mod`, so a `GOFLAGS=-mod=mod` in your environment has to
 go.
+
+A provider must not carry a `replace` of the root. A `replace` is a
+property of the main module and consumers ignore it, so a provider
+holding one builds green here — including under `release-check` — while
+shipping a `go.mod` naming a root version it was never built against.
+`make no-replace`, part of `check`, refuses one. `conformance` is the
+single exemption, named in `NO_REPLACE_EXEMPT` in the Makefile: it is
+never published, so its `replace` of the root at `v0.0.0` reaches no
+consumer. A module that genuinely needs one is a change to that
+variable, and `no-replace` refuses to exempt anything listed in
+`PROVIDERS`.
 
 The official compliance suite needs [bun](https://bun.sh):
 
