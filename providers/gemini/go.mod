@@ -38,3 +38,5 @@ require (
 // so selecting it silently downgraded the root module for consumers who
 // were already on v0.0.10. Use v0.0.10 or later.
 retract v0.0.1
+
+replace github.com/ChristopherDavenport/openresponses => ../..

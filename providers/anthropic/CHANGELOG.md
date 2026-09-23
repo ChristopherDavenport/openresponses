@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Requires the root at the version this module is released at, rather
+  than at the previous release, and carries a `replace` of the root
+  pointing at the tree. Taking this module alone now resolves the root
+  commit it was built and tested against.
+
 ## v0.0.11 - 2026-09-23
 
 - Retracts v0.0.1. That tag was cut from a commit whose `go.mod` still

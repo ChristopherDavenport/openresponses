@@ -9,24 +9,23 @@ COMPLIANCE_REPO ?= https://github.com/openresponses/openresponses.git
 COMPLIANCE_REF ?= 92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c
 STATICCHECK ?= $(GO) run honnef.co/go/tools/cmd/staticcheck@latest
 GOVULNCHECK ?= $(GO) run golang.org/x/vuln/cmd/govulncheck@latest
+# The module path of the root, which every first-party require and
+# replace is written against. go list -m reports every module in the
+# workspace, so the root has to be asked for outside it.
+MODULE := $(shell GOWORK=off $(GO) list -m)
+
 # Provider adapters: published nested modules under providers/, one per
-# model API, each requiring a released root version. go.work builds them
-# against the local root; release-check builds them the way consumers do.
+# model API. Each requires the root at exactly the version the whole
+# repository is released at, and replaces it with the tree — see
+# replaces below, and CLAUDE.md for why the two go together.
 PROVIDERS = providers/anthropic providers/gemini
 # Nested modules that are tested alongside the library but keep their own
-# dependencies out of it.
+# dependencies out of it. conformance is never published; its root
+# requirement is v0.0.0 and means nothing, which is the point.
 SUBMODULES = conformance $(PROVIDERS)
-# The modules whose go.mod may replace a first-party one. Exactly one
-# qualifies, and it is named rather than inferred: conformance is not in
-# PROVIDERS, so release-check never builds it the way a consumer would,
-# and no tag shape the release workflow fires on (v*, providers/*/v*)
-# can name it, so it cannot reach the module proxy. Its replace of the
-# root at v0.0.0 is how it validates the tree it ships with. Naming the
-# module keeps a replace appearing in a provider tomorrow a failure.
-NO_REPLACE_EXEMPT = conformance
 
-.PHONY: build deps no-replace test vet fmt tidy tidy-check lint vuln check \
-	release-check release-guard compliance spec-update clean
+.PHONY: build deps replaces test vet fmt tidy tidy-check lint vuln check \
+	release-guard release release-commit compliance spec-update clean
 
 build:
 	$(GO) build ./...
@@ -38,32 +37,22 @@ deps:
 	@deps=$$($(GO) list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' . | grep -v '^github.com/ChristopherDavenport/openresponses' || true); \
 	  test -z "$$deps" || { echo "root package depends on: $$deps"; exit 1; }
 
-# No module in the repository may replace a first-party one, except the
-# modules named in NO_REPLACE_EXEMPT. A replace is a property of the main
-# module and consumers ignore it, so a provider carrying one builds green
-# everywhere here — including under release-check, which is the whole
-# point of release-check — while shipping a go.mod that names a root
-# version it was never built against. go.work is how the tree is built
-# against the tree. This runs in check rather than only at release
-# because re-adding a replace is exactly how the hole opens, and one
-# make tidy afterwards settles every other gate. It keys on the module
-# path rather than on "=> ..", so a replace pointing anywhere is caught
-# and a third-party pin is not; the trailing slash keeps a differently
-# named org from matching. There is deliberately no opt-out flag: the
-# exemption list above is the only one, and widening it is a change to
-# this file, reviewable in the diff.
-no-replace:
-	@for m in $(NO_REPLACE_EXEMPT); do \
-	  for p in $(PROVIDERS); do \
-	    test "$$m" != "$$p" || { echo "$$m is exempt from no-replace but is in PROVIDERS; a released module may not replace a first-party one"; exit 1; }; \
-	  done; \
-	done
-	@for m in . $(filter-out $(NO_REPLACE_EXEMPT),$(SUBMODULES)); do \
-	  if grep -v '^[[:space:]]*//' $$m/go.mod | grep -q 'github.com/ChristopherDavenport/.*=>'; then \
-	    echo "$$m/go.mod replaces a first-party module; published modules require released versions and go.work builds them against the tree (see CONTRIBUTING.md)"; \
-	    exit 1; \
-	  fi; \
-	done
+# Every first-party module a nested module requires must also be
+# replaced, at a path that exists. This is the inverse of the rule this
+# repository used to carry, and it is load-bearing rather than cosmetic.
+#
+# Every published module is released at one version, from one commit,
+# and requires its siblings at exactly that version — a version the proxy
+# cannot serve until the tag is pushed. go mod tidy ignores go.work, so
+# the replace is what lets the release commit resolve, tidy and build.
+# Lose one and the next release fails at make tidy, or silently pins that
+# module to the previous release.
+#
+# A replace is a property of the main module, so consumers ignore it and
+# get the require. That is safe here only because the require names the
+# commit the module is tagged from; release-guard is what proves it.
+replaces:
+	@scripts/check-replaces.sh $(SUBMODULES)
 
 test:
 	$(GO) test -race ./...
@@ -100,21 +89,90 @@ vuln:
 # workflows enumerate these targets one per step rather than running
 # make check, so a target added here needs a step in ci.yml or it never
 # runs in CI.
-check: fmt tidy-check vet deps no-replace lint vuln test
-
-# Builds and tests each provider module outside the workspace, against the
-# root version its go.mod requires, which is what consumers get. Run it
-# before tagging a provider; it fails while a provider depends on root
-# changes that are not tagged yet.
-release-check:
-	@for m in $(PROVIDERS); do (cd $$m && GOWORK=off $(GO) vet ./... && GOWORK=off $(GO) test ./...) || exit 1; done
+check: fmt tidy-check vet deps replaces lint vuln test
 
 # Checks one tag is safe to push, before it is pushed. A pushed tag is
-# permanent, so this is the last point at which a mistake is free:
-#   make release-guard TAG=providers/anthropic/v0.0.11
+# permanent — the proxy and the checksum database keep the version
+# forever — so this is the last point at which a mistake is free:
+#   make release-guard TAG=providers/anthropic/v0.0.12
 release-guard:
 	@test -n "$(TAG)" || { echo "usage: make release-guard TAG=<tag>"; exit 1; }
 	@scripts/release-guard.sh "$(TAG)"
+
+# Every tag a release writes: the root and one per provider, all at the
+# same version, all from the one commit below. conformance is not here;
+# it is never published.
+RELEASE_TAGS = $(VERSION) $(patsubst %,%/$(VERSION),$(PROVIDERS))
+
+# Cut a release:
+#
+#   make release VERSION=v0.1.0
+#
+# Every published module is released at one version, from one commit, and
+# requires the root at exactly that version. So the first thing this does
+# is point every provider at VERSION — a version that does not exist yet.
+# That resolves because each provider replaces the root with the tree
+# (see replaces above); tidy, build and test all see the code being
+# tagged, which is the code the version will contain.
+#
+# The consequence worth naming: a consumer who takes only
+# providers/anthropic at vX.Y.Z gets root vX.Y.Z, the exact commit that
+# provider was built and tested against. There is no drift to gate
+# against, which is why there is no release-check here.
+#
+# --atomic lands every ref in one transaction, so no window exists in
+# which one tag is visible without the others, and none in which a
+# published go.mod names a version the proxy cannot serve. Staging the
+# pushes is what opened the window that mis-numbered providers/*/v0.0.1.
+#
+# The root is guarded and tagged first, then each provider, because a
+# provider's guard proves the root tag of that version names this commit
+# — which it cannot do before that tag exists. Every tag is local until
+# the push on the last line; if a guard refuses, undo with
+# git reset --hard HEAD~1 and git tag -d the tags written.
+release: release-commit
+	@scripts/release-guard.sh "$(VERSION)"
+	@notes="$$(scripts/release-notes.sh $(VERSION))" || exit 1; \
+	 git tag -a $(VERSION) -m "$$notes"
+	@set -e; for m in $(PROVIDERS); do \
+	  scripts/release-guard.sh "$$m/$(VERSION)"; \
+	  notes="$$(scripts/release-notes.sh $(VERSION) $$m)"; \
+	  git tag -a $$m/$(VERSION) -m "$$notes"; \
+	done
+	git push origin --atomic HEAD $(RELEASE_TAGS)
+
+# Bump every first-party requirement to VERSION, date every changelog
+# that has an Unreleased section, check everything, commit. Nothing here
+# is pushed, so a failure costs a git reset and no more. TRAILER, when
+# set, is appended to the commit message.
+#
+# The root changelog must have an Unreleased section; a provider that did
+# not change this release need not, and its tag then carries the root's
+# notes. Every module is tagged either way, because every module shares
+# the version.
+#
+# go mod tidy is free to move a requirement the bump just set, so what
+# landed is read back and asserted before anything is committed.
+#
+# The changelogs are dated through a temp file rather than sed -i, which
+# is a GNU-ism: BSD sed reads the argument after -i as a backup suffix,
+# so the GNU spelling fails outright on macOS, where these releases are
+# cut.
+release-commit:
+	@test -n "$(VERSION)" || { echo "usage: make release VERSION=vX.Y.Z"; exit 1; }
+	@test "$(origin PROVIDERS)" = file || { echo "do not override PROVIDERS here: a command-line override propagates into the bump and check below, so a module would be tagged having checked a subset."; exit 1; }
+	@grep -q '^## Unreleased$$' CHANGELOG.md || { echo "CHANGELOG.md has no Unreleased section"; exit 1; }
+	@test -z "$$(git status --porcelain)" || { echo "working tree is not clean"; exit 1; }
+	@scripts/versions.sh set $(VERSION) $(PROVIDERS)
+	@set -e; for c in CHANGELOG.md $(patsubst %,%/CHANGELOG.md,$(PROVIDERS)); do \
+	  grep -q '^## Unreleased$$' $$c || continue; \
+	  sed 's/^## Unreleased$$/## $(VERSION) - '"$$(date +%F)"'/' $$c > $$c.tmp \
+	    && mv $$c.tmp $$c || { rm -f $$c.tmp; exit 1; }; \
+	done
+	$(MAKE) tidy
+	$(MAKE) check
+	@scripts/versions.sh check $(VERSION) $(PROVIDERS)
+	git add -A && git commit -q -m "Release $(VERSION)" $(if $(TRAILER),-m "$(TRAILER)")
 
 # Runs the official compliance suite from openresponses/openresponses at
 # COMPLIANCE_REF against the echo adapter. Requires bun.

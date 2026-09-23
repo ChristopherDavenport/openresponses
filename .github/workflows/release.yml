@@ -2,8 +2,12 @@ name: Release
 
 # Pushing an annotated tag vX.Y.Z publishes a GitHub release whose notes are
 # the tag message. A lightweight tag gets auto-generated notes instead.
-# Provider modules are tagged providers/<name>/vX.Y.Z and are checked the
-# way consumers build them before the release is created.
+#
+# A release pushes every tag in one atomic push and GitHub fires one run
+# per tag ref, so the runs are independent and may finish in any order.
+# Provider modules are tagged providers/<name>/vX.Y.Z and are built here
+# as a consumer gets them — outside the workspace, against the root
+# version their published go.mod names, which is this same commit's tag.
 
 on:
   push:
@@ -22,9 +26,11 @@ jobs:
         if: startsWith(github.ref_name, 'providers/')
         with:
           go-version-file: go.mod
-      - name: Build the provider modules outside the workspace
+      - name: Build the tagged provider outside the workspace
         if: startsWith(github.ref_name, 'providers/')
-        run: make release-check
+        env:
+          TAG: ${{ github.ref_name }}
+        run: cd "${TAG%/v*}" && GOWORK=off go build ./... && GOWORK=off go test ./...
       - name: Create the release from the tag
         env:
           GH_TOKEN: ${{ github.token }}
