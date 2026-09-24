@@ -25,7 +25,7 @@ PROVIDERS = providers/anthropic providers/gemini
 SUBMODULES = conformance $(PROVIDERS)
 
 .PHONY: build deps replaces test vet fmt tidy tidy-check lint vuln check \
-	release-guard release release-commit compliance spec-update clean
+	extracted release-guard release release-commit compliance spec-update clean
 
 build:
 	$(GO) build ./...
@@ -90,6 +90,31 @@ vuln:
 # make check, so a target added here needs a step in ci.yml or it never
 # runs in CI.
 check: fmt tidy-check vet deps replaces lint vuln test
+
+# Builds, vets and tests each published nested module the way a consumer
+# gets it: extracted to a directory with no parent go.mod, with the
+# in-tree replace dropped, so the require line is answered by the proxy.
+# replaces above checks that a require is present and release-guard
+# checks that it names the version being tagged; both are claims about a
+# version string, and neither compiles anything against it.
+#
+# This repository had this check, in release-guard.sh at v0.0.11: "build
+# it the way a consumer does: outside the workspace, against the
+# published root rather than the checkout next door". It worked because
+# the provider go.mod carried no replace then. Introducing the replace at
+# v0.0.12 turned that same line into a build against the tree, because
+# GOWORK=off stopped meaning "no local root". Dropping the replace here
+# is what makes it mean again what it says.
+#
+# PROVIDERS, not SUBMODULES: conformance is never published, so its
+# v0.0.0 root requirement is not a claim about anything.
+#
+# Needs the network, so it is not part of check. It could not be anyway:
+# release-commit points every require at the version being released, and
+# the proxy cannot serve that until the tag is pushed. CI runs it on pull
+# requests and on main.
+extracted:
+	@scripts/check-extracted.sh $(PROVIDERS)
 
 # Checks one tag is safe to push, before it is pushed. A pushed tag is
 # permanent — the proxy and the checksum database keep the version
