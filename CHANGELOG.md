@@ -5,6 +5,17 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- Each provider module now requires the root at exactly the version it
+  is released at, rather than at the previous release, and carries a
+  `replace` of the root pointing at the tree. A consumer who takes only
+  `providers/anthropic` at a version now gets the root commit that
+  provider was built and tested against, instead of the one before it.
+  Consumers ignore a `replace` in a dependency, so only the `require`
+  reaches them; the published `go.sum` files no longer carry first-party
+  entries. This is the shape OpenTelemetry-Go publishes.
+
 ## v0.0.11 - 2026-09-23
 
 No library changes; the API is identical to v0.0.10. Released so every

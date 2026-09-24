@@ -21,9 +21,9 @@ enter the root's dependency graph.
 ## Everyday commands
 
 ```sh
-make check          # fmt, tidiness, vet, deps, no-replace, staticcheck, govulncheck, race tests
-make release-check  # providers built the way consumers build them (GOWORK=off)
-make compliance     # official suite, needs bun
+make check      # fmt, tidiness, vet, deps, replaces, staticcheck, govulncheck, race tests
+make compliance # official suite, needs bun
+make release VERSION=vX.Y.Z   # the whole release; see below before running it
 ```
 
 A bare `go test ./...` does not cross module boundaries even in
@@ -48,103 +48,113 @@ guard below exists to run before that line.
 
 ### The versioning rule
 
-All published modules share one version line. **A provider version must
-never sort below the newest root version.**
+All published modules are released **at one version, from one commit**,
+and each requires the root at **exactly that version**.
 
-Consumers resolve the highest provider version available, and that
-provider's `go.mod` then pins the root. A provider numbered below the
-root therefore drags every consumer's root module *backwards*, silently,
-through minimal version selection.
+Two things follow, and both matter:
 
-This is exactly what happened on 2026-09-21: `providers/*/v0.0.1` was
-tagged while root was at v0.0.10, from a commit that still required root
-v0.0.9. Anyone resolving it got downgraded from v0.0.10 to v0.0.9.
-Downstream read it as a poisoned proxy cache. It was not — proxy content
-was byte-identical to git throughout — it was a mis-numbered tag.
+- A consumer who takes only `providers/anthropic` at vX.Y.Z gets root
+  vX.Y.Z — the exact commit that provider was built and tested against.
+  The shared version line is a fact about the dependency graph, not a
+  naming convention.
+- A provider can never be numbered below the root, so it can never drag
+  a consumer's root module backwards through minimal version selection.
+  That is what `providers/*/v0.0.1` did on 2026-09-21: tagged while root
+  was at v0.0.10, from a commit that still required root v0.0.9, so
+  anyone resolving it was downgraded. Downstream read it as a poisoned
+  proxy cache. It was not — proxy content was byte-identical to git
+  throughout — it was a mis-numbered tag pointing at a mismatched root.
+  Under this rule that tag could not have been written.
+
+There is a third consequence, and it is why this repository has fewer
+release gates than it used to: the workspace build and the consumer
+build are now the same code. `make check` builds each provider against
+the root in the tree; a consumer builds it against root vX.Y.Z, which is
+that same tree at the tagged commit. Nothing can drift between them, so
+nothing needs a gate to catch the drift.
+
+### Why the `replace` directives are load-bearing
+
+Each provider's `go.mod` carries `replace …/openresponses => ../..`, and
+`make replaces`, part of `check`, refuses a first-party require that
+lacks one. This is the inverse of the rule this repository used to carry,
+and it is not cosmetic.
+
+Requiring the version being released means the release commit names a
+version that does not exist on the proxy until its tag is pushed.
+`go mod tidy` ignores `go.work`, so without the replace, tidy would try
+to fetch it and the release commit could not be built, tidied or
+committed. The replace is what lets a release name its own version.
+
+A replace belongs to the main module, so consumers ignore it and get the
+require. That is safe here *only* because the require names the commit
+the module is tagged from — which `release-guard` proves, by checking
+that the root tag of that version points at the same commit. Remove that
+check and the replace becomes the hazard it is in a repository that
+releases modules at independent versions.
+
+This is what OpenTelemetry-Go does, and for the same reason. Its
+published `otel/sdk@v1.46.0` requires `otel v1.46.0` and ships
+`replace go.opentelemetry.io/otel => ../`; its published `go.sum` has no
+first-party entries at all, because tidy never resolves one from the
+proxy. Ours look the same.
+
+One real cost: `go install pkg@version` rejects a module carrying
+`replace` directives. The providers ship no commands — the binaries are
+in the root module, which has no replaces — so it does not bite today.
+It is the thing to check before a provider grows one.
+
+`conformance` is unpublished and has always carried a replace; under this
+rule it is no longer an exemption, just a module like the others. Its
+root requirement is `v0.0.0` and means nothing, which is the point.
 
 ### Before any tag
 
 ```sh
-make release-guard TAG=providers/anthropic/v0.0.11
+make release-guard TAG=providers/anthropic/v0.1.0
 ```
 
-It refuses to proceed unless the tree is clean, the tag is new, the
-version sorts at or above the current root release, the root version the
-provider requires is actually published, and the provider builds, vets
-and tests with `GOWORK=off`. Run it for root tags too.
+It refuses to proceed unless the tree is clean, the tag is new locally
+and on origin, the version sorts at or above the current root release and
+moves that module forward, every first-party require names exactly that
+version, the root tag of that version is this very commit, and the module
+builds with `GOWORK=off`.
 
-### Releasing the root only
+A provider tag is only checkable once the root tag exists, so guard and
+tag in the order `make release` uses: root first, then each provider.
+
+### The release
+
+Everything from one commit, one transaction. With the root changelog's
+*Unreleased* section written — and each provider's, if it changed:
 
 ```sh
-make check
-make release-guard TAG=v0.1.0
-git tag -a v0.1.0 -m "v0.1.0: one line per user-visible change"
-git push origin v0.1.0
+make release VERSION=v0.1.0
 ```
 
-The tag message becomes the GitHub release notes, so write it as notes.
-
-### Releasing providers only
-
-Providers may ship on their own when the root has not moved. They keep
-requiring the already-published root.
+That points every provider's root require at v0.1.0, dates every
+changelog that has an *Unreleased* section, tidies, runs `make check`,
+reads the requires back to confirm tidy did not move them, commits, then
+guards and tags the root, guards and tags each provider, and runs:
 
 ```sh
-make release-guard TAG=providers/anthropic/v0.0.11
-make release-guard TAG=providers/gemini/v0.0.11
-git tag -a providers/anthropic/v0.0.11 -m "…"
-git tag -a providers/gemini/v0.0.11    -m "…"
-git push origin --atomic \
-  providers/anthropic/v0.0.11 providers/gemini/v0.0.11
+git push origin --atomic HEAD v0.1.0 \
+  providers/anthropic/v0.1.0 providers/gemini/v0.1.0
 ```
 
-### Releasing the root and providers together
+`--atomic` lands every ref in a single transaction, so no window exists
+in which one tag is visible without the others — or in which a published
+`go.mod` names a version the proxy cannot serve. Pushing in stages is
+what opened the window that mis-numbered `providers/*/v0.0.1`.
 
-Do **not** push the root tag, then bump the providers, then push theirs.
-That is what opened the ten-minute window in which the only resolvable
-provider version pointed at the wrong root.
+A provider that did not change this release still gets a tag, because
+every module shares the version; its tag carries the root's notes.
 
-Tag everything from one commit and push in one transaction:
+Nothing is public until that push. If a guard refuses, `git reset --hard
+HEAD~1` and `git tag -d` whatever was written.
 
-```sh
-# one commit: root changes, provider `require` bumped to the version
-# about to be tagged, changelogs
-make release-guard TAG=v0.1.0
-git tag -a v0.1.0                      -m "…"
-git tag -a providers/anthropic/v0.1.0  -m "…"
-git tag -a providers/gemini/v0.1.0     -m "…"
-git push origin --atomic v0.1.0 providers/anthropic/v0.1.0 providers/gemini/v0.1.0
-```
-
-`--atomic` lands all refs in a single transaction, so no window exists
-in which one is visible without the others.
-
-**The providers keep requiring the last published root.** They are not
-bumped to the root version being tagged in the same push. Sharing a
-version number does not mean requiring it: a consumer on root v0.1.0 and
-`providers/anthropic` v0.1.0 whose `go.mod` requires root v0.0.11 still
-resolves root v0.1.0, because minimal version selection takes the
-maximum. Nobody is downgraded, which is the only thing the rule above
-protects.
-
-Forward-referencing the version being tagged — writing `require …
-openresponses v0.1.0` in the same commit that becomes v0.1.0 — is legal
-for the proxy and is how OpenTelemetry releases, but it does not work
-here: `make tidy-check` resolves that requirement from the proxy, so the
-release commit cannot pass CI. It is also invisible to `release-check`,
-the gate that proves a provider builds against what it claims.
-
-When a provider genuinely needs code that only exists in the root
-version being released, that is two releases, in order:
-
-1. Tag and push the root.
-2. Bump the provider's `require` to it, let CI go green, then tag and
-   push the provider.
-
-`release-guard` enforces the ordering: it refuses a provider tag whose
-required root is not yet on the proxy. Accept the short window in that
-case — a consumer inside it gets "no matching version" for the provider,
-which is a clean failure, not a silent downgrade.
+There is no phased release and no `release-check`. Both existed to manage
+a provider requiring a *previous* root; that situation no longer arises.
 
 ### When it has already gone wrong
 
@@ -160,19 +170,15 @@ retractions from the highest available version, so the fix only takes
 effect once the new version is published. `providers/*` currently
 retract v0.0.1 this way.
 
-## Why `go.work` hides release bugs
+## What `go.work` is and is not for
 
-Inside the workspace, providers build against the root *checkout*, not
-against the root version their `go.mod` names. Everything passes locally
-while being unbuildable for consumers. `GOWORK=off` is the consumer's
-view, which is why `make release-check` sets it, CI runs it on every
-push, and `release-guard` runs it before a tag.
+`go.work` joins the modules so editors and `go build ./...` in any
+directory see the tree. It is *not* what makes the release work — the
+`replace` directives are, because `go mod tidy` ignores the workspace
+entirely. If you find yourself reaching for `go.work` to fix a module
+resolution problem, check `make replaces` first.
 
-Never "fix" a provider build by editing `go.work`, and never by adding a
-`replace` of a first-party module. A `replace` belongs to the main module
-and consumers ignore it, so a provider carrying one builds green
-everywhere here — `release-check` included, which defeats the one gate
-that speaks for consumers — while shipping a `go.mod` naming a root
-version it was never built against. `make no-replace`, part of `check`,
-refuses one; `conformance` is the single exemption, and it is never
-published.
+Never "fix" a provider by pointing a replace somewhere outside the
+repository, and never by letting a first-party require drift off the
+released version. `make replaces` and `scripts/versions.sh check` are the
+two gates, and `release-guard` runs the second again before a tag.
