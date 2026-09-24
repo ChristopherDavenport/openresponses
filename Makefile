@@ -160,6 +160,13 @@ release: release-commit
 # cut.
 release-commit:
 	@test -n "$(VERSION)" || { echo "usage: make release VERSION=vX.Y.Z"; exit 1; }
+	@test $(words $(RELEASE_TAGS)) -le 3 || { \
+	  echo "$(words $(RELEASE_TAGS)) tags would be pushed at once, and GitHub creates no events"; \
+	  echo "for a push of more than three tags — every tag would land and the release"; \
+	  echo "workflow would silently never run. Adding a third provider means choosing:"; \
+	  echo "push the tags one at a time and lose the atomic push (what agentturn does),"; \
+	  echo "or keep --atomic and create the GitHub releases from here with gh."; \
+	  exit 1; }
 	@test "$(origin PROVIDERS)" = file || { echo "do not override PROVIDERS here: a command-line override propagates into the bump and check below, so a module would be tagged having checked a subset."; exit 1; }
 	@grep -q '^## Unreleased$$' CHANGELOG.md || { echo "CHANGELOG.md has no Unreleased section"; exit 1; }
 	@test -z "$$(git status --porcelain)" || { echo "working tree is not clean"; exit 1; }
