@@ -153,6 +153,31 @@ every module shares the version; its tag carries the root's notes.
 Nothing is public until that push. If a guard refuses, `git reset --hard
 HEAD~1` and `git tag -d` whatever was written.
 
+### The ruleset on `main`
+
+Unlike the sibling repositories, `main` here carries a ruleset: pull
+request required, `Checks` required, no deletion, no force-push. The
+release pushes `HEAD` directly, so the ruleset carries one bypass actor
+— repository **admin**, mode **always** — and that bypass is what makes
+`make release` work here. Everything that is not a release still goes
+through a pull request.
+
+If a release push is ever rejected with `GH013: Repository rule
+violations found for refs/heads/main`, the bypass is what to check. Do
+**not** re-phase the release so each piece goes through a pull request:
+phasing is exactly what v0.0.11 and v0.0.12 removed, and it is what
+mis-numbered `providers/*/v0.0.1` in the first place. The ruleset
+targets **branches only**, so tag pushes were never affected — v0.0.12
+was cut by putting the release commit through a PR and pushing the three
+tags afterwards, which works but needs a human in the middle.
+
+Two traps if you edit the ruleset by API. `PUT` replaces it wholesale,
+so a request that omits a rule's `parameters` silently drops the
+required check name and the allowed merge methods — send the whole rule
+or use the UI. And `git push --dry-run` does **not** evaluate rulesets:
+it reports success for a push the server will reject, so the only honest
+check that a release will land is a real push.
+
 There is no phased release and no `release-check`. Both existed to manage
 a provider requiring a *previous* root; that situation no longer arises.
 
