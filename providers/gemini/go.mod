@@ -3,7 +3,7 @@ module github.com/ChristopherDavenport/openresponses/providers/gemini
 go 1.25.0
 
 require (
-	github.com/ChristopherDavenport/openresponses v0.0.10
+	github.com/ChristopherDavenport/openresponses v0.0.12
 	google.golang.org/genai v1.71.0
 )
 

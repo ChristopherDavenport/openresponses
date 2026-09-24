@@ -5,7 +5,7 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
-## Unreleased
+## v0.0.12 - 2026-09-23
 
 - Each provider module now requires the root at exactly the version it
   is released at, rather than at the previous release, and carries a

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.12 - 2026-09-23
 
 - Requires the root at the version this module is released at, rather
   than at the previous release, and carries a `replace` of the root

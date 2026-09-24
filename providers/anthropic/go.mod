@@ -3,7 +3,7 @@ module github.com/ChristopherDavenport/openresponses/providers/anthropic
 go 1.25
 
 require (
-	github.com/ChristopherDavenport/openresponses v0.0.10
+	github.com/ChristopherDavenport/openresponses v0.0.12
 	github.com/anthropics/anthropic-sdk-go v1.74.0
 )
 
