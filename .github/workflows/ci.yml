@@ -73,12 +73,32 @@ jobs:
       - name: Run the pinned openresponses compliance tests against the echo adapter
         run: make compliance BUN=bun
 
+  # The one job that resolves a published provider's require line. Every
+  # other job builds inside the workspace, where the replace answers
+  # first and that line is never read; a consumer reads nothing else. A
+  # version string is all the other guards check; this one compiles
+  # against it. release-guard.sh did this at v0.0.11, and stopped doing
+  # it at v0.0.12 when the replace arrived.
+  extracted:
+    name: Providers build extracted
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            **/go.sum
+      - name: Every provider builds against the versions it requires
+        run: make extracted
+
   # Single required status check for branch protection; it fails if any job
   # above failed, was cancelled or was skipped.
   checks:
     name: Checks
     if: always()
-    needs: [test, lint, compliance]
+    needs: [test, lint, compliance, extracted]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every job succeeded

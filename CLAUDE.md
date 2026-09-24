@@ -22,6 +22,7 @@ enter the root's dependency graph.
 
 ```sh
 make check      # fmt, tidiness, vet, deps, replaces, staticcheck, govulncheck, race tests
+make extracted  # build, vet and test each provider as a consumer gets it; network
 make compliance # official suite, needs bun
 make release VERSION=vX.Y.Z   # the whole release; see below before running it
 ```
@@ -72,6 +73,15 @@ build are now the same code. `make check` builds each provider against
 the root in the tree; a consumer builds it against root vX.Y.Z, which is
 that same tree at the tagged commit. Nothing can drift between them, so
 nothing needs a gate to catch the drift.
+
+It holds while the release process is followed, and what enforces it is
+a comparison of version strings: `versions.sh check` reads the requires
+and compares them to the version being tagged. Nothing compiles the
+pair. `release-guard.sh` did compile it at v0.0.11 — "build it the way a
+consumer does" — but the `replace` introduced at v0.0.12 made that line
+build against the tree instead, since `GOWORK=off` no longer means there
+is no local root. `make extracted` restores it, by dropping the
+`replace` in a copy with no parent `go.mod`.
 
 ### Why the `replace` directives are load-bearing
 
