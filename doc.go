@@ -88,7 +88,8 @@
 //     above and streamtest.Validate rejects it, unless a test passes
 //     streamtest.WithOutputIndexReuse, but the accumulator keeps every
 //     item it sent, appending the later ones, and reports the reuse
-//     through [Accumulator.ReusedIndexes].
+//     through [Accumulator.ReusedIndexes]; [Accumulator.Position] and
+//     [Accumulator.ItemAt] say which item an output_index names.
 //   - [CollectStream] derives a non-streaming Create from a streaming
 //     adapter, and [Events] exposes a streaming adapter as an in-process
 //     iterator, the pull-shaped counterpart of [Client.CreateStream].
