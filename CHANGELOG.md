@@ -20,6 +20,13 @@ versions may break the API.
   events still to come would not agree; an item only such a snapshot
   names is appended, by id. `streamtest.Validate` still rejects such a stream
   as non-conforming. (#26)
+- Release process: `release-guard` takes the version floor, and the
+  tag-exists check, from the tags origin has published, read once with
+  `git ls-remote` and joined with the local tags, so a clone that has not
+  fetched cannot approve a version below one already on the proxy. An
+  unreachable origin refuses rather than falling back to the stale floor.
+  A test under `scripts/` reproduces the stale clone. (#20)
+
 ## v0.0.12 - 2026-09-23
 
 - Each provider module now requires the root at exactly the version it

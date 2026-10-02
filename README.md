@@ -294,6 +294,7 @@ alone; `github.com/coder/websocket` is reachable only through the
 | `cmd/openresponses-echo` | server binary for the compliance run |
 | `examples/` | client programs, a server, and a proxy over `ClientAdapter` |
 | `conformance/` | nested module: schema validation of every wire shape against the OpenAPI document |
+| `scripts/` | the release scripts the Makefile runs, with their tests |
 | `providers/` | adapters for Claude and Gemini through their SDKs, one nested module each; see `providers/PLAN.md` |
 
 ## Contributing

@@ -133,6 +133,14 @@ builds with `GOWORK=off`.
 A provider tag is only checkable once the root tag exists, so guard and
 tag in the order `make release` uses: root first, then each provider.
 
+The version floor comes from the tags origin has published, read with
+`git ls-remote` and joined with the local tags, not from local tags
+alone: a clone that has not fetched would otherwise approve a version
+below one already on the proxy, which cannot be undone. An unreachable
+origin refuses rather than falling back, since the push could not land
+either. `scripts/release_guard_test.go` runs the guard against a
+throwaway origin and a stale clone, so `make test` covers this.
+
 ### The release
 
 Everything from one commit, one transaction. With the root changelog's
