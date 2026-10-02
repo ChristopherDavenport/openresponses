@@ -7,6 +7,17 @@
 //	sink, err := streamtest.Run(ctx, adapter, req)
 //	if err != nil { t.Fatal(err) }
 //	if sink.Response().OutputText() != "hello" { ... }
+//
+// Validation is strict by default, and an [Option] relaxes one rule for
+// a stream known to break it. [WithOutputIndexReuse] accepts an output
+// index that is reused after output_item.done at that index, the shape
+// Ollama 0.23 emits for parallel function calls. That stream is
+// non-conforming and an adapter under test should not produce it, so the
+// option is for tests of code that reads such a stream, such as an
+// adapter that has to cope with Ollama, or a test that feeds a recorded
+// stream through a sink and validates what comes out:
+//
+//	err := streamtest.Validate(sink.Events(), streamtest.WithOutputIndexReuse())
 package streamtest
 
 import (
@@ -73,15 +84,37 @@ func (s *Sink) Response() *openresponses.Response {
 	return s.acc.Response()
 }
 
+// Option relaxes one rule of [Validate] and [Run]. With no options both
+// are strict.
+type Option func(*validator)
+
+// WithOutputIndexReuse accepts an output_item.added whose output_index
+// repeats an index that already carried an item, which is closed by then
+// because only one item is open at a time. Without it such an event
+// fails the consecutive-index rule.
+//
+// The relaxation is narrow. A first use of an index must still be the
+// next unused one, so a gap fails as before, and the events inside an
+// item must still name the index it was added at. The terminal response
+// must still hold every item that was added, in the order added, even
+// though a position in its output is then not an output index. The
+// option exists because Ollama 0.23 streams parallel function calls this
+// way, and [openresponses.Accumulator] keeps their items and reports the
+// reuse through ReusedIndexes. A stream that needs it does not conform to
+// the specification.
+func WithOutputIndexReuse() Option {
+	return func(v *validator) { v.allowReuse = true }
+}
+
 // Run streams req through the adapter into a fresh Sink and validates
-// the sequence. It returns the sink even when validation fails so the
-// test can inspect the events.
-func Run(ctx context.Context, adapter openresponses.Streamer, req openresponses.Request) (*Sink, error) {
+// the sequence, with the options. It returns the sink even when
+// validation fails so the test can inspect the events.
+func Run(ctx context.Context, adapter openresponses.Streamer, req openresponses.Request, opts ...Option) (*Sink, error) {
 	sink := &Sink{}
 	if err := adapter.CreateStream(ctx, req, sink); err != nil {
 		return sink, fmt.Errorf("CreateStream: %w", err)
 	}
-	if err := Validate(sink.Events()); err != nil {
+	if err := Validate(sink.Events(), opts...); err != nil {
 		return sink, err
 	}
 	return sink, nil
@@ -109,10 +142,11 @@ func Run(ctx context.Context, adapter openresponses.Streamer, req openresponses.
 // reuse through ReusedIndexes: the accumulator records what a server
 // sent, while this checks that an adapter sends what the specification
 // says, and Sink.Response is still folded from such a stream for the
-// test to inspect.
+// test to inspect. [WithOutputIndexReuse] accepts the reuse for a test
+// that has to.
 //
 // Extension events are ignored.
-func Validate(events []openresponses.StreamEvent) error {
+func Validate(events []openresponses.StreamEvent, opts ...Option) error {
 	if len(events) == 0 {
 		return fmt.Errorf("no events")
 	}
@@ -120,6 +154,9 @@ func Validate(events []openresponses.StreamEvent) error {
 		return fmt.Errorf("event 0: first event is %s, want response.created", events[0].EventType())
 	}
 	v := &validator{}
+	for _, opt := range opts {
+		opt(v)
+	}
 	for i, ev := range events {
 		if err := v.step(i, ev); err != nil {
 			return err
@@ -132,10 +169,12 @@ func Validate(events []openresponses.StreamEvent) error {
 }
 
 type validator struct {
-	items     []itemState
-	open      *itemState
-	terminal  bool
-	errorSeen bool
+	allowReuse bool
+	indexes    int // distinct output indexes used so far
+	items      []itemState
+	open       *itemState
+	terminal   bool
+	errorSeen  bool
 }
 
 type itemState struct {
@@ -203,8 +242,13 @@ func (v *validator) step(i int, ev openresponses.StreamEvent) error {
 		if v.open != nil {
 			return at("output_index %d added while item %d (%s) is still open", e.OutputIndex, v.open.index, v.open.id)
 		}
-		if e.OutputIndex != len(v.items) {
-			return at("output_index %d, want %d", e.OutputIndex, len(v.items))
+		switch {
+		case e.OutputIndex == v.indexes:
+			v.indexes++
+		case v.allowReuse && e.OutputIndex >= 0 && e.OutputIndex < v.indexes:
+			// A reused index; the item that held it is done.
+		default:
+			return at("output_index %d, want %d", e.OutputIndex, v.indexes)
 		}
 		id, _ := itemIdentity(e.Item)
 		v.items = append(v.items, itemState{index: e.OutputIndex, item: e.Item, id: id, typ: e.Item.ItemType()})

@@ -85,8 +85,9 @@
 //   - [Accumulator] folds a stream of events back into a [Response]; the
 //     client, [CollectStream] and the handler use it. A stream that reuses
 //     an output_index after closing the item there breaks the lifecycle
-//     above and streamtest.Validate rejects it, but the accumulator keeps
-//     every item it sent, appending the later ones, and reports the reuse
+//     above and streamtest.Validate rejects it, unless a test passes
+//     streamtest.WithOutputIndexReuse, but the accumulator keeps every
+//     item it sent, appending the later ones, and reports the reuse
 //     through [Accumulator.ReusedIndexes].
 //   - [CollectStream] derives a non-streaming Create from a streaming
 //     adapter, and [Events] exposes a streaming adapter as an in-process

@@ -157,7 +157,9 @@ reach the adapter with `previous_response_id` untouched.
 
 The `streamtest` package unit-tests an adapter's stream without a
 server: `streamtest.Run` records the events, validates the item
-lifecycle ordering, and returns the folded response. See `examples/server` and the `echo` package.
+lifecycle ordering, and returns the folded response. Validation is strict;
+`streamtest.WithOutputIndexReuse()` accepts the non-conforming output-index
+reuse Ollama 0.23 emits, for tests of code that reads such a stream. See `examples/server` and the `echo` package.
 
 Adapters for model APIs that do not speak Open Responses come with the
 repository. `chatcompletions` serves any Chat Completions endpoint, the
