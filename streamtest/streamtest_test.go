@@ -111,6 +111,17 @@ func TestValidateCatches(t *testing.T) {
 			}
 			return e
 		}, "output_index 5, want 1"},
+		{"reused output index", func(e []openresponses.StreamEvent) []openresponses.StreamEvent {
+			// Every item opened at index 0, as Ollama 0.23 streams
+			// parallel calls. Accumulator keeps them all (openresponses#26);
+			// the validator still refuses the stream as non-conforming.
+			for _, ev := range e {
+				if a, ok := ev.(*openresponses.OutputItemAddedEvent); ok {
+					a.OutputIndex = 0
+				}
+			}
+			return e
+		}, "output_index 0, want 1"},
 		{"wrong item id on delta", func(e []openresponses.StreamEvent) []openresponses.StreamEvent {
 			for _, ev := range e {
 				if d, ok := ev.(*openresponses.OutputTextDeltaEvent); ok {

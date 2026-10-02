@@ -5,6 +5,21 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- `Accumulator` keeps every item of a stream that reuses an output index
+  after closing the item there, which is how Ollama 0.23 streams parallel
+  function calls: the later item is appended instead of overwriting the
+  first, the events that follow at that index reach it, and
+  `Accumulator.ReusedIndexes` and `EventStream.ReusedIndexes` report the
+  reuse, since a position in `Output` is then not an output index. A
+  response read mid-stream, or from a stream cut before its terminal
+  snapshot, now holds every call; the terminal snapshot still replaces
+  `Output` as before, while a snapshot before it is not taken once an
+  index has been reused, since its positions and the indexes of the
+  events still to come would not agree; an item only such a snapshot
+  names is appended, by id. `streamtest.Validate` still rejects such a stream
+  as non-conforming. (#26)
 ## v0.0.12 - 2026-09-23
 
 - Each provider module now requires the root at exactly the version it

@@ -104,6 +104,13 @@ func Run(ctx context.Context, adapter openresponses.Streamer, req openresponses.
 //   - function call argument events reference the open function call;
 //   - the terminal response's output matches the items that were added.
 //
+// A stream that reuses an output index fails the fourth rule here even
+// though [openresponses.Accumulator] keeps its items and reports the
+// reuse through ReusedIndexes: the accumulator records what a server
+// sent, while this checks that an adapter sends what the specification
+// says, and Sink.Response is still folded from such a stream for the
+// test to inspect.
+//
 // Extension events are ignored.
 func Validate(events []openresponses.StreamEvent) error {
 	if len(events) == 0 {
