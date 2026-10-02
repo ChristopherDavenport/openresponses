@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -524,5 +525,338 @@ func TestEventStreamReusedIndex(t *testing.T) {
 	}
 	if got := stream.ReusedIndexes(); !slices.Equal(got, []int{0}) {
 		t.Errorf("ReusedIndexes = %v, want [0]", got)
+	}
+}
+
+// TestAccumulatorPosition covers Position and ItemAt: where the item an
+// event at an output index names sits in Response().Output, in streams
+// that follow the lifecycle and in streams that reuse an index.
+func TestAccumulatorPosition(t *testing.T) {
+	fc := func(id string, status Status) *FunctionCall {
+		return &FunctionCall{ID: id, CallID: id, Name: "f", Status: status}
+	}
+	snapshot := func(status ResponseStatus, items ...Item) StreamEvent {
+		resp := &Response{ID: "r", Status: status, Output: Items(items)}
+		if status.Terminal() {
+			return &ResponseCompletedEvent{Response: resp}
+		}
+		return &ResponseInProgressEvent{Response: resp}
+	}
+	type want struct {
+		idx int
+		pos int    // position in Output; ignored unless id is set
+		id  string // "" means no item: Position and ItemAt report false
+	}
+	tests := []struct {
+		name   string
+		events []StreamEvent
+		wants  []want
+		ids    []string // Response().Output ids after the events
+	}{
+		{
+			name:   "no events",
+			events: nil,
+			wants:  []want{{idx: 0}, {idx: -1}},
+		},
+		{
+			name:   "created only",
+			events: []StreamEvent{created()},
+			wants:  []want{{idx: 0}},
+		},
+		{
+			name:   "conforming stream: position is the index",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a"), callsAt(1, "b"), callsAt(2, "c")),
+			wants:  []want{{0, 0, "a"}, {1, 1, "b"}, {2, 2, "c"}, {idx: 3}, {idx: -1}},
+			ids:    []string{"a", "b", "c"},
+		},
+		{
+			name:   "index never opened, below one that was",
+			events: []StreamEvent{created(), &OutputItemAddedEvent{OutputIndex: 2, Item: fc("c", StatusInProgress)}},
+			wants:  []want{{idx: 0}, {idx: 1}, {2, 2, "c"}},
+			ids:    []string{"<nil>", "<nil>", "c"}, // holes are nil items
+		},
+		{
+			name:   "reuse at 0 (Ollama): the index names the latest item",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a", "b", "c")),
+			wants:  []want{{0, 2, "c"}, {idx: 1}, {idx: 2}},
+			ids:    []string{"a", "b", "c"},
+		},
+		{
+			name:   "interleaved reuse: untouched indexes keep their positions",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a"), callsAt(1, "b"), callsAt(0, "c")),
+			wants:  []want{{0, 2, "c"}, {1, 1, "b"}, {idx: 2}},
+			ids:    []string{"a", "b", "c"},
+		},
+		{
+			name:   "interleaved reuse, then the other index is reused",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a"), callsAt(1, "b"), callsAt(0, "c"), callsAt(1, "d")),
+			wants:  []want{{0, 2, "c"}, {1, 3, "d"}},
+			ids:    []string{"a", "b", "c", "d"},
+		},
+		{
+			name:   "a new index after a reuse is appended",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a", "b"), callsAt(1, "c")),
+			wants:  []want{{0, 1, "b"}, {1, 2, "c"}},
+			ids:    []string{"a", "b", "c"},
+		},
+		{
+			name: "re-announced open item keeps its position",
+			events: []StreamEvent{created(),
+				&OutputItemAddedEvent{OutputIndex: 0, Item: fc("a", StatusInProgress)},
+				&OutputItemAddedEvent{OutputIndex: 0, Item: fc("a2", StatusInProgress)}},
+			wants: []want{{0, 0, "a2"}},
+			ids:   []string{"a2"},
+		},
+		{
+			// A done is placed like an added: naming another item at a
+			// closed index, it appends and moves the index.
+			name: "done naming another id at a closed index moves the index",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a"),
+				[]StreamEvent{&OutputItemDoneEvent{OutputIndex: 0, Item: fc("b", StatusCompleted)}}),
+			wants: []want{{0, 1, "b"}},
+			ids:   []string{"a", "b"},
+		},
+		{
+			name: "done naming another id at an open index replaces in place",
+			events: []StreamEvent{created(),
+				&OutputItemAddedEvent{OutputIndex: 0, Item: fc("a", StatusInProgress)},
+				&OutputItemDoneEvent{OutputIndex: 0, Item: fc("a2", StatusCompleted)}},
+			wants: []want{{0, 0, "a2"}},
+			ids:   []string{"a2"},
+		},
+		{
+			name: "terminal snapshot after a reuse: positions are the server's indexes",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a", "b"),
+				[]StreamEvent{snapshot(ResponseStatusCompleted, fc("b", StatusCompleted), fc("a", StatusCompleted))}),
+			wants: []want{{0, 0, "b"}, {1, 1, "a"}, {idx: 2}},
+			ids:   []string{"b", "a"},
+		},
+		{
+			name: "terminal snapshot shorter than what was opened",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a"), callsAt(1, "b"), callsAt(0, "c"),
+				[]StreamEvent{snapshot(ResponseStatusCompleted, fc("x", StatusCompleted))}),
+			wants: []want{{0, 0, "x"}, {idx: 1}, {idx: 2}},
+			ids:   []string{"x"},
+		},
+		{
+			name: "terminal snapshot with no output, nothing was kept",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a", "b"),
+				[]StreamEvent{snapshot(ResponseStatusCompleted)}),
+			wants: []want{{idx: 0}, {idx: 1}},
+			ids:   nil,
+		},
+		{
+			name: "snapshot before divergence replaces the list; positions are indexes",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a"), callsAt(1, "b"),
+				[]StreamEvent{snapshot(ResponseStatusInProgress, fc("b", StatusCompleted), fc("a", StatusCompleted))}),
+			wants: []want{{0, 0, "b"}, {1, 1, "a"}},
+			ids:   []string{"b", "a"},
+		},
+		{
+			name: "snapshot before divergence that lists fewer items drops the rest",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a"), callsAt(1, "b"),
+				[]StreamEvent{snapshot(ResponseStatusInProgress, fc("a", StatusCompleted))}),
+			wants: []want{{0, 0, "a"}, {idx: 1}},
+			ids:   []string{"a"},
+		},
+		{
+			name: "snapshot with no output keeps the list and the mapping",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a"), callsAt(1, "b"),
+				[]StreamEvent{snapshot(ResponseStatusInProgress)}),
+			wants: []want{{0, 0, "a"}, {1, 1, "b"}},
+			ids:   []string{"a", "b"},
+		},
+		{
+			// The snapshot closes a, so the added that follows at its
+			// index is a reuse, not a re-announcement.
+			name: "snapshot before divergence, then a reuse at an index it listed",
+			events: concat([]StreamEvent{created()},
+				[]StreamEvent{snapshot(ResponseStatusInProgress, fc("a", StatusCompleted))},
+				callsAt(0, "b")),
+			wants: []want{{0, 1, "b"}},
+			ids:   []string{"a", "b"},
+		},
+		{
+			// Positions have diverged, so the snapshot's list is not
+			// taken; items it alone names are appended with no index.
+			name: "snapshot after a reuse keeps the mapping and appends what it alone names",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a", "b"),
+				[]StreamEvent{snapshot(ResponseStatusInProgress, fc("z", StatusCompleted), fc("a", StatusCompleted), fc("b", StatusCompleted))}),
+			wants: []want{{0, 1, "b"}, {idx: 1}},
+			ids:   []string{"a", "b", "z"},
+		},
+		{
+			name: "after that snapshot a new index is appended past the unnamed item",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a", "b"),
+				[]StreamEvent{snapshot(ResponseStatusInProgress, fc("z", StatusCompleted))},
+				callsAt(1, "c")),
+			wants: []want{{0, 1, "b"}, {1, 3, "c"}},
+			ids:   []string{"a", "b", "z", "c"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var acc Accumulator
+			for _, ev := range tt.events {
+				acc.Add(ev)
+			}
+			for _, w := range tt.wants {
+				pos, ok := acc.Position(w.idx)
+				item, itemOK := acc.ItemAt(w.idx)
+				if ok != itemOK {
+					t.Errorf("index %d: Position ok = %v but ItemAt ok = %v", w.idx, ok, itemOK)
+				}
+				if w.id == "" {
+					if ok || item != nil || pos != 0 {
+						t.Errorf("index %d: Position = (%d, %v), ItemAt = (%v, %v), want none", w.idx, pos, ok, item, itemOK)
+					}
+					continue
+				}
+				if !ok || pos != w.pos {
+					t.Errorf("index %d: Position = (%d, %v), want (%d, true)", w.idx, pos, ok, w.pos)
+					continue
+				}
+				if !itemOK || item != acc.Response().Output[pos] {
+					t.Errorf("index %d: ItemAt is not Response().Output[%d]", w.idx, pos)
+				}
+				if got, _ := itemIdentity(item); got != w.id {
+					t.Errorf("index %d: item id = %q, want %q", w.idx, got, w.id)
+				}
+			}
+			if tt.ids != nil || acc.Response() != nil && len(acc.Response().Output) > 0 {
+				ids, _ := callIDs(acc.Response().Output)
+				if !slices.Equal(ids, tt.ids) {
+					t.Errorf("output ids = %q, want %q", ids, tt.ids)
+				}
+			}
+		})
+	}
+}
+
+// TestAccumulatorPositionMidStream asks after every event, as agentturn's
+// loop does: an index names the item most recently added there, and the
+// answer moves to the new item when the next one is added.
+func TestAccumulatorPositionMidStream(t *testing.T) {
+	var acc Accumulator
+	events := concat([]StreamEvent{created()}, callsAt(0, "a", "b"))
+	type at struct {
+		pos int
+		id  string
+	}
+	// What Position(0) reports after each event: nothing until the first
+	// added, a at 0 through its done, b at 1 from its added on.
+	want := map[int]at{
+		1: {0, "a"}, 2: {0, "a"}, 3: {0, "a"}, 4: {0, "a"},
+		5: {1, "b"}, 6: {1, "b"}, 7: {1, "b"}, 8: {1, "b"},
+	}
+	for i, ev := range events {
+		acc.Add(ev)
+		pos, ok := acc.Position(0)
+		w, has := want[i]
+		if !has {
+			if ok {
+				t.Errorf("after event %d (%s): Position(0) = (%d, true), want none", i, ev.EventType(), pos)
+			}
+			continue
+		}
+		if !ok || pos != w.pos {
+			t.Errorf("after event %d (%s): Position(0) = (%d, %v), want (%d, true)", i, ev.EventType(), pos, ok, w.pos)
+			continue
+		}
+		item, _ := acc.ItemAt(0)
+		if id, _ := itemIdentity(item); id != w.id {
+			t.Errorf("after event %d (%s): ItemAt(0) is %q, want %q", i, ev.EventType(), id, w.id)
+		}
+	}
+	// Arguments streamed at index 0 reach the item Position names.
+	acc.Add(&FunctionCallArgumentsDeltaEvent{OutputIndex: 0, ItemID: "b", Delta: "+"})
+	item, _ := acc.ItemAt(0)
+	if fc := item.(*FunctionCall); fc.ID != "b" || !strings.HasSuffix(fc.Arguments, "+") {
+		t.Errorf("ItemAt(0) = %+v, want call b with the delta", fc)
+	}
+}
+
+// TestAccumulatorPositionReadsChangeNothing checks that asking, for any
+// index, assigns no slot and leaves the bookkeeping as it was, so a
+// later added at an index that was asked about first lands where it
+// would have without the question.
+func TestAccumulatorPositionReadsChangeNothing(t *testing.T) {
+	build := func(ask bool) *Accumulator {
+		acc := &Accumulator{}
+		for _, ev := range concat([]StreamEvent{created()}, callsAt(0, "a", "b")) {
+			acc.Add(ev)
+			if ask {
+				for idx := -1; idx < 4; idx++ {
+					acc.Position(idx)
+					acc.ItemAt(idx)
+				}
+			}
+		}
+		// Index 3 first appears after the reuse.
+		for _, ev := range callsAt(3, "c") {
+			acc.Add(ev)
+			if ask {
+				acc.Position(3)
+			}
+		}
+		return acc
+	}
+	asked, quiet := build(true), build(false)
+	if !reflect.DeepEqual(asked.slots, quiet.slots) || !reflect.DeepEqual(asked.closed, quiet.closed) || !reflect.DeepEqual(asked.reused, quiet.reused) {
+		t.Errorf("asking changed the bookkeeping: slots %v vs %v, closed %v vs %v", asked.slots, quiet.slots, asked.closed, quiet.closed)
+	}
+	if got, _ := callIDs(asked.Response().Output); !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Errorf("output ids = %q, want [a b c]", got)
+	}
+	if pos, ok := asked.Position(3); !ok || pos != 2 {
+		t.Errorf("Position(3) = (%d, %v), want (2, true)", pos, ok)
+	}
+}
+
+// TestAccumulatorPositionFallback covers the one case Add alone does not
+// build: before any reuse, an index that has no item of its own maps to
+// its own position when Output has an item there, and after a reuse it
+// does not.
+func TestAccumulatorPositionFallback(t *testing.T) {
+	held := func(reused []int) *Accumulator {
+		return &Accumulator{
+			resp:   &Response{Output: Items{&FunctionCall{ID: "a"}, &FunctionCall{ID: "b"}}},
+			reused: reused,
+		}
+	}
+	acc := held(nil)
+	if pos, ok := acc.Position(1); !ok || pos != 1 {
+		t.Errorf("Position(1) = (%d, %v), want (1, true)", pos, ok)
+	}
+	if item, ok := acc.ItemAt(1); !ok || item != acc.resp.Output[1] {
+		t.Errorf("ItemAt(1) = (%v, %v), want Output[1]", item, ok)
+	}
+	if _, ok := acc.Position(2); ok {
+		t.Error("Position(2) past the end of Output reported an item")
+	}
+	if _, ok := held([]int{0}).Position(1); ok {
+		t.Error("Position(1) of an index never opened reported an item after a reuse")
+	}
+}
+
+// TestAccumulatorPositionDoneWithoutID: an output_item.done with no id at
+// a closed index restates that item rather than naming another, so the
+// index keeps its position and nothing is appended or recorded as reused.
+func TestAccumulatorPositionDoneWithoutID(t *testing.T) {
+	var acc Accumulator
+	for _, ev := range concat([]StreamEvent{created()}, callsAt(0, "a")) {
+		acc.Add(ev)
+	}
+	acc.Add(&OutputItemDoneEvent{OutputIndex: 0, Item: &FunctionCall{Name: "restated", Status: StatusCompleted}})
+	pos, ok := acc.Position(0)
+	item, _ := acc.ItemAt(0)
+	if fc, isCall := item.(*FunctionCall); !ok || pos != 0 || !isCall || fc.Name != "restated" {
+		t.Errorf("Position(0) = (%d, %v), item %+v, want position 0 holding the restated call", pos, ok, item)
+	}
+	if n := len(acc.Response().Output); n != 1 {
+		t.Errorf("Output holds %d items, want 1", n)
+	}
+	if got := acc.ReusedIndexes(); got != nil {
+		t.Errorf("ReusedIndexes = %v, want none", got)
 	}
 }

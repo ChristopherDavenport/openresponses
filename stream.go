@@ -134,7 +134,9 @@ func (s *EventStream) Response() *Response {
 // ReusedIndexes reports the output indexes the stream has reused so far;
 // see [Accumulator.ReusedIndexes]. Once it is non-empty, a position in
 // Response().Output is not an output_index until a terminal snapshot
-// replaces Output with the server's own list.
+// replaces Output with the server's own list. [Accumulator.Position] on
+// the underlying accumulator is not exposed here; a consumer that needs
+// the mapping folds the events with its own [Accumulator].
 func (s *EventStream) ReusedIndexes() []int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -216,9 +218,10 @@ func (s *EventStream) Wait() (*Response, error) {
 // its positions and the indexes of the events still to come would not
 // agree; an item such a snapshot alone names is appended, by id.
 // [Accumulator.ReusedIndexes] reports each such reuse, since a
-// position in Output is then no longer an output_index. The terminal
-// snapshot still replaces Output with the server's own list, as for any
-// stream.
+// position in Output is then no longer an output_index, and
+// [Accumulator.Position] and [Accumulator.ItemAt] map an output_index to
+// the item its events currently name. The terminal snapshot still
+// replaces Output with the server's own list, as for any stream.
 type Accumulator struct {
 	resp *Response
 	// lastError remembers an error event so a stream that fails without
@@ -427,11 +430,85 @@ func (a *Accumulator) ensure() *Response {
 // a snapshot gave it, in stream order, one entry per reuse. It is nil for a stream that
 // follows the lifecycle. The items are all in Response().Output, each
 // later one appended in the order it was added, so once this is non-empty
-// a position in Output is not an output_index. The terminal snapshot
-// replaces Output with the server's own list; the record of the reuse
-// stays.
+// a position in Output is not an output_index; use [Accumulator.Position]
+// to find the item an index names. The terminal snapshot replaces Output
+// with the server's own list; the record of the reuse stays.
 func (a *Accumulator) ReusedIndexes() []int {
 	return append([]int(nil), a.reused...)
+}
+
+// Position returns the position in Response().Output of the item the
+// stream's events at outputIndex currently name: the item the last
+// output_item.added, or output_item.done, placed at that index, which is
+// the one a delta at the index reaches. Either event replaces the item in
+// place while it is still open, or when it names the item already there;
+// one that names another item at a closed index appends it and moves the
+// index to the new position. The second result is false when there is no such item:
+// a negative index, an index the stream never opened once an index has
+// been reused, or an index whose item is no longer in Output. Before any
+// reuse an index that has no item of its own yet maps to its own
+// position, when Output has an item there.
+//
+// The answer is valid straight after Add of the event that names the
+// index: after an output_item.added or output_item.done at it, it is that
+// event's item, including one appended because the index was reused. A
+// read assigns nothing and changes no state.
+//
+// For a stream that follows the lifecycle Position(i) is (i, true) for
+// every index opened. It differs once the stream reuses an index, see
+// [Accumulator.ReusedIndexes]: an item added at a closed index is
+// appended, so Position then reports where, and Response().Output[i] is
+// not the item an event at i names.
+//
+// Position reads the accumulator as it stands, so ask after applying the
+// event whose item is wanted, and ask again after the next
+// output_item.added or output_item.done that names another item at the
+// index, which moves it to the new item. Items
+// positions hold are stable across later events, but a snapshot changes
+// what is held:
+//
+//   - A terminal snapshot replaces Output with the server's own list, in
+//     which positions are output indexes, so Position(i) is (i, true) for
+//     each item that list holds and false for any other index, including
+//     an index the stream opened at a position beyond the end of the list.
+//     The mapping a reuse had built is gone with it, since no event
+//     follows a terminal one. Read the item before the terminal event
+//     when the mapping is needed.
+//   - A snapshot before the terminal one, taken while no index has been
+//     reused, is read the same way: its list replaces Output and its
+//     positions are indexes. One with no output keeps what is held.
+//   - A snapshot before the terminal one, taken after an index has been
+//     reused, changes no mapping: the held list and the positions of the
+//     indexes in it stay, and an item the snapshot alone names is
+//     appended with no index of its own, so no outputIndex reaches it.
+func (a *Accumulator) Position(outputIndex int) (int, bool) {
+	if a.resp == nil || outputIndex < 0 {
+		return 0, false
+	}
+	pos, ok := a.slots[outputIndex]
+	if !ok {
+		if len(a.reused) > 0 {
+			return 0, false
+		}
+		pos = outputIndex
+	}
+	if pos >= len(a.resp.Output) || a.resp.Output[pos] == nil {
+		return 0, false
+	}
+	return pos, true
+}
+
+// ItemAt returns the item the stream's events at outputIndex currently
+// name, which is Response().Output[p] for the p that
+// [Accumulator.Position] reports, or false when Position does. The item
+// is the accumulator's own copy, not a snapshot: later events at the
+// index change it, as they change the response.
+func (a *Accumulator) ItemAt(outputIndex int) (Item, bool) {
+	pos, ok := a.Position(outputIndex)
+	if !ok {
+		return nil, false
+	}
+	return a.resp.Output[pos], true
 }
 
 // slot returns the position of the item at idx, assigning one to an
@@ -521,23 +598,10 @@ func (a *Accumulator) place(pos int, item Item) {
 }
 
 // item is the item events at idx refer to, or nil when the stream has
-// not opened one there. Reads assign no slot: before any reuse an index
-// is its own position, and after one an index never opened has no item.
+// not opened one there.
 func (a *Accumulator) item(idx int) Item {
-	if a.resp == nil || idx < 0 {
-		return nil
-	}
-	pos, ok := a.slots[idx]
-	if !ok {
-		if len(a.reused) > 0 {
-			return nil
-		}
-		pos = idx
-	}
-	if pos >= len(a.resp.Output) {
-		return nil
-	}
-	return a.resp.Output[pos]
+	item, _ := a.ItemAt(idx)
+	return item
 }
 
 // itemID is the id of the item at pos in out, or "" when there is none.
