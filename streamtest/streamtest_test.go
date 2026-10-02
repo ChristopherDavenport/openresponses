@@ -178,7 +178,13 @@ func TestSinkRejectsAfterTerminal(t *testing.T) {
 // sent.
 func reindexed(t *testing.T, to func(int) int) []openresponses.StreamEvent {
 	t.Helper()
-	sink, err := streamtest.Run(context.Background(), good{}, openresponses.Request{Model: "m"})
+	return reindexedFrom(t, good{}, to)
+}
+
+// reindexedFrom is reindexed over any conforming adapter.
+func reindexedFrom(t *testing.T, adapter openresponses.Streamer, to func(int) int) []openresponses.StreamEvent {
+	t.Helper()
+	sink, err := streamtest.Run(context.Background(), adapter, openresponses.Request{Model: "m"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,6 +246,12 @@ func TestOutputIndexReuse(t *testing.T) {
 				t.Errorf("indexes %v: err = %v, want nil", idx, err)
 			}
 		}
+		for _, idx := range [][]int{{0, 1, 0, 2}, {0, 0, 1, 0}} {
+			events := reindexedFrom(t, fourCalls{}, func(i int) int { return idx[i] })
+			if err := streamtest.Validate(events, reuse); err != nil {
+				t.Errorf("indexes %v: err = %v, want nil", idx, err)
+			}
+		}
 		events := reindexed(t, func(i int) int { return []int{0, 0, 2}[i] })
 		err := streamtest.Validate(events, reuse)
 		if err == nil || !strings.Contains(err.Error(), "output_index 2, want 1") {
@@ -257,9 +269,11 @@ func TestOutputIndexReuse(t *testing.T) {
 				a.OutputIndex = -1
 			}
 		}
-		err = streamtest.Validate(events, reuse)
-		if err == nil || !strings.Contains(err.Error(), "output_index -1, want 1") {
-			t.Errorf("err = %v, want output_index -1, want 1", err)
+		for name, opts := range map[string][]streamtest.Option{"strict": nil, "reuse": {reuse}} {
+			err = streamtest.Validate(events, opts...)
+			if err == nil || !strings.Contains(err.Error(), "output_index -1, want 1") {
+				t.Errorf("%s: err = %v, want output_index -1, want 1", name, err)
+			}
 		}
 	})
 	t.Run("option accepts a conforming stream", func(t *testing.T) {
@@ -316,6 +330,23 @@ func TestOutputIndexReuse(t *testing.T) {
 			t.Errorf("response = %+v", sink.Response())
 		}
 	})
+}
+
+// fourCalls streams four function calls, one more item than good does.
+type fourCalls struct{}
+
+func (fourCalls) CreateStream(_ context.Context, req openresponses.Request, sink openresponses.EventSink) error {
+	em := openresponses.NewEmitter(sink, openresponses.NewResponse(req))
+	for range 4 {
+		call, err := em.FunctionCall("", "f")
+		if err != nil {
+			return err
+		}
+		if err := call.Arguments("{}"); err != nil {
+			return err
+		}
+	}
+	return em.Complete()
 }
 
 // reindexAdapter streams good's items all at output index 0.
