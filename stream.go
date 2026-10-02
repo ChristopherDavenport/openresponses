@@ -131,6 +131,16 @@ func (s *EventStream) Response() *Response {
 	return s.acc.Response()
 }
 
+// ReusedIndexes reports the output indexes the stream has reused so far;
+// see [Accumulator.ReusedIndexes]. Once it is non-empty, a position in
+// Response().Output is not an output_index until a terminal snapshot
+// replaces Output with the server's own list.
+func (s *EventStream) ReusedIndexes() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.acc.ReusedIndexes()
+}
+
 // Events returns an iterator over the remaining events. Check Err after
 // the loop.
 func (s *EventStream) Events() iter.Seq[StreamEvent] {
@@ -188,11 +198,40 @@ func (s *EventStream) Wait() (*Response, error) {
 // package documentation and tolerating streams that omit the terminal
 // snapshot. The zero value is ready to use. It is not safe for
 // concurrent use.
+//
+// It also tolerates a stream that reuses an output_index. The lifecycle
+// gives every item its own index, and streamtest.Validate rejects a
+// stream that does otherwise, but some servers number differently:
+// Ollama 0.23 streams every parallel function call at output_index 0,
+// each opened and closed in turn. Writing each into Output[0] would keep
+// only the last call until the terminal snapshot, and for good if the
+// stream is cut before it. So an output_item.added at an index whose
+// item has already been closed by output_item.done starts a new item,
+// unless it carries that item's own id, appended after everything
+// accumulated so far, and the events that follow at that index reach the
+// new item. From then on every index the stream has not used before is
+// appended too, so no item lands on another, and a snapshot that arrives
+// before the terminal one no longer replaces the accumulated list, since
+// its positions and the indexes of the events still to come would not
+// agree; an item such a snapshot alone names is appended, by id.
+// [Accumulator.ReusedIndexes] reports each such reuse, since a
+// position in Output is then no longer an output_index. The terminal
+// snapshot still replaces Output with the server's own list, as for any
+// stream.
 type Accumulator struct {
 	resp *Response
 	// lastError remembers an error event so a stream that fails without
 	// a response.failed still surfaces the reason.
 	lastError *ErrorPayload
+	// slots maps each output_index the stream has used to the position
+	// in resp.Output of the item most recently added at it. For a
+	// conforming stream every entry maps an index to itself.
+	slots map[int]int
+	// closed marks the positions whose item has had its output_item.done,
+	// or that a snapshot listed with a terminal status.
+	closed map[int]bool
+	// reused records every output_index reused, in stream order.
+	reused []int
 }
 
 // Response returns the accumulated response, or nil before any
@@ -222,9 +261,9 @@ func (a *Accumulator) Add(ev StreamEvent) {
 	case *ResponseIncompleteEvent:
 		a.setResponse(e.Response)
 	case *OutputItemAddedEvent:
-		a.setItem(e.OutputIndex, cloneItem(e.Item))
+		a.addItem(e.OutputIndex, cloneItem(e.Item))
 	case *OutputItemDoneEvent:
-		a.setItem(e.OutputIndex, e.Item)
+		a.closeItem(e.OutputIndex, e.Item)
 	case *ContentPartAddedEvent:
 		a.setPart(e.OutputIndex, e.ContentIndex, cloneContent(e.Part))
 	case *ContentPartDoneEvent:
@@ -303,10 +342,75 @@ func (a *Accumulator) setResponse(r *Response) {
 	// happens with servers that stream deltas and send an empty
 	// in_progress payload.
 	cp := r.Clone()
-	if len(cp.Output) == 0 && a.resp != nil && len(a.resp.Output) > 0 && !cp.Status.Terminal() {
+	switch {
+	case len(cp.Output) == 0 && a.resp != nil && len(a.resp.Output) > 0 && !cp.Status.Terminal():
 		cp.Output = a.resp.Output
+	case len(a.reused) > 0 && !cp.Status.Terminal():
+		// Positions have diverged from indexes. The snapshot's list is
+		// positional by the server's reckoning while the events still to
+		// come name indexes, so taking the list would point an index at
+		// the wrong item; the accumulated list, and its map, stay. An
+		// item the snapshot alone names, by an id the list does not
+		// hold, is still kept, appended with no index of its own.
+		cp.Output = a.appendUnknown(r.Output)
+	default:
+		a.relist(cp.Output)
 	}
 	a.resp = cp
+}
+
+// appendUnknown returns the accumulated output with every item of a
+// snapshot's list appended whose id is not yet in it. Items without an id
+// cannot be told from those already held and are left out.
+func (a *Accumulator) appendUnknown(listed Items) Items {
+	out := a.resp.Output
+	if len(listed) == 0 {
+		return out
+	}
+	held := make(map[string]bool, len(out))
+	for pos := range out {
+		if id := itemID(out, pos); id != "" {
+			held[id] = true
+		}
+	}
+	for _, item := range listed {
+		if item == nil {
+			continue
+		}
+		if id, _ := itemIdentity(item); id != "" && !held[id] {
+			held[id] = true
+			out = append(out, cloneItem(item))
+		}
+	}
+	return out
+}
+
+// relist rebuilds the index bookkeeping around a snapshot's output list,
+// in which positions are indexes. An item stays closed when it was
+// closed before the snapshot, known by its id, or when the snapshot
+// gives it a terminal status; a later output_item.added at its index is
+// then a reuse, not a re-announcement.
+func (a *Accumulator) relist(out Items) {
+	var wasClosed map[string]bool
+	if a.resp != nil && len(a.closed) > 0 {
+		wasClosed = make(map[string]bool, len(a.closed))
+		for pos := range a.closed {
+			if id := itemID(a.resp.Output, pos); id != "" {
+				wasClosed[id] = true
+			}
+		}
+	}
+	a.slots, a.closed = nil, nil
+	for pos, item := range out {
+		if item == nil {
+			continue
+		}
+		a.setSlot(pos, pos)
+		id, status := itemIdentity(item)
+		if (id != "" && wasClosed[id]) || status == StatusCompleted || status == StatusIncomplete {
+			a.setClosed(pos)
+		}
+	}
 }
 
 func (a *Accumulator) ensure() *Response {
@@ -316,22 +420,153 @@ func (a *Accumulator) ensure() *Response {
 	return a.resp
 }
 
-func (a *Accumulator) setItem(idx int, item Item) {
-	if item == nil {
-		return
-	}
-	r := a.ensure()
-	for len(r.Output) <= idx {
-		r.Output = append(r.Output, nil)
-	}
-	r.Output[idx] = item
+// ReusedIndexes reports the output_index of every output_item.added, or
+// output_item.done naming another item, that arrived at an index whose
+// item was already closed, by output_item.done or by the terminal status
+// a snapshot gave it, in stream order, one entry per reuse. It is nil for a stream that
+// follows the lifecycle. The items are all in Response().Output, each
+// later one appended in the order it was added, so once this is non-empty
+// a position in Output is not an output_index. The terminal snapshot
+// replaces Output with the server's own list; the record of the reuse
+// stays.
+func (a *Accumulator) ReusedIndexes() []int {
+	return append([]int(nil), a.reused...)
 }
 
+// slot returns the position of the item at idx, assigning one to an
+// index the stream has not used before: its own, until a reuse has moved
+// positions away from indexes, and the end of Output after that, so an
+// index that first appears then cannot land on an appended item.
+func (a *Accumulator) slot(idx int) int {
+	if pos, ok := a.slots[idx]; ok {
+		return pos
+	}
+	pos := idx
+	if len(a.reused) > 0 {
+		pos = len(a.ensure().Output)
+	}
+	a.setSlot(idx, pos)
+	return pos
+}
+
+func (a *Accumulator) setSlot(idx, pos int) {
+	if a.slots == nil {
+		a.slots = make(map[int]int)
+	}
+	a.slots[idx] = pos
+}
+
+func (a *Accumulator) setClosed(pos int) {
+	if a.closed == nil {
+		a.closed = make(map[int]bool)
+	}
+	a.closed[pos] = true
+}
+
+// target is the position an item announced at idx goes to. The item
+// already there is replaced while it is still open, or when the new item
+// carries its id: both re-announce the same item. A closed item has been
+// finished by the server, so an item that does not name it is another
+// item, appended, and the reuse recorded. same says whether an item
+// without an id counts as the closed one.
+func (a *Accumulator) target(idx int, item Item, same bool) int {
+	r := a.ensure()
+	pos := a.slot(idx)
+	if pos < len(r.Output) && r.Output[pos] != nil && a.closed[pos] {
+		id, _ := itemIdentity(item)
+		another := id != itemID(r.Output, pos)
+		if id == "" {
+			another = !same
+		}
+		if another {
+			pos = len(r.Output)
+			a.setSlot(idx, pos)
+			a.reused = append(a.reused, idx)
+		}
+	}
+	return pos
+}
+
+// addItem places an item opened at idx. An added names a new item unless
+// it carries the id of the one already there.
+func (a *Accumulator) addItem(idx int, item Item) {
+	if item == nil || idx < 0 {
+		return
+	}
+	pos := a.target(idx, item, false)
+	a.place(pos, item)
+	delete(a.closed, pos)
+}
+
+// closeItem records the final form of the item at idx and marks it
+// closed, so a later output_item.added at idx starts a new item. A done
+// without an id at a closed position restates that item; one with
+// another id is another item.
+func (a *Accumulator) closeItem(idx int, item Item) {
+	if item == nil || idx < 0 {
+		return
+	}
+	pos := a.target(idx, item, true)
+	a.place(pos, item)
+	a.setClosed(pos)
+}
+
+func (a *Accumulator) place(pos int, item Item) {
+	r := a.ensure()
+	for len(r.Output) <= pos {
+		r.Output = append(r.Output, nil)
+	}
+	r.Output[pos] = item
+}
+
+// item is the item events at idx refer to, or nil when the stream has
+// not opened one there. Reads assign no slot: before any reuse an index
+// is its own position, and after one an index never opened has no item.
 func (a *Accumulator) item(idx int) Item {
-	if a.resp == nil || idx < 0 || idx >= len(a.resp.Output) {
+	if a.resp == nil || idx < 0 {
 		return nil
 	}
-	return a.resp.Output[idx]
+	pos, ok := a.slots[idx]
+	if !ok {
+		if len(a.reused) > 0 {
+			return nil
+		}
+		pos = idx
+	}
+	if pos >= len(a.resp.Output) {
+		return nil
+	}
+	return a.resp.Output[pos]
+}
+
+// itemID is the id of the item at pos in out, or "" when there is none.
+func itemID(out Items, pos int) string {
+	if pos < 0 || pos >= len(out) || out[pos] == nil {
+		return ""
+	}
+	id, _ := itemIdentity(out[pos])
+	return id
+}
+
+// itemIdentity returns the id and status of any item type.
+func itemIdentity(item Item) (string, Status) {
+	switch v := item.(type) {
+	case *Message:
+		return v.ID, v.Status
+	case *FunctionCall:
+		return v.ID, v.Status
+	case *FunctionCallOutput:
+		return v.ID, v.Status
+	case *ReasoningItem:
+		return v.ID, v.Status
+	case *Compaction:
+		return v.ID, v.Status
+	case *ItemReference:
+		return v.ID, ""
+	case *UnknownItem:
+		return v.ID, v.Status
+	}
+	return "", ""
 }
 
 func (a *Accumulator) setPart(idx, cidx int, part Content) {
