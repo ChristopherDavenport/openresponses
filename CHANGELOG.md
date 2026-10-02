@@ -16,9 +16,10 @@ versions may break the API.
   accumulator's bookkeeping to find them. For a conforming stream
   `Position(i)` is `(i, true)` for every index opened. The result is
   false for an index never opened and for a negative index. A terminal
-  snapshot, or one before it while no index has been reused, replaces
-  `Output` and makes positions indexes again, so the mapping is only
-  that of the server's own list from then on; a snapshot after a reuse
+  snapshot replaces `Output`, and so does one before it that carries
+  output while no index has been reused; positions are indexes again,
+  so the mapping is only that of the server's own list from then on. A
+  snapshot with no output keeps what is held, and one after a reuse
   keeps the mapping and appends the items it alone names with no index.
 
 ## v0.0.13 - 2026-10-02

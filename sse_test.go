@@ -608,6 +608,23 @@ func TestAccumulatorPosition(t *testing.T) {
 			ids:   []string{"a2"},
 		},
 		{
+			// A done is placed like an added: naming another item at a
+			// closed index, it appends and moves the index.
+			name: "done naming another id at a closed index moves the index",
+			events: concat([]StreamEvent{created()}, callsAt(0, "a"),
+				[]StreamEvent{&OutputItemDoneEvent{OutputIndex: 0, Item: fc("b", StatusCompleted)}}),
+			wants: []want{{0, 1, "b"}},
+			ids:   []string{"a", "b"},
+		},
+		{
+			name: "done naming another id at an open index replaces in place",
+			events: []StreamEvent{created(),
+				&OutputItemAddedEvent{OutputIndex: 0, Item: fc("a", StatusInProgress)},
+				&OutputItemDoneEvent{OutputIndex: 0, Item: fc("a2", StatusCompleted)}},
+			wants: []want{{0, 0, "a2"}},
+			ids:   []string{"a2"},
+		},
+		{
 			name: "terminal snapshot after a reuse: positions are the server's indexes",
 			events: concat([]StreamEvent{created()}, callsAt(0, "a", "b"),
 				[]StreamEvent{snapshot(ResponseStatusCompleted, fc("b", StatusCompleted), fc("a", StatusCompleted))}),
@@ -819,5 +836,27 @@ func TestAccumulatorPositionFallback(t *testing.T) {
 	}
 	if _, ok := held([]int{0}).Position(1); ok {
 		t.Error("Position(1) of an index never opened reported an item after a reuse")
+	}
+}
+
+// TestAccumulatorPositionDoneWithoutID: an output_item.done with no id at
+// a closed index restates that item rather than naming another, so the
+// index keeps its position and nothing is appended or recorded as reused.
+func TestAccumulatorPositionDoneWithoutID(t *testing.T) {
+	var acc Accumulator
+	for _, ev := range concat([]StreamEvent{created()}, callsAt(0, "a")) {
+		acc.Add(ev)
+	}
+	acc.Add(&OutputItemDoneEvent{OutputIndex: 0, Item: &FunctionCall{Name: "restated", Status: StatusCompleted}})
+	pos, ok := acc.Position(0)
+	item, _ := acc.ItemAt(0)
+	if fc, isCall := item.(*FunctionCall); !ok || pos != 0 || !isCall || fc.Name != "restated" {
+		t.Errorf("Position(0) = (%d, %v), item %+v, want position 0 holding the restated call", pos, ok, item)
+	}
+	if n := len(acc.Response().Output); n != 1 {
+		t.Errorf("Output holds %d items, want 1", n)
+	}
+	if got := acc.ReusedIndexes(); got != nil {
+		t.Errorf("ReusedIndexes = %v, want none", got)
 	}
 }

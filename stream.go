@@ -439,8 +439,11 @@ func (a *Accumulator) ReusedIndexes() []int {
 
 // Position returns the position in Response().Output of the item the
 // stream's events at outputIndex currently name: the item the last
-// output_item.added at that index opened, which is the one a delta at the
-// index reaches. The second result is false when there is no such item:
+// output_item.added, or output_item.done, placed at that index, which is
+// the one a delta at the index reaches. Either event replaces the item in
+// place while it is still open, or when it names the item already there;
+// one that names another item at a closed index appends it and moves the
+// index to the new position. The second result is false when there is no such item:
 // a negative index, an index the stream never opened once an index has
 // been reused, or an index whose item is no longer in Output. Before any
 // reuse an index that has no item of its own yet maps to its own
@@ -459,7 +462,8 @@ func (a *Accumulator) ReusedIndexes() []int {
 //
 // Position reads the accumulator as it stands, so ask after applying the
 // event whose item is wanted, and ask again after the next
-// output_item.added at the index, which moves it to the new item. Items
+// output_item.added or output_item.done that names another item at the
+// index, which moves it to the new item. Items
 // positions hold are stable across later events, but a snapshot changes
 // what is held:
 //
