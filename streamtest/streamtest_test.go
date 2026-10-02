@@ -2,6 +2,7 @@ package streamtest_test
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -169,4 +170,203 @@ func TestSinkRejectsAfterTerminal(t *testing.T) {
 	if err := sink.Send(&openresponses.OutputTextDeltaEvent{}); err == nil {
 		t.Error("expected error after terminal event")
 	}
+}
+
+// reindexed rewrites every output_index in good's stream through its
+// wire form, so the events inside each item follow the index it was added
+// at, as an Ollama 0.23 stream does. to maps an original index to the one
+// sent.
+func reindexed(t *testing.T, to func(int) int) []openresponses.StreamEvent {
+	t.Helper()
+	return reindexedFrom(t, good{}, to)
+}
+
+// reindexedFrom is reindexed over any conforming adapter.
+func reindexedFrom(t *testing.T, adapter openresponses.Streamer, to func(int) int) []openresponses.StreamEvent {
+	t.Helper()
+	sink, err := streamtest.Run(context.Background(), adapter, openresponses.Request{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`"output_index":(\d+)`)
+	var out []openresponses.StreamEvent
+	for _, ev := range sink.Events() {
+		data, err := openresponses.EncodeEvent(ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = re.ReplaceAllFunc(data, func(m []byte) []byte {
+			var n int
+			for _, c := range re.FindSubmatch(m)[1] {
+				n = n*10 + int(c-'0')
+			}
+			return []byte(`"output_index":` + string(rune('0'+to(n))))
+		})
+		decoded, err := openresponses.DecodeEvent(data)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, decoded)
+	}
+	return out
+}
+
+func allZero(int) int { return 0 }
+
+func TestOutputIndexReuse(t *testing.T) {
+	reuse := streamtest.WithOutputIndexReuse()
+
+	t.Run("strict by default", func(t *testing.T) {
+		err := streamtest.Validate(reindexed(t, allZero))
+		if err == nil || !strings.Contains(err.Error(), "output_index 0, want 1") {
+			t.Errorf("err = %v, want output_index 0, want 1", err)
+		}
+	})
+	t.Run("option accepts the reuse", func(t *testing.T) {
+		if err := streamtest.Validate(reindexed(t, allZero), reuse); err != nil {
+			t.Errorf("err = %v, want nil", err)
+		}
+	})
+	t.Run("option accepts reuse of an earlier index among fresh ones", func(t *testing.T) {
+		// Items at 0, 1, 0: the third reuses index 0 after it closed.
+		events := reindexed(t, func(i int) int { return []int{0, 1, 0}[i] })
+		if err := streamtest.Validate(events, reuse); err != nil {
+			t.Errorf("err = %v, want nil", err)
+		}
+		if err := streamtest.Validate(events); err == nil {
+			t.Error("strict validation accepted the reuse")
+		}
+	})
+	t.Run("option accepts a fresh index after a reuse", func(t *testing.T) {
+		// Items at 0, 0, 1 and 0, 1, 0: the next unused index counts
+		// distinct indexes, not items.
+		for _, idx := range [][]int{{0, 0, 1}, {0, 1, 1}} {
+			events := reindexed(t, func(i int) int { return idx[i] })
+			if err := streamtest.Validate(events, reuse); err != nil {
+				t.Errorf("indexes %v: err = %v, want nil", idx, err)
+			}
+		}
+		for _, idx := range [][]int{{0, 1, 0, 2}, {0, 0, 1, 0}} {
+			events := reindexedFrom(t, fourCalls{}, func(i int) int { return idx[i] })
+			if err := streamtest.Validate(events, reuse); err != nil {
+				t.Errorf("indexes %v: err = %v, want nil", idx, err)
+			}
+		}
+		events := reindexed(t, func(i int) int { return []int{0, 0, 2}[i] })
+		err := streamtest.Validate(events, reuse)
+		if err == nil || !strings.Contains(err.Error(), "output_index 2, want 1") {
+			t.Errorf("err = %v, want output_index 2, want 1", err)
+		}
+	})
+	t.Run("option refuses a negative index", func(t *testing.T) {
+		sink, err := streamtest.Run(context.Background(), good{}, openresponses.Request{Model: "m"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		events := sink.Events()
+		for _, ev := range events {
+			if a, ok := ev.(*openresponses.OutputItemAddedEvent); ok && a.OutputIndex == 1 {
+				a.OutputIndex = -1
+			}
+		}
+		for name, opts := range map[string][]streamtest.Option{"strict": nil, "reuse": {reuse}} {
+			err = streamtest.Validate(events, opts...)
+			if err == nil || !strings.Contains(err.Error(), "output_index -1, want 1") {
+				t.Errorf("%s: err = %v, want output_index -1, want 1", name, err)
+			}
+		}
+	})
+	t.Run("option accepts a conforming stream", func(t *testing.T) {
+		if err := streamtest.Validate(reindexed(t, func(i int) int { return i }), reuse); err != nil {
+			t.Errorf("err = %v, want nil", err)
+		}
+	})
+	t.Run("option still refuses a gap", func(t *testing.T) {
+		err := streamtest.Validate(reindexed(t, func(i int) int { return []int{0, 2, 0}[i] }), reuse)
+		if err == nil || !strings.Contains(err.Error(), "output_index 2, want 1") {
+			t.Errorf("err = %v, want output_index 2, want 1", err)
+		}
+	})
+	t.Run("option still holds events to the item's index", func(t *testing.T) {
+		// Only the added events are rewritten, so the item's own events
+		// name an index other than the one it was added at.
+		sink, err := streamtest.Run(context.Background(), good{}, openresponses.Request{Model: "m"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		events := sink.Events()
+		for _, ev := range events {
+			if a, ok := ev.(*openresponses.OutputItemAddedEvent); ok {
+				a.OutputIndex = 0
+			}
+		}
+		err = streamtest.Validate(events, reuse)
+		if err == nil || !strings.Contains(err.Error(), "output_index 1, open item is 0") {
+			t.Errorf("err = %v, want output_index 1, open item is 0", err)
+		}
+	})
+	t.Run("option still checks the terminal response", func(t *testing.T) {
+		events := reindexed(t, allZero)
+		final, _ := openresponses.TerminalResponse(events[len(events)-1])
+		final.Output = final.Output[:1]
+		err := streamtest.Validate(events, reuse)
+		if err == nil || !strings.Contains(err.Error(), "response has 1 output items, 3 were streamed") {
+			t.Errorf("err = %v, want output mismatch", err)
+		}
+	})
+	t.Run("Run takes the option", func(t *testing.T) {
+		adapter := reindexAdapter{}
+		if _, err := streamtest.Run(context.Background(), adapter, openresponses.Request{Model: "m"}); err == nil {
+			t.Error("Run accepted the reuse without the option")
+		}
+		sink, err := streamtest.Run(context.Background(), adapter, openresponses.Request{Model: "m"}, reuse)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(sink.Response().Output); got != 3 {
+			t.Errorf("response holds %d items, want 3", got)
+		}
+		if sink.Response().OutputText() != "hello" {
+			t.Errorf("response = %+v", sink.Response())
+		}
+	})
+}
+
+// fourCalls streams four function calls, one more item than good does.
+type fourCalls struct{}
+
+func (fourCalls) CreateStream(_ context.Context, req openresponses.Request, sink openresponses.EventSink) error {
+	em := openresponses.NewEmitter(sink, openresponses.NewResponse(req))
+	for range 4 {
+		call, err := em.FunctionCall("", "f")
+		if err != nil {
+			return err
+		}
+		if err := call.Arguments("{}"); err != nil {
+			return err
+		}
+	}
+	return em.Complete()
+}
+
+// reindexAdapter streams good's items all at output index 0.
+type reindexAdapter struct{}
+
+func (reindexAdapter) CreateStream(ctx context.Context, req openresponses.Request, sink openresponses.EventSink) error {
+	return good{}.CreateStream(ctx, req, zeroIndexSink{sink})
+}
+
+type zeroIndexSink struct{ openresponses.EventSink }
+
+func (s zeroIndexSink) Send(ev openresponses.StreamEvent) error {
+	data, err := openresponses.EncodeEvent(ev)
+	if err != nil {
+		return err
+	}
+	data = regexp.MustCompile(`"output_index":\d+`).ReplaceAll(data, []byte(`"output_index":0`))
+	decoded, err := openresponses.DecodeEvent(data)
+	if err != nil {
+		return err
+	}
+	return s.EventSink.Send(decoded)
 }

@@ -7,6 +7,16 @@ versions may break the API.
 
 ## Unreleased
 
+- `streamtest.WithOutputIndexReuse` is an `Option`, accepted by `Validate`
+  and `Run`, that accepts an output index reused after `output_item.done`
+  at that index, the stream Ollama 0.23 emits for parallel function calls.
+  Validation stays strict without it, and the option relaxes only that one
+  rule: a first use of an index must still be the next unused one, the
+  events inside an item must still name the index it was added at, and the
+  terminal response must still hold every item added. It is for tests of
+  code that reads such a stream, which no longer have to rewrite the
+  indexes to satisfy the validator. `Validate` and `Run` gain a variadic
+  `...Option` parameter, so existing calls compile unchanged.
 - `Accumulator` keeps every item of a stream that reuses an output index
   after closing the item there, which is how Ollama 0.23 streams parallel
   function calls: the later item is appended instead of overwriting the
@@ -19,7 +29,7 @@ versions may break the API.
   index has been reused, since its positions and the indexes of the
   events still to come would not agree; an item only such a snapshot
   names is appended, by id. `streamtest.Validate` still rejects such a stream
-  as non-conforming. (#26)
+  as non-conforming unless given `streamtest.WithOutputIndexReuse`. (#26)
 - Release process: `release-guard` takes the version floor, and the
   tag-exists check, from the tags origin has published, read once with
   `git ls-remote` and joined with the local tags, so a clone that has not
