@@ -201,7 +201,8 @@ func (s *EventStream) Wait() (*Response, error) {
 //
 // It also tolerates a stream that reuses an output_index. The lifecycle
 // gives every item its own index, and streamtest.Validate rejects a
-// stream that does otherwise, but some servers number differently:
+// stream that does otherwise unless given streamtest.WithOutputIndexReuse,
+// but some servers number differently:
 // Ollama 0.23 streams every parallel function call at output_index 0,
 // each opened and closed in turn. Writing each into Output[0] would keep
 // only the last call until the terminal snapshot, and for good if the

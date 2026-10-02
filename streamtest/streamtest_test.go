@@ -231,6 +231,37 @@ func TestOutputIndexReuse(t *testing.T) {
 			t.Error("strict validation accepted the reuse")
 		}
 	})
+	t.Run("option accepts a fresh index after a reuse", func(t *testing.T) {
+		// Items at 0, 0, 1 and 0, 1, 0: the next unused index counts
+		// distinct indexes, not items.
+		for _, idx := range [][]int{{0, 0, 1}, {0, 1, 1}} {
+			events := reindexed(t, func(i int) int { return idx[i] })
+			if err := streamtest.Validate(events, reuse); err != nil {
+				t.Errorf("indexes %v: err = %v, want nil", idx, err)
+			}
+		}
+		events := reindexed(t, func(i int) int { return []int{0, 0, 2}[i] })
+		err := streamtest.Validate(events, reuse)
+		if err == nil || !strings.Contains(err.Error(), "output_index 2, want 1") {
+			t.Errorf("err = %v, want output_index 2, want 1", err)
+		}
+	})
+	t.Run("option refuses a negative index", func(t *testing.T) {
+		sink, err := streamtest.Run(context.Background(), good{}, openresponses.Request{Model: "m"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		events := sink.Events()
+		for _, ev := range events {
+			if a, ok := ev.(*openresponses.OutputItemAddedEvent); ok && a.OutputIndex == 1 {
+				a.OutputIndex = -1
+			}
+		}
+		err = streamtest.Validate(events, reuse)
+		if err == nil || !strings.Contains(err.Error(), "output_index -1, want 1") {
+			t.Errorf("err = %v, want output_index -1, want 1", err)
+		}
+	})
 	t.Run("option accepts a conforming stream", func(t *testing.T) {
 		if err := streamtest.Validate(reindexed(t, func(i int) int { return i }), reuse); err != nil {
 			t.Errorf("err = %v, want nil", err)

@@ -29,7 +29,7 @@ versions may break the API.
   index has been reused, since its positions and the indexes of the
   events still to come would not agree; an item only such a snapshot
   names is appended, by id. `streamtest.Validate` still rejects such a stream
-  as non-conforming. (#26)
+  as non-conforming unless given `streamtest.WithOutputIndexReuse`. (#26)
 - Release process: `release-guard` takes the version floor, and the
   tag-exists check, from the tags origin has published, read once with
   `git ls-remote` and joined with the local tags, so a clone that has not
