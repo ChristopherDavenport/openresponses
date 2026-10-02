@@ -441,8 +441,15 @@ func (a *Accumulator) ReusedIndexes() []int {
 // stream's events at outputIndex currently name: the item the last
 // output_item.added at that index opened, which is the one a delta at the
 // index reaches. The second result is false when there is no such item:
-// an index the stream never opened, a negative index, or an index whose
-// item is no longer in Output.
+// a negative index, an index the stream never opened once an index has
+// been reused, or an index whose item is no longer in Output. Before any
+// reuse an index that has no item of its own yet maps to its own
+// position, when Output has an item there.
+//
+// The answer is valid straight after Add of the event that names the
+// index: after an output_item.added or output_item.done at it, it is that
+// event's item, including one appended because the index was reused. A
+// read assigns nothing and changes no state.
 //
 // For a stream that follows the lifecycle Position(i) is (i, true) for
 // every index opened. It differs once the stream reuses an index, see
@@ -475,7 +482,13 @@ func (a *Accumulator) Position(outputIndex int) (int, bool) {
 		return 0, false
 	}
 	pos, ok := a.slots[outputIndex]
-	if !ok || pos >= len(a.resp.Output) || a.resp.Output[pos] == nil {
+	if !ok {
+		if len(a.reused) > 0 {
+			return 0, false
+		}
+		pos = outputIndex
+	}
+	if pos >= len(a.resp.Output) || a.resp.Output[pos] == nil {
 		return 0, false
 	}
 	return pos, true
