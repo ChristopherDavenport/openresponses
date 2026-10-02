@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -755,5 +756,68 @@ func TestAccumulatorPositionMidStream(t *testing.T) {
 	item, _ := acc.ItemAt(0)
 	if fc := item.(*FunctionCall); fc.ID != "b" || !strings.HasSuffix(fc.Arguments, "+") {
 		t.Errorf("ItemAt(0) = %+v, want call b with the delta", fc)
+	}
+}
+
+// TestAccumulatorPositionReadsChangeNothing checks that asking, for any
+// index, assigns no slot and leaves the bookkeeping as it was, so a
+// later added at an index that was asked about first lands where it
+// would have without the question.
+func TestAccumulatorPositionReadsChangeNothing(t *testing.T) {
+	build := func(ask bool) *Accumulator {
+		acc := &Accumulator{}
+		for _, ev := range concat([]StreamEvent{created()}, callsAt(0, "a", "b")) {
+			acc.Add(ev)
+			if ask {
+				for idx := -1; idx < 4; idx++ {
+					acc.Position(idx)
+					acc.ItemAt(idx)
+				}
+			}
+		}
+		// Index 3 first appears after the reuse.
+		for _, ev := range callsAt(3, "c") {
+			acc.Add(ev)
+			if ask {
+				acc.Position(3)
+			}
+		}
+		return acc
+	}
+	asked, quiet := build(true), build(false)
+	if !reflect.DeepEqual(asked.slots, quiet.slots) || !reflect.DeepEqual(asked.closed, quiet.closed) || !reflect.DeepEqual(asked.reused, quiet.reused) {
+		t.Errorf("asking changed the bookkeeping: slots %v vs %v, closed %v vs %v", asked.slots, quiet.slots, asked.closed, quiet.closed)
+	}
+	if got, _ := callIDs(asked.Response().Output); !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Errorf("output ids = %q, want [a b c]", got)
+	}
+	if pos, ok := asked.Position(3); !ok || pos != 2 {
+		t.Errorf("Position(3) = (%d, %v), want (2, true)", pos, ok)
+	}
+}
+
+// TestAccumulatorPositionFallback covers the one case Add alone does not
+// build: before any reuse, an index that has no item of its own maps to
+// its own position when Output has an item there, and after a reuse it
+// does not.
+func TestAccumulatorPositionFallback(t *testing.T) {
+	held := func(reused []int) *Accumulator {
+		return &Accumulator{
+			resp:   &Response{Output: Items{&FunctionCall{ID: "a"}, &FunctionCall{ID: "b"}}},
+			reused: reused,
+		}
+	}
+	acc := held(nil)
+	if pos, ok := acc.Position(1); !ok || pos != 1 {
+		t.Errorf("Position(1) = (%d, %v), want (1, true)", pos, ok)
+	}
+	if item, ok := acc.ItemAt(1); !ok || item != acc.resp.Output[1] {
+		t.Errorf("ItemAt(1) = (%v, %v), want Output[1]", item, ok)
+	}
+	if _, ok := acc.Position(2); ok {
+		t.Error("Position(2) past the end of Output reported an item")
+	}
+	if _, ok := held([]int{0}).Position(1); ok {
+		t.Error("Position(1) of an index never opened reported an item after a reuse")
 	}
 }
