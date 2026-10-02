@@ -5,6 +5,22 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- `Accumulator.Position` and `Accumulator.ItemAt` map an output index to
+  the item the stream's events there currently name: its position in
+  `Response().Output`, and the item itself. Since v0.0.13 appends an item
+  opened at an already-closed index, `Output[i]` is no longer the item an
+  event at index `i` names once an index is reused; a consumer that reads
+  items by index as events arrive no longer has to mirror the
+  accumulator's bookkeeping to find them. For a conforming stream
+  `Position(i)` is `(i, true)` for every index opened. The result is
+  false for an index never opened and for a negative index. A terminal
+  snapshot, or one before it while no index has been reused, replaces
+  `Output` and makes positions indexes again, so the mapping is only
+  that of the server's own list from then on; a snapshot after a reuse
+  keeps the mapping and appends the items it alone names with no index.
+
 ## v0.0.13 - 2026-10-02
 
 - `streamtest.WithOutputIndexReuse` is an `Option`, accepted by `Validate`
