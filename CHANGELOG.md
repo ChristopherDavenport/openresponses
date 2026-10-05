@@ -5,6 +5,18 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- Decoding accepts the names OpenAI's Responses API gives the reasoning
+  text events, `response.reasoning_text.delta` and
+  `response.reasoning_text.done`, as the same `ReasoningDeltaEvent` and
+  `ReasoningDoneEvent` the specification spells `response.reasoning.delta`
+  and `response.reasoning.done`. A server that follows OpenAI (OpenRouter
+  among them) streamed its reasoning whole as far as the client was
+  concerned: the deltas decoded to `UnknownEvent`, so reasoning showed
+  once at completion instead of streaming. Marshalling still emits the
+  specification's names.
+
 ## v0.0.14 - 2026-10-02
 
 - `Accumulator.Position` and `Accumulator.ItemAt` map an output index to

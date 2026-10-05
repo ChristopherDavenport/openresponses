@@ -145,6 +145,79 @@ func TestClientCreateStream(t *testing.T) {
 	}
 }
 
+// A server that follows OpenAI's Responses API names the reasoning text
+// events response.reasoning_text.delta and response.reasoning_text.done,
+// where the specification spells response.reasoning.delta and
+// response.reasoning.done. The client streams reasoning from either: the
+// deltas decode as the same events and grow the reasoning item as they
+// arrive, and marshalling still emits the specification's name.
+func TestClientStreamsReasoningUnderTheOpenAIEventNames(t *testing.T) {
+	const body = "data: " + `{"type":"response.created","sequence_number":0,"response":{"id":"resp_1","object":"response","status":"in_progress","output":[]}}` + "\n\n" +
+		"data: " + `{"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"id":"rs_1","type":"reasoning","status":"in_progress","summary":[]}}` + "\n\n" +
+		"data: " + `{"type":"response.content_part.added","sequence_number":2,"output_index":0,"item_id":"rs_1","content_index":0,"part":{"type":"reasoning_text","text":""}}` + "\n\n" +
+		"data: " + `{"type":"response.reasoning_text.delta","sequence_number":3,"output_index":0,"item_id":"rs_1","content_index":0,"delta":"Think "}` + "\n\n" +
+		"data: " + `{"type":"response.reasoning_text.delta","sequence_number":4,"output_index":0,"item_id":"rs_1","content_index":0,"delta":"twice."}` + "\n\n" +
+		"data: " + `{"type":"response.reasoning_text.done","sequence_number":5,"output_index":0,"item_id":"rs_1","content_index":0,"text":"Think twice."}` + "\n\n" +
+		"data: " + `{"type":"response.content_part.done","sequence_number":6,"output_index":0,"item_id":"rs_1","content_index":0,"part":{"type":"reasoning_text","text":"Think twice."}}` + "\n\n" +
+		"data: " + `{"type":"response.output_item.done","sequence_number":7,"output_index":0,"item":{"id":"rs_1","type":"reasoning","status":"completed","content":[{"type":"reasoning_text","text":"Think twice."}],"summary":[]}}` + "\n\n" +
+		"data: " + `{"type":"response.completed","sequence_number":8,"response":{"id":"resp_1","object":"response","status":"completed","output":[{"id":"rs_1","type":"reasoning","status":"completed","content":[{"type":"reasoning_text","text":"Think twice."}],"summary":[]}]}}` + "\n\n" +
+		"data: [DONE]\n\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL)
+	stream, err := c.CreateStream(context.Background(), Request{Model: "m", Input: Items{UserText("hi")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var deltas []string
+	var doneText string
+	for ev := range stream.Events() {
+		switch e := ev.(type) {
+		case *ReasoningDeltaEvent:
+			deltas = append(deltas, e.Delta)
+		case *ReasoningDoneEvent:
+			doneText = e.Text
+			// The deltas grew the reasoning item as they arrived.
+			r, ok := stream.Response().Output[0].(*ReasoningItem)
+			if !ok {
+				t.Fatalf("output[0] = %T, want a reasoning item", stream.Response().Output[0])
+			}
+			if got := r.Content.Text(); got != "Think twice." {
+				t.Errorf("reasoning text after the deltas = %q", got)
+			}
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(deltas, "") != "Think twice." {
+		t.Errorf("deltas = %v", deltas)
+	}
+	if doneText != "Think twice." {
+		t.Errorf("done text = %q", doneText)
+	}
+	r, ok := stream.Response().Output[0].(*ReasoningItem)
+	if !ok {
+		t.Fatalf("final output[0] = %T, want a reasoning item", stream.Response().Output[0])
+	}
+	if got := r.Content.Text(); got != "Think twice." {
+		t.Errorf("final reasoning text = %q", got)
+	}
+	// The specification's name is what goes on the wire when this
+	// package writes one of these events.
+	out, err := EncodeEvent(&ReasoningDeltaEvent{Delta: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"type":"response.reasoning.delta"`) {
+		t.Errorf("marshalled as %s, want the specification's name", out)
+	}
+}
+
 func TestClientCreateStreamJSONFallback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, sampleResponse())

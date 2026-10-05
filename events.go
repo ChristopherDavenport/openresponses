@@ -598,7 +598,9 @@ func (e *ReasoningSummaryTextDoneEvent) MarshalJSON() ([]byte, error) {
 	return jsonx.MarshalTyped(EventReasoningSummaryTextDone, (*plain)(e))
 }
 
-// ReasoningDeltaEvent carries a chunk of reasoning text.
+// ReasoningDeltaEvent carries a chunk of reasoning text. Servers that
+// follow OpenAI's Responses API name it response.reasoning_text.delta;
+// [DecodeEvent] accepts that name too.
 type ReasoningDeltaEvent struct {
 	SequenceNumber int64  `json:"sequence_number"`
 	ItemID         string `json:"item_id"`
@@ -623,7 +625,9 @@ func (e *ReasoningDeltaEvent) MarshalJSON() ([]byte, error) {
 	return jsonx.MarshalTyped(EventReasoningDelta, (*plain)(e))
 }
 
-// ReasoningDoneEvent carries the complete reasoning text.
+// ReasoningDoneEvent carries the complete reasoning text. Servers that
+// follow OpenAI's Responses API name it response.reasoning_text.done;
+// [DecodeEvent] accepts that name too.
 type ReasoningDoneEvent struct {
 	SequenceNumber int64  `json:"sequence_number"`
 	ItemID         string `json:"item_id"`
@@ -837,6 +841,8 @@ var eventRegistry = &registry[StreamEvent]{decoders: map[string]func(json.RawMes
 	EventReasoningSummaryTextDone:   decodeInto[StreamEvent, ReasoningSummaryTextDoneEvent],
 	EventReasoningDelta:             decodeInto[StreamEvent, ReasoningDeltaEvent],
 	EventReasoningDone:              decodeInto[StreamEvent, ReasoningDoneEvent],
+	EventReasoningTextDelta:         decodeInto[StreamEvent, ReasoningDeltaEvent],
+	EventReasoningTextDone:          decodeInto[StreamEvent, ReasoningDoneEvent],
 	EventOutputTextAnnotationAdded:  decodeInto[StreamEvent, OutputTextAnnotationAddedEvent],
 	EventError:                      decodeInto[StreamEvent, ErrorEvent],
 }}

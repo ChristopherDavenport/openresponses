@@ -202,7 +202,16 @@ const (
 	EventReasoningSummaryTextDone   = "response.reasoning_summary_text.done"
 	EventReasoningDelta             = "response.reasoning.delta"
 	EventReasoningDone              = "response.reasoning.done"
-	EventOutputTextAnnotationAdded  = "response.output_text.annotation.added"
-	EventError                      = "error"
-	EventWebSocketResponseCreate    = "response.create"
+
+	// EventReasoningTextDelta and EventReasoningTextDone are the names
+	// servers that follow OpenAI's Responses API give the two events the
+	// specification spells [EventReasoningDelta] and [EventReasoningDone]
+	// (OpenRouter among them). [DecodeEvent] accepts either name, so
+	// reasoning streams against either; marshalling always emits the
+	// specification's.
+	EventReasoningTextDelta        = "response.reasoning_text.delta"
+	EventReasoningTextDone         = "response.reasoning_text.done"
+	EventOutputTextAnnotationAdded = "response.output_text.annotation.added"
+	EventError                     = "error"
+	EventWebSocketResponseCreate   = "response.create"
 )
