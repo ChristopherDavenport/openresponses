@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/ChristopherDavenport/openresponses v0.0.15
-	google.golang.org/genai v1.71.0
+	google.golang.org/genai v1.72.0
 )
 
 require (
