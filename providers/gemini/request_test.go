@@ -240,6 +240,7 @@ func TestEncodeConfig(t *testing.T) {
 		PresencePenalty:   ptr(0.1),
 		FrequencyPenalty:  ptr(0.2),
 		TopLogprobs:       ptr(3),
+		Include:           []openresponses.Include{openresponses.IncludeOutputTextLogprobs},
 		ParallelToolCalls: ptr(true),
 		ServiceTier:       openresponses.ServiceTierDefault,
 		Metadata:          map[string]string{"team": "a"},
@@ -280,6 +281,31 @@ func TestEncodeConfig(t *testing.T) {
 	_, cfg = encode(t, openresponses.Request{})
 	if cfg.ThinkingConfig != nil || cfg.Temperature != nil || cfg.ToolConfig != nil || cfg.Tools != nil || cfg.SystemInstruction != nil {
 		t.Fatalf("empty request should leave the config empty: %+v", cfg)
+	}
+}
+
+// TestEncodeLogprobs pins the include as what asks for logprobs:
+// top_logprobs only sizes them.
+func TestEncodeLogprobs(t *testing.T) {
+	include := []openresponses.Include{openresponses.IncludeOutputTextLogprobs}
+	cases := []struct {
+		name     string
+		req      openresponses.Request
+		response bool
+		top      *int32
+	}{
+		{"include", openresponses.Request{Include: include}, true, nil},
+		{"include and top_logprobs", openresponses.Request{Include: include, TopLogprobs: ptr(3)}, true, ptr(int32(3))},
+		{"top_logprobs alone", openresponses.Request{TopLogprobs: ptr(3)}, false, nil},
+		{"neither", openresponses.Request{}, false, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, cfg := encode(t, tc.req)
+			if cfg.ResponseLogprobs != tc.response || !reflect.DeepEqual(cfg.Logprobs, tc.top) {
+				t.Fatalf("logprobs = %v/%v, want %v/%v", cfg.ResponseLogprobs, cfg.Logprobs, tc.response, tc.top)
+			}
+		})
 	}
 }
 

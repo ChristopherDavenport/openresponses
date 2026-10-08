@@ -139,6 +139,7 @@ func TestEncodeConfig(t *testing.T) {
 		PresencePenalty:   ptr(0.1),
 		FrequencyPenalty:  ptr(0.2),
 		TopLogprobs:       ptr(3),
+		Include:           []openresponses.Include{openresponses.IncludeOutputTextLogprobs},
 		ParallelToolCalls: ptr(false),
 		Reasoning:         openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh, Summary: openresponses.ReasoningSummaryAuto},
 		Text:              openresponses.TextConfig{Verbosity: openresponses.VerbosityLow, Format: openresponses.JSONSchemaFormat("out", json.RawMessage(`{"type":"object"}`), true)},
@@ -188,6 +189,31 @@ func TestEncodeConfig(t *testing.T) {
 		if _, ok := body[key]; ok {
 			t.Fatalf("empty request should not send %s: %v", key, body)
 		}
+	}
+}
+
+// TestEncodeLogprobs pins the include as what asks for logprobs:
+// top_logprobs only sizes them.
+func TestEncodeLogprobs(t *testing.T) {
+	include := []openresponses.Include{openresponses.IncludeOutputTextLogprobs}
+	cases := []struct {
+		name     string
+		req      openresponses.Request
+		logprobs any
+		top      any
+	}{
+		{"include", openresponses.Request{Include: include}, true, nil},
+		{"include and top_logprobs", openresponses.Request{Include: include, TopLogprobs: ptr(3)}, true, float64(3)},
+		{"top_logprobs alone", openresponses.Request{TopLogprobs: ptr(3)}, nil, nil},
+		{"neither", openresponses.Request{}, nil, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := wire(t, testAdapter(), tc.req)
+			if body["logprobs"] != tc.logprobs || body["top_logprobs"] != tc.top {
+				t.Fatalf("logprobs = %v/%v, want %v/%v", body["logprobs"], body["top_logprobs"], tc.logprobs, tc.top)
+			}
+		})
 	}
 }
 

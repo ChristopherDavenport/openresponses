@@ -71,6 +71,9 @@ func encodeConfig(req openresponses.Request, maxTokens int64) (sdk.MessageNewPar
 		return p, unsupported("frequency_penalty")
 	case req.TopLogprobs != nil:
 		return p, unsupported("top_logprobs")
+	case req.Includes(openresponses.IncludeOutputTextLogprobs):
+		return p, openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
+			"include message.output_text.logprobs is not supported by the Messages API", "include")
 	case req.MaxToolCalls != nil:
 		return p, unsupported("max_tool_calls")
 	case req.Truncation == openresponses.TruncationAuto:
