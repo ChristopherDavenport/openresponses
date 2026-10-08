@@ -5,6 +5,16 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- `InputTokensDetails` gains `CacheCreationTokens` and
+  `CacheCreation1hTokens`, the input tokens written to a prompt cache
+  and the part of them written to the one-hour cache. They are an
+  extension to the specification's `cached_tokens`, subsets of
+  `InputTokens` as it is, and left off the wire when zero. The Anthropic
+  provider fills both, so a cost that prices a write apart from plain
+  input has the count to price it with.
+
 ## v0.0.15 - 2026-10-04
 
 - Decoding accepts the names OpenAI's Responses API gives the reasoning

@@ -2,6 +2,7 @@ package openresponses
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -173,5 +174,28 @@ func TestErrorPayloadHeadersFiltered(t *testing.T) {
 	}
 	if e.Headers.Get("Set-Cookie") != "" || e.Headers.Get("Access-Control-Allow-Origin") != "" {
 		t.Errorf("non-error headers carried over: %v", e.Headers)
+	}
+}
+
+func TestUsageCacheCreationIsAnExtension(t *testing.T) {
+	in := `{"input_tokens":10,"output_tokens":1,"total_tokens":11,"input_tokens_details":{"cached_tokens":4,"cache_creation_tokens":3,"cache_creation_1h_tokens":2},"output_tokens_details":{"reasoning_tokens":0}}`
+	var u Usage
+	if err := json.Unmarshal([]byte(in), &u); err != nil {
+		t.Fatal(err)
+	}
+	if d := u.InputTokensDetails; d.CachedTokens != 4 || d.CacheCreationTokens != 3 || d.CacheCreation1hTokens != 2 {
+		t.Fatalf("details = %+v", d)
+	}
+	out, err := json.Marshal(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != in {
+		t.Errorf("round trip = %s", out)
+	}
+	// A server that reports no write leaves the keys off, the specification's shape.
+	plain, _ := json.Marshal(Usage{InputTokens: 1, InputTokensDetails: InputTokensDetails{CachedTokens: 1}})
+	if strings.Contains(string(plain), "cache_creation") {
+		t.Errorf("zero cache creation on the wire: %s", plain)
 	}
 }

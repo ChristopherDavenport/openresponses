@@ -111,6 +111,8 @@ func (d *decoder) event(ev sdk.MessageStreamEventUnion) error {
 		}
 		d.turn = usage(v.Message.Usage.InputTokens, v.Message.Usage.CacheReadInputTokens, v.Message.Usage.CacheCreationInputTokens,
 			v.Message.Usage.OutputTokens, v.Message.Usage.OutputTokensDetails.ThinkingTokens)
+		d.turn.InputTokensDetails.CacheCreationTokens = int(v.Message.Usage.CacheCreationInputTokens)
+		d.turn.InputTokensDetails.CacheCreation1hTokens = int(min(v.Message.Usage.CacheCreation.Ephemeral1hInputTokens, v.Message.Usage.CacheCreationInputTokens))
 		return nil
 	case sdk.ContentBlockStartEvent:
 		return d.startBlock(v)
@@ -122,8 +124,12 @@ func (d *decoder) event(ev sdk.MessageStreamEventUnion) error {
 		d.stop = v.Delta.StopReason
 		d.stopDetails = v.Delta.StopDetails
 		if v.Usage.InputTokens > 0 {
+			// The delta carries no 1h split; keep message_start's, within the new total.
+			oneHour := d.turn.InputTokensDetails.CacheCreation1hTokens
 			d.turn = usage(v.Usage.InputTokens, v.Usage.CacheReadInputTokens, v.Usage.CacheCreationInputTokens,
 				v.Usage.OutputTokens, v.Usage.OutputTokensDetails.ThinkingTokens)
+			d.turn.InputTokensDetails.CacheCreationTokens = int(v.Usage.CacheCreationInputTokens)
+			d.turn.InputTokensDetails.CacheCreation1hTokens = min(oneHour, int(v.Usage.CacheCreationInputTokens))
 		} else {
 			d.turn.OutputTokens = int(v.Usage.OutputTokens)
 			d.turn.OutputTokensDetails.ReasoningTokens = int(v.Usage.OutputTokensDetails.ThinkingTokens)
@@ -423,6 +429,8 @@ func addUsage(a, b openresponses.Usage) openresponses.Usage {
 	a.OutputTokens += b.OutputTokens
 	a.TotalTokens += b.TotalTokens
 	a.InputTokensDetails.CachedTokens += b.InputTokensDetails.CachedTokens
+	a.InputTokensDetails.CacheCreationTokens += b.InputTokensDetails.CacheCreationTokens
+	a.InputTokensDetails.CacheCreation1hTokens += b.InputTokensDetails.CacheCreation1hTokens
 	a.OutputTokensDetails.ReasoningTokens += b.OutputTokensDetails.ReasoningTokens
 	return a
 }

@@ -70,7 +70,7 @@ func hello() openresponses.Request {
 }
 
 const (
-	msgStart  = `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5-20260401","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":4,"cache_creation_input_tokens":2}}}`
+	msgStart  = `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-opus-5-20260401","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":4,"cache_creation_input_tokens":2,"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":1}}}}`
 	textStart = `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`
 	textStop  = `{"type":"content_block_stop","index":0}`
 	endTurn   = `{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5,"output_tokens_details":{"thinking_tokens":2}}}`
@@ -91,7 +91,7 @@ func TestStreamText(t *testing.T) {
 		t.Fatalf("model = %q, want the served version", resp.Model)
 	}
 	u := resp.Usage
-	if u == nil || u.InputTokens != 16 || u.InputTokensDetails.CachedTokens != 4 || u.OutputTokens != 5 || u.OutputTokensDetails.ReasoningTokens != 2 || u.TotalTokens != 21 {
+	if u == nil || u.InputTokens != 16 || u.InputTokensDetails.CachedTokens != 4 || u.InputTokensDetails.CacheCreationTokens != 2 || u.InputTokensDetails.CacheCreation1hTokens != 1 || u.OutputTokens != 5 || u.OutputTokensDetails.ReasoningTokens != 2 || u.TotalTokens != 21 {
 		t.Fatalf("usage = %+v", u)
 	}
 	var deltas []string

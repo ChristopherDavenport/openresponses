@@ -311,9 +311,18 @@ type Usage struct {
 	OutputTokensDetails OutputTokensDetails `json:"output_tokens_details"`
 }
 
-// InputTokensDetails breaks down input tokens.
+// InputTokensDetails breaks down input tokens. CachedTokens is the
+// specification's. CacheCreationTokens and CacheCreation1hTokens are an
+// extension for the prompt-cache providers that bill a write apart from a
+// read; both are zero, and left off the wire, when the server reports
+// none. Each is a subset of InputTokens, as CachedTokens is: a cost that
+// prices InputTokens less CachedTokens at the plain rate should price the
+// CacheCreationTokens inside it at the write rate instead, the
+// CacheCreation1hTokens of those at the one-hour rate.
 type InputTokensDetails struct {
-	CachedTokens int `json:"cached_tokens"`
+	CachedTokens          int `json:"cached_tokens"`
+	CacheCreationTokens   int `json:"cache_creation_tokens,omitempty"`
+	CacheCreation1hTokens int `json:"cache_creation_1h_tokens,omitempty"`
 }
 
 // OutputTokensDetails breaks down output tokens.
