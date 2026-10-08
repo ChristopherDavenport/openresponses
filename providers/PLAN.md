@@ -167,8 +167,11 @@ regional hosts. Per-model regions mean one client per region; route by
 
 Streaming: `content_block_start` opens a `Message`, `FunctionCall` or
 `Reasoning` writer; deltas feed `Text`, `Arguments`, or `Text` and
-`EncryptedContent`; `content_block_stop` closes; `message_delta`
-carries the stop reason and usage.
+`EncryptedContent`; `message_delta` carries the stop reason and usage.
+A writer closes when the next block starts or the response ends, not
+at `content_block_stop`: that arrives before the stop reason, and a
+block the token limit cut off must still be open for `Incomplete` to
+mark it.
 
 Errors: `*anthropic.Error` maps to `*openresponses.Error` by status.
 `Retry-After` and the rate-limit headers are copied into

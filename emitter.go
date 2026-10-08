@@ -132,7 +132,10 @@ func (e *Emitter) Complete() error {
 }
 
 // Incomplete closes any open item, marks it incomplete, and sends
-// response.incomplete with the given reason.
+// response.incomplete with the given reason. An item whose writer was
+// already closed keeps the status its output_item.done carried, so an
+// adapter that learns the stop reason after a block ends must leave that
+// block open for Incomplete to mark it.
 func (e *Emitter) Incomplete(reason IncompleteReason) error {
 	if e.open != nil {
 		if w, ok := e.open.(interface{ markIncomplete() }); ok {
@@ -292,7 +295,11 @@ func (w *MessageWriter) Close() error {
 	return w.e.closeItem(w.index, w.msg)
 }
 
-func (w *MessageWriter) markIncomplete() { w.msg.Status = StatusIncomplete }
+func (w *MessageWriter) markIncomplete() {
+	if !w.closed {
+		w.msg.Status = StatusIncomplete
+	}
+}
 
 func (w *MessageWriter) textPart() (*OutputText, error) {
 	if w.closed {
@@ -368,7 +375,11 @@ func (w *FunctionCallWriter) Close() error {
 	return w.e.closeItem(w.index, w.call)
 }
 
-func (w *FunctionCallWriter) markIncomplete() { w.call.Status = StatusIncomplete }
+func (w *FunctionCallWriter) markIncomplete() {
+	if !w.closed {
+		w.call.Status = StatusIncomplete
+	}
+}
 
 // ReasoningWriter streams a reasoning item: summary parts, reasoning
 // text and encrypted content.
@@ -456,7 +467,11 @@ func (w *ReasoningWriter) Close() error {
 	return w.e.closeItem(w.index, w.item)
 }
 
-func (w *ReasoningWriter) markIncomplete() { w.item.Status = StatusIncomplete }
+func (w *ReasoningWriter) markIncomplete() {
+	if !w.closed {
+		w.item.Status = StatusIncomplete
+	}
+}
 
 func (w *ReasoningWriter) summaryIndex() int { return len(w.item.Summary) - 1 }
 

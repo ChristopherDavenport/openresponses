@@ -210,6 +210,36 @@ func TestEmitterIncompleteMarksOpenItem(t *testing.T) {
 	}
 }
 
+// TestEmitterIncompleteKeepsClosedItem covers an item the adapter closed
+// itself before the response ended incomplete: output_item.done has
+// already said completed, and the final response must agree.
+func TestEmitterIncompleteKeepsClosedItem(t *testing.T) {
+	sink := &recordingSink{}
+	em := NewEmitter(sink, &Response{Model: "m"})
+	call, err := em.FunctionCall("", "lookup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := call.Arguments(`{}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := call.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := em.Incomplete(IncompleteReasonMaxOutputTokens); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range sink.events {
+		if d, ok := ev.(*OutputItemDoneEvent); ok && d.Item.(*FunctionCall).Status != StatusCompleted {
+			t.Errorf("done = %+v", d.Item)
+		}
+	}
+	final, _ := TerminalResponse(sink.events[len(sink.events)-1])
+	if fc := final.Output[0].(*FunctionCall); fc.Status != StatusCompleted {
+		t.Errorf("call = %+v", fc)
+	}
+}
+
 func TestEmitterPropagatesSinkErrors(t *testing.T) {
 	sink := &recordingSink{fail: errors.New("gone")}
 	em := NewEmitter(sink, &Response{Model: "m"})

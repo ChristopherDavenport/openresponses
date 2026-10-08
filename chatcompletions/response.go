@@ -340,22 +340,32 @@ func (d *decoder) openCall() error {
 }
 
 func (d *decoder) closeCall() error {
+	w, err := d.endCall()
+	if w == nil || err != nil {
+		return err
+	}
+	return w.Close()
+}
+
+// endCall finishes the arguments of the call being streamed and returns
+// its writer, still open, or nil when there is no call.
+func (d *decoder) endCall() (*openresponses.FunctionCallWriter, error) {
 	c := d.call
 	if c == nil {
-		return nil
+		return nil, nil
 	}
 	d.call = nil
 	if c.w == nil {
 		if err := d.openCall(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if c.w.Item().Arguments == "" {
 		if err := c.w.Arguments("{}"); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return c.w.Close()
+	return c.w, nil
 }
 
 func (d *decoder) openMessage() (*openresponses.MessageWriter, error) {
@@ -389,9 +399,11 @@ func (d *decoder) closeOpen() error {
 	return nil
 }
 
-// finish ends the response according to the finish reason.
+// finish ends the response according to the finish reason. A call still
+// streaming is left open for the emitter to close, so that Incomplete
+// marks it when the output was cut off.
 func (d *decoder) finish() error {
-	if err := d.closeCall(); err != nil {
+	if _, err := d.endCall(); err != nil {
 		return err
 	}
 	switch d.finished {
