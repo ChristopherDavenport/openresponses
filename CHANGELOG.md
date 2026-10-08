@@ -23,6 +23,13 @@ versions may break the API.
   output right after it: the call was complete, and now both say so. An
   adapter that learns why output stopped only after an item ends has to
   leave that item open for `Incomplete` to mark it.
+- The `chatcompletions` adapter reports the tier that served the request
+  in the response's `service_tier`, read from the `service_tier` the
+  upstream puts on its chunks, as the specification defines the field.
+  It used to echo the request, so a request for `auto`, or for no tier,
+  never said which tier ran it. A value the specification has no name
+  for, such as OpenAI's `scale`, and an upstream that sends none keep
+  the echoed request tier.
 
 ## v0.0.15 - 2026-10-04
 

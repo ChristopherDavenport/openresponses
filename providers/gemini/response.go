@@ -64,6 +64,9 @@ func (d *decoder) chunk(chunk *genai.GenerateContentResponse) (bool, error) {
 	}
 	if chunk.UsageMetadata != nil {
 		d.em.Response().Usage = usage(chunk.UsageMetadata)
+		if tier, ok := servedTier(chunk.UsageMetadata.TrafficType); ok {
+			d.em.Response().ServiceTier = tier
+		}
 	}
 	if fb := chunk.PromptFeedback; fb != nil && fb.BlockReason != "" {
 		// The input was refused before generation; there are no candidates.
@@ -334,6 +337,23 @@ func usage(u *genai.GenerateContentResponseUsageMetadata) *openresponses.Usage {
 		out.TotalTokens = out.InputTokens + out.OutputTokens
 	}
 	return out
+}
+
+// servedTier maps the traffic type Vertex AI reports serving the request
+// with, the inverse of the request's service_tier mapping. Provisioned
+// throughput has no Open Responses tier, and the Gemini API reports no
+// traffic type at all; both report false and the response keeps the
+// requested tier.
+func servedTier(t genai.TrafficType) (openresponses.ServiceTier, bool) {
+	switch t {
+	case genai.TrafficTypeOnDemand:
+		return openresponses.ServiceTierDefault, true
+	case genai.TrafficTypeOnDemandPriority:
+		return openresponses.ServiceTierPriority, true
+	case genai.TrafficTypeOnDemandFlex:
+		return openresponses.ServiceTierFlex, true
+	}
+	return "", false
 }
 
 // logprobs maps a chunk's chosen tokens and their alternatives.

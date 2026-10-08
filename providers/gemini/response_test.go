@@ -210,6 +210,38 @@ func TestSignatureAtEndOfTurn(t *testing.T) {
 	}
 }
 
+func TestStreamServiceTier(t *testing.T) {
+	cases := []struct {
+		name     string
+		req      openresponses.ServiceTier
+		upstream string // usageMetadata.trafficType; empty omits it
+		want     openresponses.ServiceTier
+	}{
+		{"on demand", openresponses.ServiceTierAuto, "ON_DEMAND", openresponses.ServiceTierDefault},
+		{"priority", openresponses.ServiceTierAuto, "ON_DEMAND_PRIORITY", openresponses.ServiceTierPriority},
+		{"flex", openresponses.ServiceTierAuto, "ON_DEMAND_FLEX", openresponses.ServiceTierFlex},
+		{"no request tier", "", "ON_DEMAND_FLEX", openresponses.ServiceTierFlex},
+		{"provisioned keeps the request", openresponses.ServiceTierPriority, "PROVISIONED_THROUGHPUT", openresponses.ServiceTierPriority},
+		{"unspecified keeps the request", openresponses.ServiceTierFlex, "TRAFFIC_TYPE_UNSPECIFIED", openresponses.ServiceTierFlex},
+		{"absent keeps the request", openresponses.ServiceTierAuto, "", openresponses.ServiceTierAuto},
+		{"absent with no request tier", "", "", openresponses.ServiceTierDefault},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			finish := finishChunk
+			if tc.upstream != "" {
+				finish = strings.Replace(finishChunk, `"usageMetadata":{`, `"usageMetadata":{"trafficType":"`+tc.upstream+`",`, 1)
+			}
+			req := hello()
+			req.ServiceTier = tc.req
+			sink := run(t, req, textChunk, finish)
+			if got := sink.Response().ServiceTier; got != tc.want {
+				t.Errorf("service_tier = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStreamIncomplete(t *testing.T) {
 	sink := run(t, hello(),
 		`{"candidates":[{"content":{"parts":[{"text":"Once upon"}],"role":"model"},"finishReason":"MAX_TOKENS"}]}`)

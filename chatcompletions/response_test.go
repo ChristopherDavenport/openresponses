@@ -202,6 +202,40 @@ func TestStreamRefusalAnnotationsLogprobs(t *testing.T) {
 	}
 }
 
+func TestStreamServiceTier(t *testing.T) {
+	cases := []struct {
+		name     string
+		req      openresponses.ServiceTier
+		upstream string // service_tier on every chunk; empty omits it
+		want     openresponses.ServiceTier
+	}{
+		{"default", openresponses.ServiceTierAuto, "default", openresponses.ServiceTierDefault},
+		{"flex", openresponses.ServiceTierAuto, "flex", openresponses.ServiceTierFlex},
+		{"priority", openresponses.ServiceTierAuto, "priority", openresponses.ServiceTierPriority},
+		{"auto", openresponses.ServiceTierPriority, "auto", openresponses.ServiceTierAuto},
+		{"no request tier", "", "flex", openresponses.ServiceTierFlex},
+		{"unknown keeps the request", openresponses.ServiceTierAuto, "scale", openresponses.ServiceTierAuto},
+		{"absent keeps the request", openresponses.ServiceTierFlex, "", openresponses.ServiceTierFlex},
+		{"absent with no request tier", "", "", openresponses.ServiceTierDefault},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chunks := []string{roleChunk, content("Hi"), finish("stop"), usageChunk}
+			if tc.upstream != "" {
+				for i, c := range chunks {
+					chunks[i] = strings.Replace(c, `{"id":"c1",`, `{"id":"c1","service_tier":"`+tc.upstream+`",`, 1)
+				}
+			}
+			req := hello()
+			req.ServiceTier = tc.req
+			sink := run(t, req, chunks...)
+			if got := sink.Response().ServiceTier; got != tc.want {
+				t.Errorf("service_tier = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStreamFinishReasons(t *testing.T) {
 	sink := run(t, hello(), content("Once"), finish("length"))
 	resp := sink.Response()
