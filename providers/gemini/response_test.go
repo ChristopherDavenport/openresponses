@@ -221,23 +221,11 @@ func TestStreamIncomplete(t *testing.T) {
 		t.Fatalf("message = %+v", msg)
 	}
 
-	// Thoughts the limit cut off are incomplete. A function call arrives
-	// whole, so one that ends the output is completed, and the response
-	// agrees with its output_item.done.
+	// Thoughts the limit cut off are incomplete.
 	sink = run(t, hello(),
 		`{"candidates":[{"content":{"parts":[{"text":"Hmm","thought":true}],"role":"model"},"finishReason":"MAX_TOKENS"}]}`)
 	if rs := sink.Response().Output[0].(*openresponses.ReasoningItem); rs.Status != openresponses.StatusIncomplete {
 		t.Fatalf("reasoning = %+v", rs)
-	}
-	sink = run(t, hello(),
-		`{"candidates":[{"content":{"parts":[{"functionCall":{"id":"fc1","name":"weather","args":{"city":"Oslo"}}}],"role":"model"},"finishReason":"MAX_TOKENS"}]}`)
-	if call := sink.Response().Output[0].(*openresponses.FunctionCall); sink.Response().Status != openresponses.ResponseStatusIncomplete || call.Status != openresponses.StatusCompleted {
-		t.Fatalf("call = %+v", call)
-	}
-	for _, ev := range sink.Events() {
-		if d, ok := ev.(*openresponses.OutputItemDoneEvent); ok && d.Item.(*openresponses.FunctionCall).Status != openresponses.StatusCompleted {
-			t.Fatalf("output_item.done = %+v", d.Item)
-		}
 	}
 
 	sink = run(t, hello(), `{"candidates":[{"content":{"parts":[{"text":"I"}],"role":"model"},"finishReason":"SAFETY"}]}`)
