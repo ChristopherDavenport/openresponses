@@ -15,8 +15,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 1.25 is the floor declared in go.mod; stable is the current release.
-        go: ["1.25.x", "stable"]
+        # 1.26 is the floor go.work declares, since providers/gemini needs
+        # it for golang.org/x/net; the root go.mod still says 1.25, which
+        # the workspace cannot build under. stable is the current release.
+        go: ["1.26.x", "stable"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -74,7 +76,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
       - uses: oven-sh/setup-bun@v2
       - name: Run the pinned openresponses compliance tests against the echo adapter
         run: make compliance BUN=bun
@@ -92,7 +94,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
           cache-dependency-path: |
             go.sum
             **/go.sum
