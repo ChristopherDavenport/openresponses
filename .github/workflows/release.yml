@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-go@v7
         if: startsWith(github.ref_name, 'providers/')
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
       - name: Build the tagged provider outside the workspace
         if: startsWith(github.ref_name, 'providers/')
         env:

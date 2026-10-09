@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version-file: go.work
       - uses: oven-sh/setup-bun@v2
       - name: Compliance suite from upstream main
         run: make compliance BUN=bun COMPLIANCE_REF=main
