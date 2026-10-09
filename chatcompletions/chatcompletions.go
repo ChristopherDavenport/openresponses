@@ -16,6 +16,11 @@
 // field, so reasoning items are replayed only into the field
 // [WithReasoningReplay] names, and reasoning.summary has no effect. The
 // README lists everything else. Compaction is not supported.
+//
+// Logprobs are requested only when the request's include names
+// message.output_text.logprobs, as the specification defines it;
+// top_logprobs sets how many alternatives each token carries and on its
+// own requests nothing.
 package chatcompletions
 
 import (

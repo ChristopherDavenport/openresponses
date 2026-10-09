@@ -174,7 +174,9 @@ func (a *Adapter) encodeRequest(req openresponses.Request) (*body, error) {
 	b.PresencePenalty = req.PresencePenalty
 	b.FrequencyPenalty = req.FrequencyPenalty
 	b.ParallelToolCalls = req.ParallelToolCalls
-	if req.TopLogprobs != nil {
+	// The include asks for logprobs; top_logprobs only sizes them, so on
+	// its own it requests nothing.
+	if req.Includes(openresponses.IncludeOutputTextLogprobs) {
 		b.Logprobs = true
 		b.TopLogprobs = req.TopLogprobs
 	}

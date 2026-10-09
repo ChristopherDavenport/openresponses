@@ -65,9 +65,13 @@ func encodeConfig(req openresponses.Request, thinking Thinking) (*genai.Generate
 	cfg.TopP = f32(req.TopP)
 	cfg.PresencePenalty = f32(req.PresencePenalty)
 	cfg.FrequencyPenalty = f32(req.FrequencyPenalty)
-	if req.TopLogprobs != nil {
+	// The include asks for logprobs; top_logprobs only sizes them, so on
+	// its own it requests nothing.
+	if req.Includes(openresponses.IncludeOutputTextLogprobs) {
 		cfg.ResponseLogprobs = true
-		cfg.Logprobs = genai.Ptr(int32(*req.TopLogprobs))
+		if req.TopLogprobs != nil {
+			cfg.Logprobs = genai.Ptr(int32(*req.TopLogprobs))
+		}
 	}
 	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls {
 		// Gemini decides on its own whether to issue several calls at once.

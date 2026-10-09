@@ -23,6 +23,15 @@ versions may break the API.
   output right after it: the call was complete, and now both say so. An
   adapter that learns why output stopped only after an item ends has to
   leave that item open for `Incomplete` to mark it.
+- The `chatcompletions` adapter requests logprobs only when the
+  request's `include` names `message.output_text.logprobs`, which is
+  what the specification says asks for them; `top_logprobs` then sets
+  how many alternatives each token carries. Before, the include was
+  ignored and `top_logprobs` alone turned logprobs on. This changes
+  behaviour for a caller that sets only `top_logprobs`: it now gets no
+  logprobs, and has to add the include to keep them. A request with the
+  include and no `top_logprobs` now gets logprobs without alternatives,
+  where before it got none.
 
 ## v0.0.15 - 2026-10-04
 

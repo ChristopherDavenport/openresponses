@@ -12,6 +12,13 @@
   response ends, so the one the limit cut off is still open when the
   response ends incomplete. The events a consumer sees, and their order,
   are unchanged; only the status on the cut-off item differs.
+- A request whose `include` names `message.output_text.logprobs` is
+  rejected with `invalid_request`, `code: unsupported_parameter` and
+  `param: include`, as `top_logprobs` already was. Claude returns no
+  logprobs, and the adapter used to accept the include and answer
+  without them; a caller that sends it now gets an error instead of a
+  response silently missing what it asked for. `include` of
+  `reasoning.encrypted_content` is accepted as before.
 
 ## v0.0.12 - 2026-09-23
 

@@ -54,22 +54,26 @@ completes with what it has (default 8).
 A request field the Messages API has no equivalent for comes back as an
 `invalid_request` error with `code: unsupported_parameter` and `param`
 naming the field, rather than being dropped: `presence_penalty`,
-`frequency_penalty`, `top_logprobs`, `max_tool_calls`, `truncation:
-auto`, `text.verbosity`, `text.format` of type `json_object` (there is
-no schema-free JSON mode), `service_tier` `flex` and `priority`,
-`tool_choice` of type `allowed_tools`, `input_video`, `compaction` and
-`item_reference` items, and tools and items from other providers'
-slugs. `previous_response_id` reaching the adapter means the handler
-has no `ResponseStore`, and is `previous_response_not_found`.
+`frequency_penalty`, `top_logprobs`, `include` of
+`message.output_text.logprobs` (Claude returns no logprobs),
+`max_tool_calls`, `truncation: auto`, `text.verbosity`, `text.format`
+of type `json_object` (there is no schema-free JSON mode),
+`service_tier` `flex` and `priority`, `tool_choice` of type
+`allowed_tools`, `input_video`, `compaction` and `item_reference`
+items, and tools and items from other providers' slugs.
+`previous_response_id` reaching the adapter means the handler has no
+`ResponseStore`, and is `previous_response_not_found`.
 
 Accepted without effect: `metadata` (echoed on the response, never sent
-upstream), `input_image.detail`, `include`, `stream_options` and
-`store` (the handler's concerns). `safety_identifier` becomes
-`metadata.user_id`. `prompt_cache_key` turns on prompt caching for the
-request: Claude caches on request, and the key itself has nothing to
-name. `reasoning.effort` maps onto `output_config.effort`, with
-`minimal` sent as `low` and `none` disabling thinking; any
-`reasoning.summary` asks for summarized thinking.
+upstream), `input_image.detail`, `include` of
+`reasoning.encrypted_content` (thinking signatures are always emitted),
+`stream_options` and `store` (the handler's concerns).
+`safety_identifier` becomes `metadata.user_id`. `prompt_cache_key`
+turns on prompt caching for the request: Claude caches on request, and
+the key itself has nothing to name. `reasoning.effort` maps onto
+`output_config.effort`, with `minimal` sent as `low` and `none`
+disabling thinking; any `reasoning.summary` asks for summarized
+thinking.
 
 Extension types use the `anthropic.` slug. A tool `{"type":
 "anthropic.web_search_20260209", "name": "web_search"}` is that server

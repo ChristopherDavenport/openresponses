@@ -75,9 +75,15 @@ generation cannot express (see above). `reasoning.summary` alongside
 `previous_response_id` reaching the adapter means the handler has no
 `ResponseStore`, and is `previous_response_not_found`.
 
+`include: ["message.output_text.logprobs"]` asks Gemini for logprobs,
+and `top_logprobs` sets how many alternatives each token carries; on
+its own `top_logprobs` requests nothing, and is only echoed on the
+response.
+
 Accepted without effect: `strict` on function tools and on
-`text.format`, `include`, `stream_options` and `store` (the handler's
-concerns). `metadata` becomes Vertex AI labels, which the Gemini API
+`text.format`, `include: ["reasoning.encrypted_content"]` (thought
+signatures are always emitted), `stream_options` and `store` (the
+handler's concerns). `metadata` becomes Vertex AI labels, which the Gemini API
 rejects.
 
 Extension types use the `gemini.` slug. A tool `{"type":
@@ -113,7 +119,8 @@ it incomplete with `content_filter`. `MALFORMED_FUNCTION_CALL`,
 `UNEXPECTED_TOOL_CALL`, `TOO_MANY_TOOL_CALLS` and `OTHER` fail it with
 a `model_error` whose code is the reason in lower case. Grounding
 supports become `url_citation` annotations with character offsets into
-the message text, and logprobs land on the `output_text` part. Usage
+the message text, and logprobs, when the request includes them, land
+on the `output_text` part. Usage
 counts thinking tokens in `output_tokens` and reports them in
 `reasoning_tokens`; `model` on the response is the version Gemini
 served.
