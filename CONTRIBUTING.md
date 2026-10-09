@@ -17,7 +17,9 @@ the change can be discussed before you spend time on it.
 
 ## Development
 
-Go 1.25 or later is required. The full local check is:
+Go 1.26 or later is required to work in the repository: the `providers/gemini`
+module needs it, and `go.work` with it. The root module still builds with
+Go 1.25. The full local check is:
 
 ```sh
 make check        # gofmt, tidiness, vet, deps, replaces, staticcheck, govulncheck, race tests

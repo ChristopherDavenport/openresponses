@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Security: golang.org/x/net is v0.60.0, which fixes GO-2026-6617,
+  GO-2026-6612, GO-2026-6611 and GO-2026-6603. x/net v0.60.0 needs Go
+  1.26, so this module now requires Go 1.26; the root module still
+  requires Go 1.25.
+
 ## v0.0.12 - 2026-09-23
 
 - Requires the root at the version this module is released at, rather
