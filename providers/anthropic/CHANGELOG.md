@@ -12,6 +12,14 @@
   response ends, so the one the limit cut off is still open when the
   response ends incomplete. The events a consumer sees, and their order,
   are unchanged; only the status on the cut-off item differs.
+- The response's `service_tier` is the tier that served the request, as
+  the specification defines it, read from `usage.service_tier` on
+  `message_start`: `standard` is `default` and `priority` is `priority`.
+  It used to echo the request, so a request for `auto`, or for no tier,
+  never said whether priority capacity ran it. `batch`, which has no
+  Open Responses tier, and a message without the field keep the echoed
+  request tier. When a `pause_turn` is resumed, the last turn's tier is
+  the response's.
 
 ## v0.0.12 - 2026-09-23
 

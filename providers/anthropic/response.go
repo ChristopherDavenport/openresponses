@@ -109,6 +109,11 @@ func (d *decoder) event(ev sdk.MessageStreamEventUnion) error {
 				d.em.Response().Model = string(v.Message.Model)
 			}
 		}
+		// Only message_start carries the tier. A resumed turn reports its
+		// own, and the last one wins.
+		if tier, ok := servedTier(v.Message.Usage.ServiceTier); ok {
+			d.em.Response().ServiceTier = tier
+		}
 		d.turn = usage(v.Message.Usage.InputTokens, v.Message.Usage.CacheReadInputTokens, v.Message.Usage.CacheCreationInputTokens,
 			v.Message.Usage.OutputTokens, v.Message.Usage.OutputTokensDetails.ThinkingTokens)
 		return nil
@@ -416,6 +421,19 @@ func usage(input, cacheRead, cacheCreation, output, thinking int64) openresponse
 	u.OutputTokensDetails.ReasoningTokens = int(thinking)
 	u.TotalTokens = u.InputTokens + u.OutputTokens
 	return u
+}
+
+// servedTier maps the tier the API reports serving the request with.
+// batch has no Open Responses tier, so it reports false and the
+// response keeps the requested one.
+func servedTier(t sdk.UsageServiceTier) (openresponses.ServiceTier, bool) {
+	switch t {
+	case sdk.UsageServiceTierStandard:
+		return openresponses.ServiceTierDefault, true
+	case sdk.UsageServiceTierPriority:
+		return openresponses.ServiceTierPriority, true
+	}
+	return "", false
 }
 
 func addUsage(a, b openresponses.Usage) openresponses.Usage {

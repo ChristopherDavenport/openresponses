@@ -115,6 +115,45 @@ func TestCreate(t *testing.T) {
 	}
 }
 
+func TestStreamServiceTier(t *testing.T) {
+	cases := []struct {
+		name     string
+		req      openresponses.ServiceTier
+		upstream string // usage.service_tier on message_start; empty omits it
+		want     openresponses.ServiceTier
+	}{
+		{"standard", openresponses.ServiceTierAuto, "standard", openresponses.ServiceTierDefault},
+		{"priority", openresponses.ServiceTierAuto, "priority", openresponses.ServiceTierPriority},
+		{"no request tier", "", "priority", openresponses.ServiceTierPriority},
+		{"batch keeps the request", openresponses.ServiceTierAuto, "batch", openresponses.ServiceTierAuto},
+		{"absent keeps the request", openresponses.ServiceTierAuto, "", openresponses.ServiceTierAuto},
+		{"absent with no request tier", "", "", openresponses.ServiceTierDefault},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := hello()
+			req.ServiceTier = tc.req
+			sink := run(t, req, withTier(msgStart, tc.upstream), textStart, textDelta(0, "Hi"), textStop, endTurn, msgStop)
+			created := sink.Events()[0].(*openresponses.ResponseCreatedEvent)
+			if got := created.Response.ServiceTier; got != tc.want {
+				t.Errorf("response.created service_tier = %q, want %q", got, tc.want)
+			}
+			if got := sink.Response().ServiceTier; got != tc.want {
+				t.Errorf("terminal service_tier = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// withTier adds usage.service_tier to a message_start event; an empty
+// tier leaves it absent.
+func withTier(start, tier string) string {
+	if tier == "" {
+		return start
+	}
+	return strings.Replace(start, `"usage":{`, `"usage":{"service_tier":"`+tier+`",`, 1)
+}
+
 func TestStreamToolUse(t *testing.T) {
 	sink := run(t, hello(), msgStart,
 		`{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"weather","input":{}}}`,
@@ -387,13 +426,13 @@ func TestPauseTurnContinues(t *testing.T) {
 		mu.Unlock()
 		w.Header().Set("Content-Type", "text/event-stream")
 		if n == 1 {
-			writeSSE(w, msgStart,
+			writeSSE(w, withTier(msgStart, "standard"),
 				`{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"go"}}}`,
 				textStop,
 				`{"type":"message_delta","delta":{"stop_reason":"pause_turn","stop_sequence":null},"usage":{"output_tokens":3}}`, msgStop)
 			return
 		}
-		writeSSE(w, msgStart, textStart, textDelta(0, "Done."), textStop, endTurn, msgStop)
+		writeSSE(w, withTier(msgStart, "priority"), textStart, textDelta(0, "Done."), textStop, endTurn, msgStop)
 	})
 	sink, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
 	if err != nil {
@@ -414,6 +453,9 @@ func TestPauseTurnContinues(t *testing.T) {
 	}
 	if resp.Usage.OutputTokens != 8 || resp.Usage.InputTokens != 32 {
 		t.Fatalf("usage should sum both turns: %+v", resp.Usage)
+	}
+	if resp.ServiceTier != openresponses.ServiceTierPriority {
+		t.Fatalf("service_tier = %q, want the last turn's", resp.ServiceTier)
 	}
 
 	// With continuations disabled the paused output completes as-is.

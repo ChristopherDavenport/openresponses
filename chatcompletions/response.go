@@ -94,10 +94,11 @@ func (a *Adapter) post(ctx context.Context, b *body) (*http.Response, error) {
 
 // Wire shapes of a streamed chunk. Only what the mapping reads is typed.
 type chunk struct {
-	Model   string    `json:"model"`
-	Choices []choice  `json:"choices"`
-	Usage   *usage    `json:"usage"`
-	Error   *apiError `json:"error"`
+	Model       string    `json:"model"`
+	ServiceTier string    `json:"service_tier"`
+	Choices     []choice  `json:"choices"`
+	Usage       *usage    `json:"usage"`
+	Error       *apiError `json:"error"`
 }
 
 type choice struct {
@@ -192,6 +193,12 @@ func (d *decoder) chunk(c *chunk) error {
 		if c.Model != "" {
 			d.em.Response().Model = c.Model
 		}
+	}
+	// The tier that served the request. A value the specification has
+	// no name for (OpenAI's scale) leaves the requested one.
+	switch tier := openresponses.ServiceTier(c.ServiceTier); tier {
+	case openresponses.ServiceTierAuto, openresponses.ServiceTierDefault, openresponses.ServiceTierFlex, openresponses.ServiceTierPriority:
+		d.em.Response().ServiceTier = tier
 	}
 	if c.Usage != nil {
 		d.em.Response().Usage = mapUsage(c.Usage)
