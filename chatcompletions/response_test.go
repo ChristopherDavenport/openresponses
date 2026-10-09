@@ -216,6 +216,33 @@ func TestStreamFinishReasons(t *testing.T) {
 		t.Fatalf("content_filter = %+v", r)
 	}
 
+	// A tool call the limit cuts off is incomplete, in output_item.done
+	// and in the response; one the model finishes is completed.
+	weather := `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"weather","arguments":"{\"city\":\"Os"}}]}}]}`
+	for _, tc := range []struct {
+		reason string
+		want   openresponses.Status
+	}{
+		{"length", openresponses.StatusIncomplete},
+		{"content_filter", openresponses.StatusIncomplete},
+		{"tool_calls", openresponses.StatusCompleted},
+	} {
+		sink = run(t, hello(), roleChunk, weather, finish(tc.reason))
+		call := sink.Response().Output[0].(*openresponses.FunctionCall)
+		if call.Status != tc.want || call.Arguments != `{"city":"Os` {
+			t.Fatalf("%s: call = %+v", tc.reason, call)
+		}
+		var done openresponses.Status
+		for _, ev := range sink.Events() {
+			if d, ok := ev.(*openresponses.OutputItemDoneEvent); ok {
+				done = d.Item.(*openresponses.FunctionCall).Status
+			}
+		}
+		if done != tc.want {
+			t.Fatalf("%s: output_item.done status = %q, want %q", tc.reason, done, tc.want)
+		}
+	}
+
 	_, err := streamtest.Run(context.Background(), newAdapter(t, serve(content("x"))), hello())
 	wantErr(t, err, "truncated_stream", "")
 

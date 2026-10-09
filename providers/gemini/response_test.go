@@ -221,6 +221,13 @@ func TestStreamIncomplete(t *testing.T) {
 		t.Fatalf("message = %+v", msg)
 	}
 
+	// Thoughts the limit cut off are incomplete.
+	sink = run(t, hello(),
+		`{"candidates":[{"content":{"parts":[{"text":"Hmm","thought":true}],"role":"model"},"finishReason":"MAX_TOKENS"}]}`)
+	if rs := sink.Response().Output[0].(*openresponses.ReasoningItem); rs.Status != openresponses.StatusIncomplete {
+		t.Fatalf("reasoning = %+v", rs)
+	}
+
 	sink = run(t, hello(), `{"candidates":[{"content":{"parts":[{"text":"I"}],"role":"model"},"finishReason":"SAFETY"}]}`)
 	if r := sink.Response(); r.IncompleteDetails == nil || r.IncompleteDetails.Reason != openresponses.IncompleteReasonContentFilter {
 		t.Fatalf("safety = %+v", r.IncompleteDetails)

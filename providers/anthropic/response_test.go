@@ -292,6 +292,89 @@ func TestStreamStopReasons(t *testing.T) {
 	wantErr(t, err, "truncated_stream", "")
 }
 
+// doneStatus returns the status output_item.done carried for the item
+// at index.
+func doneStatus(t *testing.T, sink *streamtest.Sink, index int) openresponses.Status {
+	t.Helper()
+	for _, ev := range sink.Events() {
+		if d, ok := ev.(*openresponses.OutputItemDoneEvent); ok && d.OutputIndex == index {
+			switch v := d.Item.(type) {
+			case *openresponses.FunctionCall:
+				return v.Status
+			case *openresponses.ReasoningItem:
+				return v.Status
+			case *openresponses.Message:
+				return v.Status
+			}
+		}
+	}
+	t.Fatalf("no output_item.done for index %d", index)
+	return ""
+}
+
+// TestStreamCutOffBlocks covers a tool_use or thinking block cut off by
+// the token limit. Claude sends its content_block_stop before the
+// message_delta that says why, so the item has to stay open until then.
+func TestStreamCutOffBlocks(t *testing.T) {
+	maxTokens := `{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":5}}`
+	toolUse := `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"weather","input":{}}}`
+	partial := `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Os"}}`
+
+	sink := run(t, hello(), msgStart, toolUse, partial, textStop, maxTokens, msgStop)
+	resp := sink.Response()
+	if resp.Status != openresponses.ResponseStatusIncomplete || resp.IncompleteDetails.Reason != openresponses.IncompleteReasonMaxOutputTokens {
+		t.Fatalf("resp = %+v %+v", resp.Status, resp.IncompleteDetails)
+	}
+	call := resp.Output[0].(*openresponses.FunctionCall)
+	if call.Status != openresponses.StatusIncomplete || call.Arguments != `{"city":"Os` {
+		t.Fatalf("call = %+v", call)
+	}
+	if st := doneStatus(t, sink, 0); st != openresponses.StatusIncomplete {
+		t.Fatalf("output_item.done status = %q", st)
+	}
+
+	sink = run(t, hello(), msgStart,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me"}}`,
+		textStop, maxTokens, msgStop)
+	resp = sink.Response()
+	if rs := resp.Output[0].(*openresponses.ReasoningItem); resp.Status != openresponses.ResponseStatusIncomplete || rs.Status != openresponses.StatusIncomplete {
+		t.Fatalf("reasoning = %+v in %s response", rs, resp.Status)
+	}
+	if st := doneStatus(t, sink, 0); st != openresponses.StatusIncomplete {
+		t.Fatalf("output_item.done status = %q", st)
+	}
+
+	// Only the block the limit cut off is incomplete.
+	sink = run(t, hello(), msgStart,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Hmm."}}`,
+		textStop,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"weather","input":{}}}`,
+		`{"type":"content_block_stop","index":1}`,
+		maxTokens, msgStop)
+	out := sink.Response().Output
+	if rs := out[0].(*openresponses.ReasoningItem); rs.Status != openresponses.StatusCompleted || doneStatus(t, sink, 0) != openresponses.StatusCompleted {
+		t.Fatalf("reasoning before the cut = %+v", rs)
+	}
+	if call := out[1].(*openresponses.FunctionCall); call.Status != openresponses.StatusIncomplete || call.Arguments != "{}" || doneStatus(t, sink, 1) != openresponses.StatusIncomplete {
+		t.Fatalf("call = %+v", call)
+	}
+
+	// A call that ends the turn normally is completed.
+	sink = run(t, hello(), msgStart, toolUse,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Oslo\"}"}}`,
+		textStop,
+		`{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":9}}`, msgStop)
+	resp = sink.Response()
+	if call := resp.Output[0].(*openresponses.FunctionCall); resp.Status != openresponses.ResponseStatusCompleted || call.Status != openresponses.StatusCompleted {
+		t.Fatalf("call = %+v in %s response", call, resp.Status)
+	}
+	if st := doneStatus(t, sink, 0); st != openresponses.StatusCompleted {
+		t.Fatalf("output_item.done status = %q", st)
+	}
+}
+
 func TestPauseTurnContinues(t *testing.T) {
 	var mu sync.Mutex
 	var bodies []map[string]any

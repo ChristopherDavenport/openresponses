@@ -5,6 +5,25 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- A function call that the token limit cut off now ends `incomplete` in
+  the `chatcompletions` adapter, on `finish_reason` `length` or
+  `content_filter`. The adapter closed the call before it read the
+  finish reason, so `output_item.done` reported a call with partial,
+  unparseable arguments as `completed`, and a consumer that ran calls as
+  their items finished would run it. The call now stays open until the
+  response ends, and `output_item.done` and the final response both say
+  `incomplete`; a call the model finishes is `completed` as before.
+- `Emitter.Incomplete` no longer marks an item whose writer was already
+  closed. It marked whichever writer it held last, open or not, so the
+  final response could call an item `incomplete` after its
+  `output_item.done` had said `completed`. That happened to a Gemini
+  function call, which arrives whole, when `MAX_TOKENS` ended the
+  output right after it: the call was complete, and now both say so. An
+  adapter that learns why output stopped only after an item ends has to
+  leave that item open for `Incomplete` to mark it.
+
 ## v0.0.15 - 2026-10-04
 
 - Decoding accepts the names OpenAI's Responses API gives the reasoning

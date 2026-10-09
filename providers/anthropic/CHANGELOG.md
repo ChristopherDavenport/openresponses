@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- A `tool_use` or `thinking` block that `max_tokens` or
+  `model_context_window_exceeded` cut off now ends `incomplete`. Claude
+  sends a block's `content_block_stop` before the `message_delta` that
+  carries the stop reason, and the adapter closed the item at
+  `content_block_stop`, so `output_item.done` reported a function call
+  with partial, unparseable arguments, or a truncated thinking block, as
+  `completed`. Those items now close when the next block starts or the
+  response ends, so the one the limit cut off is still open when the
+  response ends incomplete. The events a consumer sees, and their order,
+  are unchanged; only the status on the cut-off item differs.
+
 ## v0.0.12 - 2026-09-23
 
 - Requires the root at the version this module is released at, rather

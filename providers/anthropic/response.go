@@ -255,21 +255,21 @@ func (d *decoder) cite(c sdk.CitationsDeltaCitationUnion) error {
 	return nil
 }
 
+// blockStop ends a content block. A tool_use or thinking block stays
+// open until the next block starts or the response ends: Claude sends
+// content_block_stop before the message_delta carrying the stop reason,
+// and a block the token limit cut off must still be open when Incomplete
+// marks it.
 func (d *decoder) blockStop() error {
 	switch {
 	case d.call != nil:
-		w := d.call
-		d.call = nil
 		if !d.callWrote {
-			if err := w.Arguments("{}"); err != nil {
-				return err
-			}
+			d.callWrote = true
+			return d.call.Arguments("{}")
 		}
-		return w.Close()
+		return nil
 	case d.reasoning != nil:
-		r := d.reasoning
-		d.reasoning = nil
-		return r.Close()
+		return nil
 	case d.raw != nil:
 		raw := d.raw
 		d.raw = nil
