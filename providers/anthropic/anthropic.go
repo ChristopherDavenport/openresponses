@@ -44,6 +44,7 @@ type Adapter struct {
 	messages      sdk.MessageService
 	maxTokens     int64
 	continuations int
+	cacheTTL      sdk.CacheControlEphemeralTTL
 }
 
 var _ openresponses.Adapter = (*Adapter)(nil)
@@ -61,6 +62,17 @@ func WithMaxTokens(n int) Option {
 // default is [DefaultContinuations]; zero never resumes.
 func WithContinuations(n int) Option {
 	return func(a *Adapter) { a.continuations = n }
+}
+
+// WithCacheTTL sets how long the prompt cache keeps what a request
+// writes, for requests that opt into caching with prompt_cache_key; it
+// never turns caching on by itself. The default, and the zero value, is
+// the API's own: five minutes. [sdk.CacheControlEphemeralTTLTTL1h] keeps
+// the prefix for an hour, but a one-hour write costs twice the base
+// input price where a five-minute write costs 1.25 times, so it pays
+// when requests sharing a prefix arrive 5 to 60 minutes apart.
+func WithCacheTTL(ttl sdk.CacheControlEphemeralTTL) Option {
+	return func(a *Adapter) { a.cacheTTL = ttl }
 }
 
 // New returns an adapter over messages, the Messages field of any client

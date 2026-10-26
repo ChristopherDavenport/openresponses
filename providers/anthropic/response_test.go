@@ -465,3 +465,21 @@ func TestMapError(t *testing.T) {
 		})
 	}
 }
+
+// WithCacheTTL reaches the request the adapter sends.
+func TestWithCacheTTL(t *testing.T) {
+	var body map[string]any
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		writeSSE(w, msgStart, textStart, textDelta(0, "Hi."), textStop, endTurn, msgStop)
+	})
+	req := hello()
+	req.PromptCacheKey = "k"
+	if _, err := streamtest.Run(context.Background(), newAdapter(t, h, WithCacheTTL(sdk.CacheControlEphemeralTTLTTL1h)), req); err != nil {
+		t.Fatal(err)
+	}
+	if cc, _ := body["cache_control"].(map[string]any); cc["type"] != "ephemeral" || cc["ttl"] != "1h" {
+		t.Fatalf("cache_control = %v", body["cache_control"])
+	}
+}

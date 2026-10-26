@@ -142,7 +142,7 @@ regional hosts. Per-model regions mean one client per region; route by
 | `text.format` json_schema | `output_config.format`; `json_object` is `invalid_request`, there is no schema-free mode |
 | `safety_identifier` | `metadata.user_id` |
 | `metadata` | accepted and echoed on the response, never sent upstream |
-| `prompt_cache_key` | top-level `cache_control: ephemeral`; the client asked for caching, and the key has nothing to name |
+| `prompt_cache_key` | top-level `cache_control: ephemeral`, with `ttl` when `WithCacheTTL` sets one; the client asked for caching, and the key has nothing to name |
 | `service_tier` | `auto` and `default` (`standard_only`); `flex` and `priority` are `invalid_request` |
 | `temperature`, `top_p` | passed through |
 | `presence_penalty`, `frequency_penalty`, `top_logprobs`, `max_tool_calls`, `tool_choice` allowed_tools, `input_video` | `invalid_request` |
