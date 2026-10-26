@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.16 - 2026-10-26
 
 - `WithCacheTTL` sets the time-to-live of the prompt cache for requests
   that carry `prompt_cache_key`, sent as `cache_control.ttl`. Unset, the

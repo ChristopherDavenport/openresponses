@@ -5,7 +5,7 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
-## Unreleased
+## v0.0.16 - 2026-10-26
 
 - A function call that the token limit cut off now ends `incomplete` in
   the `chatcompletions` adapter, on `finish_reason` `length` or
