@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `WithCacheTTL` sets the time-to-live of the prompt cache for requests
+  that carry `prompt_cache_key`, sent as `cache_control.ttl`. Unset, the
+  request encodes as before and the API keeps its five-minute default;
+  `sdk.CacheControlEphemeralTTLTTL1h` keeps the prefix for an hour. A
+  one-hour write costs twice the base input price against 1.25 times
+  for five minutes, so it is opt-in. A request without
+  `prompt_cache_key` still sends no `cache_control`.
 - A `tool_use` or `thinking` block that `max_tokens` or
   `model_context_window_exceeded` cut off now ends `incomplete`. Claude
   sends a block's `content_block_stop` before the `message_delta` that

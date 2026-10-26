@@ -48,6 +48,12 @@ that imports both aliases one.
 32768). `WithContinuations` sets how many times a turn Claude pauses
 for a long-running server tool is resumed before the response
 completes with what it has (default 8).
+`WithCacheTTL` sets how long the prompt cache keeps what a request
+writes, for requests that carry `prompt_cache_key`. Unset, the API's
+five minutes apply; `sdk.CacheControlEphemeralTTLTTL1h` keeps it for
+an hour. A one-hour write costs twice the base input price, against
+1.25 times for five minutes, so pick it when requests sharing a prefix
+arrive 5 to 60 minutes apart.
 
 ## What the request mapping rejects and ignores
 
@@ -67,8 +73,9 @@ upstream), `input_image.detail`, `include`, `stream_options` and
 `store` (the handler's concerns). `safety_identifier` becomes
 `metadata.user_id`. `prompt_cache_key` turns on prompt caching for the
 request: Claude caches on request, and the key itself has nothing to
-name. `reasoning.effort` maps onto `output_config.effort`, with
-`minimal` sent as `low` and `none` disabling thinking; any
+name; `WithCacheTTL` sets how long the cache keeps it.
+`reasoning.effort` maps onto `output_config.effort`, with `minimal`
+sent as `low` and `none` disabling thinking; any
 `reasoning.summary` asks for summarized thinking.
 
 Extension types use the `anthropic.` slug. A tool `{"type":

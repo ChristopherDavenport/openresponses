@@ -29,7 +29,7 @@ func wantErr(t *testing.T, err error, code, param string) {
 
 func encode(t *testing.T, req openresponses.Request) sdk.MessageNewParams {
 	t.Helper()
-	p, err := encodeRequest(req, DefaultMaxTokens)
+	p, err := encodeRequest(req, DefaultMaxTokens, "")
 	if err != nil {
 		t.Fatalf("encodeRequest: %v", err)
 	}
@@ -194,11 +194,11 @@ func TestEncodeInputErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := encodeRequest(openresponses.Request{Input: tc.input}, DefaultMaxTokens)
+			_, err := encodeRequest(openresponses.Request{Input: tc.input}, DefaultMaxTokens, "")
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
-	_, err := encodeRequest(openresponses.Request{PreviousResponseID: "resp_1"}, DefaultMaxTokens)
+	_, err := encodeRequest(openresponses.Request{PreviousResponseID: "resp_1"}, DefaultMaxTokens, "")
 	wantErr(t, err, openresponses.CodePreviousResponseNotFound, "previous_response_id")
 }
 
@@ -274,6 +274,45 @@ func TestEncodeConfig(t *testing.T) {
 	}
 }
 
+func TestEncodeCacheTTL(t *testing.T) {
+	cases := []struct {
+		name  string
+		key   string
+		ttl   sdk.CacheControlEphemeralTTL
+		cache map[string]any // nil: no cache_control sent
+	}{
+		{"no key", "", "", nil},
+		{"no key, ttl set", "", sdk.CacheControlEphemeralTTLTTL1h, nil},
+		{"key, no ttl", "k", "", map[string]any{"type": "ephemeral"}},
+		{"key, 5m", "k", sdk.CacheControlEphemeralTTLTTL5m, map[string]any{"type": "ephemeral", "ttl": "5m"}},
+		{"key, 1h", "k", sdk.CacheControlEphemeralTTLTTL1h, map[string]any{"type": "ephemeral", "ttl": "1h"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := encodeRequest(openresponses.Request{PromptCacheKey: tc.key}, DefaultMaxTokens, tc.ttl)
+			if err != nil {
+				t.Fatalf("encodeRequest: %v", err)
+			}
+			got, ok := wire(t, p)["cache_control"]
+			if tc.cache == nil {
+				if ok {
+					t.Fatalf("cache_control = %v, want none", got)
+				}
+				return
+			}
+			cc, _ := got.(map[string]any)
+			if len(cc) != len(tc.cache) {
+				t.Fatalf("cache_control = %v, want %v", got, tc.cache)
+			}
+			for k, v := range tc.cache {
+				if cc[k] != v {
+					t.Fatalf("cache_control = %v, want %v", got, tc.cache)
+				}
+			}
+		})
+	}
+}
+
 func TestEncodeConfigErrors(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -293,7 +332,7 @@ func TestEncodeConfigErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := encodeRequest(tc.req, DefaultMaxTokens)
+			_, err := encodeRequest(tc.req, DefaultMaxTokens, "")
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
@@ -335,7 +374,7 @@ func TestEncodeTools(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := encodeRequest(openresponses.Request{Tools: openresponses.Tools{tc.tool}}, DefaultMaxTokens)
+			_, err := encodeRequest(openresponses.Request{Tools: openresponses.Tools{tc.tool}}, DefaultMaxTokens, "")
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}

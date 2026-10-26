@@ -21,13 +21,15 @@ const slug = "anthropic."
 // encodeRequest translates a request into the parameters of one Messages
 // call. Fields the Messages API has no equivalent for are rejected with
 // invalid_request naming the field; nothing is dropped silently.
-func encodeRequest(req openresponses.Request, maxTokens int64) (sdk.MessageNewParams, error) {
+// maxTokens and cacheTTL are the adapter's settings; see [WithMaxTokens]
+// and [WithCacheTTL].
+func encodeRequest(req openresponses.Request, maxTokens int64, cacheTTL sdk.CacheControlEphemeralTTL) (sdk.MessageNewParams, error) {
 	if req.PreviousResponseID != "" {
 		// The handler resolves continuation when it has a store. Reaching
 		// here means it has none, and the Messages API keeps no state.
 		return sdk.MessageNewParams{}, openresponses.PreviousResponseNotFound(req.PreviousResponseID)
 	}
-	p, err := encodeConfig(req, maxTokens)
+	p, err := encodeConfig(req, maxTokens, cacheTTL)
 	if err != nil {
 		return sdk.MessageNewParams{}, err
 	}
@@ -53,7 +55,7 @@ func invalid(param, message string) *openresponses.Error {
 }
 
 // encodeConfig maps the request's settings.
-func encodeConfig(req openresponses.Request, maxTokens int64) (sdk.MessageNewParams, error) {
+func encodeConfig(req openresponses.Request, maxTokens int64, cacheTTL sdk.CacheControlEphemeralTTL) (sdk.MessageNewParams, error) {
 	p := sdk.MessageNewParams{Model: sdk.Model(req.Model), MaxTokens: maxTokens}
 	if req.MaxOutputTokens != nil {
 		p.MaxTokens = int64(*req.MaxOutputTokens)
@@ -83,8 +85,10 @@ func encodeConfig(req openresponses.Request, maxTokens int64) (sdk.MessageNewPar
 	}
 	if req.PromptCacheKey != "" {
 		// Claude caches on request. A cache key is the client asking for it,
-		// so the request opts in; the key itself has nothing to name.
+		// so the request opts in; the key itself has nothing to name. An
+		// unset TTL is left off, and the API applies its five minutes.
 		p.CacheControl = sdk.NewCacheControlEphemeralParam()
+		p.CacheControl.TTL = cacheTTL
 	}
 	// metadata is the client's own bookkeeping; the response echoes it and
 	// nothing upstream wants it.
