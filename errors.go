@@ -31,6 +31,15 @@ const (
 	CodeCompactionNotSupported          = "compaction_not_supported"
 )
 
+// CodeContextLengthExceeded is the code of an invalid_request error for a
+// request whose input, with its instructions and tools, exceeds the
+// model's context window, whatever the provider's own code
+// (docs/extensions.md, section 6). OpenAI already sends it. Retrying the
+// same request cannot succeed: a client may shorten it and retry, and
+// must not retry it unchanged. Output cut short by the token limit is
+// not this error; that response ends incomplete with max_output_tokens.
+const CodeContextLengthExceeded = "context_length_exceeded"
+
 // HTTPStatus returns the HTTP status for the error type. Unknown types map
 // to 500.
 func (t ErrorType) HTTPStatus() int {
@@ -235,6 +244,13 @@ func PreviousResponseNotFound(id string) *Error {
 		fmt.Sprintf("previous response %q is not available", id), "previous_response_id")
 }
 
+// ContextLengthExceeded builds the invalid_request error an adapter
+// reports when the input exceeds the model's context window. message is
+// the provider's.
+func ContextLengthExceeded(message string) *Error {
+	return InvalidRequest(CodeContextLengthExceeded, message, "")
+}
+
 // TooManyRequests builds a too_many_requests error.
 func TooManyRequests(code, message string) *Error {
 	return &Error{Type: ErrorTypeTooManyRequests, Code: code, Message: message}
@@ -289,6 +305,13 @@ func IsNotFound(err error) bool {
 // IsRateLimited reports whether err is a too_many_requests error.
 func IsRateLimited(err error) bool {
 	return errors.Is(err, &Error{Type: ErrorTypeTooManyRequests})
+}
+
+// IsContextLengthExceeded reports whether err carries the code
+// [CodeContextLengthExceeded]. It matches on the code alone, so an
+// upstream that types the error invalid_request_error matches too.
+func IsContextLengthExceeded(err error) bool {
+	return errors.Is(err, &Error{Code: CodeContextLengthExceeded})
 }
 
 // IsInvalidRequest reports whether err is an invalid_request error.

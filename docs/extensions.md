@@ -429,10 +429,13 @@ Without it, or with a member absent, a reader MUST send the request as
 asked, which is the specification's behaviour, and uses its own
 defaults (for compaction, a fixed budget).
 
-**Replaces** the `Info` and `Describer` types that #51 proposed adding to
-the root package. dax's `internal/modelinfo` has been trying out this
-shape since dax v0.0.1. With this section, its fields gain a wire form
-that any implementation can serve or read.
+**Go binding.** #51 proposed `Info` and `Describer` types in the root
+package with no wire form. They stay as this section's Go binding:
+`Info` is the member's value, and `Describer` is an optional interface
+beside `Streamer` that an adapter or the Responses client implements
+when it can describe a model. dax's `internal/modelinfo` has been trying
+out this shape since dax v0.0.1. With this section, its fields gain a
+wire form that any implementation can serve or read.
 
 ## 8. Not in the set
 

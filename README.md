@@ -77,7 +77,8 @@ second, err := conn.Turn(ctx, openresponses.Request{
 ```
 
 Non-2xx responses and error events surface as `*openresponses.Error`,
-with `IsNotFound`, `IsRateLimited` and `IsInvalidRequest` helpers.
+with `IsNotFound`, `IsRateLimited`, `IsInvalidRequest` and
+`IsContextLengthExceeded` helpers.
 
 ## Server
 
@@ -258,6 +259,13 @@ provider needs, this library defines a shared extension under the
 `xhigh`, who issued a reasoning item, cache writes, a common code for
 context overflow, and model information. Each one is a candidate for the
 specification and is specified in [docs/extensions.md](docs/extensions.md).
+The Go binding is in `extensions.go`: the member names (`MemberEffort`,
+`MemberIssuer`, ...) and accessors on the objects that carry them
+(`ReasoningConfig.ExtendedEffort`, `ReasoningItem.Issuer`,
+`InputTokensDetails.CacheWriteTokens`, ...), `Info` for model
+information with the optional `Describer` an adapter implements beside
+`Streamer`, and `CodeContextLengthExceeded` with
+`IsContextLengthExceeded` in `errors.go`.
 
 Errors built from remote data (an HTTP error response, an error event or
 a WebSocket error frame) carry only the headers that describe a failure,
@@ -294,6 +302,7 @@ alone; `github.com/coder/websocket` is reachable only through the
 | `registry.go` | type registries and `Unmarshal*` dispatch |
 | `request.go`, `response.go` | `Request`, `CompactRequest`, `Response`, `CompactResponse`, `Validate` |
 | `errors.go` | `Error`, `ErrorPayload`, error types and codes |
+| `extensions.go` | the shared extensions of `docs/extensions.md`: member names, accessors, `Info` |
 | `events.go` | the 24 streaming events, `ErrorEvent`, `UnknownEvent`, `DecodeEvent` |
 | `sse.go`, `stream.go` | SSE framing, `EventStream`, `Accumulator` |
 | `emitter.go` | `Emitter` and the item writers for streaming adapters |

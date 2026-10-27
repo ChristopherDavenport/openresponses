@@ -22,6 +22,30 @@ versions may break the API.
   do not keep them yet. **Breaking:** these types contain a map, so they
   are no longer comparable with `==`; compare fields or use
   `reflect.DeepEqual`.
+- Go bindings for the shared extensions in
+  [docs/extensions.md](docs/extensions.md), in `extensions.go`:
+  `ExtensionSlug` and the member names `MemberEffort`, `MemberIssuer`,
+  `MemberCacheWriteTokens`, `MemberCacheWriteTokensByTTL` and
+  `MemberModelInfo`, and accessors on the objects that carry them.
+  `ReasoningConfig.SetExtendedEffort(EffortMax)` asks for an effort
+  above `xhigh` and sets `effort` to `xhigh` for a server that ignores
+  it; `ExtendedEffort` reads it back. `ReasoningItem.Issuer` and
+  `SetIssuer` say who issued a reasoning item's `encrypted_content`.
+  `InputTokensDetails.CacheWriteTokens`, `CacheWriteTokensByTTL`,
+  `SetCacheWriteTokens` and `SetCacheWriteTokensByTTL` carry prompt
+  cache writes, split by TTL when the provider reports it. `EffortMax`
+  is not a `ReasoningEffort` constant: the specification's enum stops at
+  `xhigh`. No adapter writes or reads these members yet.
+- `Info` is what a model accepts (context window, output limit, whether
+  it reasons, its efforts, default effort and input modalities), the
+  value of `openresponses-experimental.model_info`. `Describer`, beside
+  `Streamer`, is the optional interface an adapter implements when it
+  can describe a model. Nothing implements it yet.
+- `CodeContextLengthExceeded` (`context_length_exceeded`, the code
+  OpenAI sends) is the code for a request whose input exceeds the
+  model's context window. `ContextLengthExceeded` builds the error, and
+  `IsContextLengthExceeded`, beside `IsRateLimited`, recognises it by
+  code, so a harness that compacts on overflow has one thing to match.
 - `NewResponse` echoes the request's reasoning effort and summary
   without its `Extra` members. A response carries an extension member of
   `reasoning` only when the adapter honoured it, which the adapter

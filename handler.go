@@ -51,6 +51,16 @@ type Streamer interface {
 	CreateStream(ctx context.Context, req Request, sink EventSink) error
 }
 
+// Describer is implemented by an adapter, or a client, that can say what
+// a model accepts. It is optional, like the shared extension it binds:
+// Describe returns the model's [Info], the value of [MemberModelInfo]
+// (docs/extensions.md, section 7), filled only from what the provider
+// publishes, and a [NotFound] error for a model the provider does not
+// know.
+type Describer interface {
+	Describe(ctx context.Context, model string) (*Info, error)
+}
+
 // CollectStream runs a streaming adapter and folds its events into the
 // final response, so an adapter can implement Create as
 //
