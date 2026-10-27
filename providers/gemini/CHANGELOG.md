@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.17 - 2026-10-27
 
 - An upstream 408 is `server_error`, which a retry may fix, rather than
   `invalid_request`.

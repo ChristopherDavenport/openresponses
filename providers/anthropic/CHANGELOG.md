@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.17 - 2026-10-27
 
 - `reasoning.effort` is encoded the way the model takes it, picked from
   the model ID by the table in the README, and `WithThinking` fixes the
