@@ -85,34 +85,69 @@ func (r *ReasoningItem) SetIssuer(issuer string) {
 }
 
 // CacheWriteTokens returns [MemberCacheWriteTokens], the input tokens
-// written to the prompt cache, and whether the member is present. They
-// are counted in the usage's input tokens and are disjoint from
-// CachedTokens.
+// written to the prompt cache, and whether the member is present and
+// valid, a non-negative integer. They are counted in the usage's input
+// tokens and are disjoint from CachedTokens.
 func (d InputTokensDetails) CacheWriteTokens() (int, bool) {
-	return intValue(d.Extra[MemberCacheWriteTokens])
+	n, ok := intValue(d.Extra[MemberCacheWriteTokens])
+	if !ok || n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // CacheWriteTokensByTTL returns [MemberCacheWriteTokensByTTL], the cache
-// writes keyed by how long the provider keeps the entry ("5m", "1h"), or
-// nil when the provider did not report the split.
-func (d InputTokensDetails) CacheWriteTokensByTTL() map[string]int {
+// writes keyed by how long the provider keeps the entry ("5m", "1h"),
+// and whether the split is present and valid. A split whose keys are not
+// all durations (a decimal integer followed by s, m or h) or whose values
+// are not all non-negative integers is invalid as a whole: it returns
+// nil and false, never the part that could be read, since a partial
+// split would misprice the writes it left out.
+func (d InputTokensDetails) CacheWriteTokensByTTL() (map[string]int, bool) {
+	var out map[string]int
 	switch v := d.Extra[MemberCacheWriteTokensByTTL].(type) {
 	case map[string]int:
-		out := make(map[string]int, len(v))
+		out = make(map[string]int, len(v))
 		for k, n := range v {
 			out[k] = n
 		}
-		return out
 	case map[string]any:
-		out := make(map[string]int, len(v))
+		out = make(map[string]int, len(v))
 		for k, raw := range v {
-			if n, ok := intValue(raw); ok {
-				out[k] = n
+			n, ok := intValue(raw)
+			if !ok {
+				return nil, false
 			}
+			out[k] = n
 		}
-		return out
+	default:
+		return nil, false
 	}
-	return nil
+	for k, n := range out {
+		if n < 0 || !isDuration(k) {
+			return nil, false
+		}
+	}
+	return out, true
+}
+
+// isDuration reports whether s is a decimal integer followed by s, m or
+// h, the key form of [MemberCacheWriteTokensByTTL].
+func isDuration(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	switch s[len(s)-1] {
+	case 's', 'm', 'h':
+	default:
+		return false
+	}
+	for _, c := range s[:len(s)-1] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // SetCacheWriteTokens sets [MemberCacheWriteTokens] to n and removes any

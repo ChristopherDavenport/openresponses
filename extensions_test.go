@@ -62,7 +62,10 @@ func TestIssuer(t *testing.T) {
 
 func TestCacheWriteTokens(t *testing.T) {
 	var d InputTokensDetails
-	if _, ok := d.CacheWriteTokens(); ok || d.CacheWriteTokensByTTL() != nil {
+	if _, ok := d.CacheWriteTokens(); ok {
+		t.Fatal("zero details report cache writes")
+	}
+	if _, ok := d.CacheWriteTokensByTTL(); ok {
 		t.Fatal("zero details report cache writes")
 	}
 	d.SetCacheWriteTokensByTTL(map[string]int{"5m": 100, "1h": 2000})
@@ -80,11 +83,14 @@ func TestCacheWriteTokens(t *testing.T) {
 	if n, ok := u.InputTokensDetails.CacheWriteTokens(); !ok || n != 2100 {
 		t.Errorf("decoded total = %d, %v in %s", n, ok, out)
 	}
-	if got := u.InputTokensDetails.CacheWriteTokensByTTL(); !reflect.DeepEqual(got, map[string]int{"5m": 100, "1h": 2000}) {
+	if got, ok := u.InputTokensDetails.CacheWriteTokensByTTL(); !ok || !reflect.DeepEqual(got, map[string]int{"5m": 100, "1h": 2000}) {
 		t.Errorf("decoded split = %v", got)
 	}
 	d.SetCacheWriteTokens(7)
-	if n, _ := d.CacheWriteTokens(); n != 7 || d.CacheWriteTokensByTTL() != nil {
+	if _, ok := d.CacheWriteTokensByTTL(); ok {
+		t.Errorf("split kept: %#v", d.Extra)
+	}
+	if n, _ := d.CacheWriteTokens(); n != 7 {
 		t.Errorf("count alone: %#v", d.Extra)
 	}
 }
@@ -126,5 +132,23 @@ func TestContextLengthExceeded(t *testing.T) {
 	}
 	if IsContextLengthExceeded(InvalidRequest(CodeInvalidValue, "m", "")) {
 		t.Error("other invalid_request matched")
+	}
+}
+
+func TestCacheWriteTokensByTTLInvalid(t *testing.T) {
+	for _, raw := range []string{
+		`{"cached_tokens":0,"openresponses-experimental.cache_write_tokens":7,"openresponses-experimental.cache_write_tokens_by_ttl":{"5m":3,"1h":"4"}}`,
+		`{"cached_tokens":0,"openresponses-experimental.cache_write_tokens":7,"openresponses-experimental.cache_write_tokens_by_ttl":{"5m":3,"1h":4.5}}`,
+		`{"cached_tokens":0,"openresponses-experimental.cache_write_tokens":7,"openresponses-experimental.cache_write_tokens_by_ttl":{"5m":-1}}`,
+		`{"cached_tokens":0,"openresponses-experimental.cache_write_tokens":7,"openresponses-experimental.cache_write_tokens_by_ttl":[3,4]}`,
+		`{"cached_tokens":0,"openresponses-experimental.cache_write_tokens":7,"openresponses-experimental.cache_write_tokens_by_ttl":{"5 minutes":7}}`,
+	} {
+		var d InputTokensDetails
+		if err := json.Unmarshal([]byte(raw), &d); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := d.CacheWriteTokensByTTL(); ok || got != nil {
+			t.Errorf("%s: split = %v, want none", raw, got)
+		}
 	}
 }

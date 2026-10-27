@@ -45,7 +45,9 @@ versions may break the API.
   `SetIssuer` say who issued a reasoning item's `encrypted_content`.
   `InputTokensDetails.CacheWriteTokens`, `CacheWriteTokensByTTL`,
   `SetCacheWriteTokens` and `SetCacheWriteTokensByTTL` carry prompt
-  cache writes, split by TTL when the provider reports it. `EffortMax`
+  cache writes, split by TTL when the provider reports it; a split with
+  a malformed key or value reads as absent (`nil, false`), never as the
+  part that could be read. `EffortMax`
   is not a `ReasoningEffort` constant: the specification's enum stops at
   `xhigh`. No adapter writes or reads these members yet.
 - `Info` is what a model accepts (context window, output limit, whether

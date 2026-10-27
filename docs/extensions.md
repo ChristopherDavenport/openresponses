@@ -275,6 +275,8 @@ reports the same quantity as an unprefixed `cache_write_tokens`.
   - Each value is a non-negative integer.
   - The values sum to `openresponses-experimental.cache_write_tokens`.
   - It is present only when the provider reports the split.
+  - A split with a key or value of another form is invalid as a whole,
+    and a reader treats it as absent rather than reading part of it.
 
 **Writers.** An adapter whose provider reports cache writes MUST set
 `openresponses-experimental.cache_write_tokens`, and sets the split when the provider
