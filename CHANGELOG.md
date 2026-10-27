@@ -70,6 +70,12 @@ versions may break the API.
   `input_file` and `input_video` parts, so a tool result's text is an
   `InputText`; a `text` part there is off-spec, and Ollama refuses the
   request (ChristopherDavenport/agenttool#100).
+- `Response.Clone` copies the response's reasoning, text and tool choice,
+  with every `Extra` map in them deep-copied, and `NewResponse` copies
+  the `Extra` maps of the tools and tool choice it echoes. A clone or a
+  new response shared those maps with its source, so setting an
+  extension member on one changed the other, including the responses
+  the `Accumulator` and the response store hold.
 - `NewResponse` echoes the request's reasoning effort and summary
   without its `Extra` members. A response carries an extension member of
   `reasoning` only when the adapter honoured it, which the adapter

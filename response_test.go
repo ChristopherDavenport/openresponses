@@ -2,6 +2,7 @@ package openresponses
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 )
 
@@ -173,5 +174,63 @@ func TestErrorPayloadHeadersFiltered(t *testing.T) {
 	}
 	if e.Headers.Get("Set-Cookie") != "" || e.Headers.Get("Access-Control-Allow-Origin") != "" {
 		t.Errorf("non-error headers carried over: %v", e.Headers)
+	}
+}
+
+// TestCopiesShareNoExtra checks that Response.Clone and NewResponse give
+// every nested Extra map its own copy, nested values included.
+func TestCopiesShareNoExtra(t *testing.T) {
+	extra := func() map[string]any { return map[string]any{"x:a": map[string]any{"b": []any{"c"}}} }
+	tool := NewFunctionTool("f", "d", nil)
+	tool.Extra = extra()
+	choice := ToolChoice{Allowed: &AllowedTools{Mode: ToolChoiceAuto, Tools: []ToolReference{{Type: "function", Name: "f", Extra: extra()}}, Extra: extra()}}
+	req := Request{
+		Model:      "m",
+		Tools:      Tools{tool},
+		ToolChoice: choice,
+		Text:       TextConfig{Format: &TextFormat{Type: TextFormatText, Extra: extra()}, Extra: extra()},
+	}
+	resp := NewResponse(req)
+	mutate := func(m map[string]any) {
+		m["x:new"] = 1
+		m["x:a"].(map[string]any)["b"].([]any)[0] = "changed"
+	}
+	mutate(resp.Tools[0].(*FunctionTool).Extra)
+	mutate(resp.ToolChoice.Allowed.Extra)
+	mutate(resp.ToolChoice.Allowed.Tools[0].Extra)
+	mutate(resp.Text.Extra)
+	mutate(resp.Text.Format.Extra)
+	for name, m := range map[string]map[string]any{
+		"tool": tool.Extra, "allowed": choice.Allowed.Extra, "reference": choice.Allowed.Tools[0].Extra,
+		"text": req.Text.Extra, "format": req.Text.Format.Extra,
+	} {
+		if !reflect.DeepEqual(m, extra()) {
+			t.Errorf("NewResponse shares the request's %s Extra: %v", name, m)
+		}
+	}
+
+	r := &Response{
+		Reasoning:  ReasoningConfig{Effort: ReasoningEffortHigh, Extra: extra()},
+		Text:       TextConfig{Format: &TextFormat{Type: TextFormatText, Extra: extra()}, Extra: extra()},
+		ToolChoice: ToolChoice{Function: &FunctionToolChoice{Name: "f", Extra: extra()}},
+		Extra:      extra(),
+	}
+	c := r.Clone()
+	c.Reasoning.SetExtendedEffort(EffortMax)
+	mutate(c.Reasoning.Extra)
+	mutate(c.Text.Extra)
+	mutate(c.Text.Format.Extra)
+	mutate(c.ToolChoice.Function.Extra)
+	mutate(c.Extra)
+	for name, m := range map[string]map[string]any{
+		"reasoning": r.Reasoning.Extra, "text": r.Text.Extra, "format": r.Text.Format.Extra,
+		"tool_choice": r.ToolChoice.Function.Extra, "top level": r.Extra,
+	} {
+		if !reflect.DeepEqual(m, extra()) {
+			t.Errorf("Clone shares the %s Extra: %v", name, m)
+		}
+	}
+	if r.Reasoning.Effort != ReasoningEffortHigh {
+		t.Errorf("Clone shares reasoning: %v", r.Reasoning)
 	}
 }

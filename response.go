@@ -140,7 +140,10 @@ func (r *Response) FunctionCalls() []*FunctionCall {
 }
 
 // Clone returns a shallow copy of the response with its own Output,
-// Tools and Metadata containers. Items are shared.
+// Tools and Metadata containers and its own copy of every value it holds
+// directly: reasoning, text and tool choice, with their Extra members,
+// and Extra itself. Items, tools and the objects behind the pointer
+// fields (Usage, Error, IncompleteDetails) are shared.
 func (r *Response) Clone() *Response {
 	cp := *r
 	if r.Output != nil {
@@ -149,6 +152,9 @@ func (r *Response) Clone() *Response {
 	if r.Tools != nil {
 		cp.Tools = append(Tools(nil), r.Tools...)
 	}
+	cp.ToolChoice = cloneToolChoice(r.ToolChoice)
+	cp.Text = cloneTextConfig(r.Text)
+	cp.Reasoning = ReasoningConfig{Effort: r.Reasoning.Effort, Summary: r.Reasoning.Summary, Extra: cloneExtra(r.Reasoning.Extra)}
 	cp.Metadata = cloneMap(r.Metadata)
 	cp.Extra = cloneExtra(r.Extra)
 	return &cp
@@ -228,6 +234,7 @@ func cloneTools(tools Tools) Tools {
 			continue
 		}
 		cp := *ft
+		cp.Extra = cloneExtra(ft.Extra)
 		if cp.Parameters != nil {
 			cp.Parameters = append(json.RawMessage(nil), ft.Parameters...)
 		}
@@ -246,11 +253,19 @@ func cloneToolChoice(tc ToolChoice) ToolChoice {
 	out := ToolChoice{Mode: tc.Mode}
 	if tc.Function != nil {
 		fn := *tc.Function
+		fn.Extra = cloneExtra(tc.Function.Extra)
 		out.Function = &fn
 	}
 	if tc.Allowed != nil {
 		allowed := *tc.Allowed
-		allowed.Tools = append([]ToolReference(nil), tc.Allowed.Tools...)
+		allowed.Extra = cloneExtra(tc.Allowed.Extra)
+		if tc.Allowed.Tools != nil {
+			allowed.Tools = make([]ToolReference, len(tc.Allowed.Tools))
+			for i, ref := range tc.Allowed.Tools {
+				ref.Extra = cloneExtra(ref.Extra)
+				allowed.Tools[i] = ref
+			}
+		}
 		out.Allowed = &allowed
 	}
 	return out
@@ -270,17 +285,42 @@ func cloneTextConfig(tc TextConfig) TextConfig {
 	return out
 }
 
-// cloneExtra copies the top level of an Extra map. Its values are
-// decoded JSON and treated as immutable.
+// cloneExtra deep-copies an Extra map: the objects and arrays decoding
+// produces are copied at every depth, so the copy shares nothing that
+// can be changed in place.
 func cloneExtra(m map[string]any) map[string]any {
 	if m == nil {
 		return nil
 	}
 	out := make(map[string]any, len(m))
 	for k, v := range m {
-		out[k] = v
+		out[k] = cloneValue(v)
 	}
 	return out
+}
+
+// cloneValue deep-copies a decoded JSON value and the integer maps the
+// extension setters store.
+func cloneValue(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		return cloneExtra(v)
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = cloneValue(e)
+		}
+		return out
+	case map[string]int:
+		out := make(map[string]int, len(v))
+		for k, n := range v {
+			out[k] = n
+		}
+		return out
+	case json.RawMessage:
+		return append(json.RawMessage(nil), v...)
+	}
+	return v
 }
 
 func cloneMap(m map[string]string) map[string]string {
