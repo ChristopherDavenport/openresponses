@@ -199,14 +199,18 @@ regional hosts. Per-model regions mean one client per region; route by
 
 | Open Responses | Messages |
 |---|---|
-| `instructions`, `system` and `developer` messages | `system` |
+| `instructions`, then the `system` and `developer` messages before every other item | `system` |
+| a `system` or `developer` message after any other item | text blocks of a user turn, in place |
 | consecutive same-role items | one message; every `function_call_output` after an assistant turn joins one user message of `tool_result` blocks |
+| `call_id` outside `^[a-zA-Z0-9_-]+$` | `call_` and the first 24 hex digits of its SHA-256, on the `tool_use` and its `tool_result` (rule 9) |
 | `FunctionTool` | `tools[]` with `input_schema` and `strict` |
 | `tool_choice` auto / none / required / function | auto / none / any / tool |
 | `parallel_tool_calls: false` | `disable_parallel_tool_use` |
 | `max_output_tokens` | `max_tokens`, which is required; `WithMaxTokens` sets the default (32768) |
-| `reasoning.effort` | `output_config.effort`; `minimal` becomes `low`, `none` becomes `thinking: disabled` |
-| `reasoning.summary` set | `thinking: adaptive` with `display: summarized` |
+| `reasoning.effort` | by model, from the ID (rule 1; README table): before 4.6 `thinking: enabled` with a `budget_tokens` per effort; otherwise `output_config.effort` (`minimal` as `low`) with `thinking: adaptive`, `display: summarized` or `omitted` by `reasoning.summary`; `WithThinking` fixes the encoding |
+| `reasoning.effort: none` | `thinking: disabled`; `between_tools` on Sonnet 5.5; `invalid_request` naming the model on Opus 5.5, Fable and Mythos, which cannot turn thinking off |
+| `reasoning["openresponses-experimental.effort"]: max` | `output_config.effort: max` (a 32000 budget before 4.6); `xhigh` is never `max` |
+| `reasoning.summary` alone | `thinking: adaptive` with `display: summarized` (a `high` budget before 4.6) |
 | `text.format` json_schema | `output_config.format`; `json_object` is `invalid_request`, there is no schema-free mode |
 | `safety_identifier` | `metadata.user_id` |
 | `metadata` | accepted and echoed on the response, never sent upstream |
@@ -215,8 +219,13 @@ regional hosts. Per-model regions mean one client per region; route by
 | `temperature`, `top_p` | passed through |
 | `presence_penalty`, `frequency_penalty`, `top_logprobs`, `max_tool_calls`, `tool_choice` allowed_tools, `input_video` | `invalid_request` |
 | `input_image.file_id`, `input_file.file_id` | Files API sources |
-| `ReasoningItem` | `thinking` block from the summary text and the signature |
+| `ReasoningItem`, issuer `anthropic` or none, with `encrypted_content` | `thinking` block from the summary text and the signature |
+| `ReasoningItem` of another issuer, or without `encrypted_content` | left out (rule 5; README) |
 | `anthropic.*` items | the `block` they carry, replayed verbatim through `param.Override` |
+| `anthropic.<block type>` content parts | the `block` they carry, in `tool_result` content or message content |
+| `Request.Extra` `anthropic.<field>` | the Messages field `<field>`; `invalid_request` when the mapping set it |
+| `Request.Extra` `gemini.*`, `chatcompletions.*` | `invalid_request` with `param` (rule 8) |
+| other `Request.Extra` members | dropped; forwarded under `WithExtra`, never over a mapped field |
 
 ### Response
 
@@ -224,14 +233,15 @@ regional hosts. Per-model regions mean one client per region; route by
 |---|---|
 | `text` | message `output_text`; citations become annotations |
 | `tool_use` | `FunctionCall`; `id` becomes `call_id`, input is re-encoded as JSON |
-| `thinking` | `ReasoningItem`: text as the summary, signature as `encrypted_content` |
+| `thinking` | `ReasoningItem`: text as the summary, signature as `encrypted_content`, `openresponses-experimental.issuer: anthropic` |
 | `redacted_thinking`, `server_tool_use`, tool result blocks, anything newer | `anthropic.<block type>` `UnknownItem` carrying the block; input deltas are folded in before it is emitted |
 | `end_turn`, `tool_use`, `stop_sequence` | `Complete` |
 | `max_tokens`, `model_context_window_exceeded` | `Incomplete(max_output_tokens)` |
-| `refusal` | a `Refusal` content part with the explanation, then `Complete` |
+| `refusal` | `Incomplete(content_filter)`; Claude's explanation, when sent, as a `Refusal` content part; the category as `incomplete_details["anthropic.refusal_category"]` |
 | `pause_turn` | the turn's output is replayed as the assistant message and the call re-issued, up to `WithContinuations` (8); then `Complete` |
 | citations | `web_search_result_location` becomes a `url_citation` spanning the text block it arrived on; other citation types are `anthropic.<type>` annotations |
-| usage | `input_tokens` is input + cache read + cache creation; cache read becomes `cached_tokens`, thinking tokens `reasoning_tokens`; summed across resumed turns |
+| usage | `input_tokens` is input + cache read + cache creation; cache read becomes `cached_tokens`, cache creation `openresponses-experimental.cache_write_tokens` with `cache_write_tokens_by_ttl` (5m, 1h), thinking tokens `reasoning_tokens`; summed across resumed turns |
+| `GET /v1/models/{id}` (with `WithModels`) | `Describe`: `Info` as docs/extensions.md section 7 maps it |
 
 Streaming: `content_block_start` opens a `Message`, `FunctionCall` or
 `Reasoning` writer; deltas feed `Text`, `Arguments`, or `Text` and
@@ -241,9 +251,13 @@ at `content_block_stop`: that arrives before the stop reason, and a
 block the token limit cut off must still be open for `Incomplete` to
 mark it.
 
-Errors: `*anthropic.Error` maps to `*openresponses.Error` by status.
-`Retry-After` and the rate-limit headers are copied into
-`Error.Headers`, as `Client` already does for Open Responses upstreams.
+Errors: `*anthropic.Error` maps to `*openresponses.Error` by the
+API's error type, whether it came as an HTTP status or as an `error`
+event in the stream, by the table in the README (the Errors section
+above); an unknown type falls back to the HTTP status. "prompt is too
+long" is `context_length_exceeded`. `Retry-After` and the rate-limit
+headers are copied into `Error.Headers`, as `Client` already does for
+Open Responses upstreams.
 
 Open: whether compaction uses the server-side beta or a summarising
 call. `redacted_thinking` is an extension item rather than a reasoning
