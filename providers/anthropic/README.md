@@ -76,7 +76,10 @@ is sent unchanged. The rewrite holds within the request only: response
 items carry the ids Claude issued. The other items fold into alternating
 messages: every user-side item (user messages, function outputs) joins
 one user message and every assistant-side item (assistant messages,
-function calls, reasoning, `anthropic.` items) one assistant message.
+function calls, reasoning, `anthropic.` items) one assistant message. Within a user turn every
+`tool_result` block comes first and the other blocks after them, each in
+input order, as Claude requires: a developer note or user message that
+arrived between two function outputs follows both results.
 
 ### Request members outside the specification
 

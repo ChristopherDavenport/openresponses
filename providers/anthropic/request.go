@@ -550,7 +550,31 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			return nil, nil, unsupported(p + ".type")
 		}
 	}
+	for i, m := range messages {
+		if m.Role == sdk.MessageParamRoleUser {
+			messages[i].Content = toolResultsFirst(m.Content)
+		}
+	}
 	return messages, system, nil
+}
+
+// toolResultsFirst orders a user turn the way Claude requires: every
+// tool_result block first, then the other blocks, each kind in input
+// order. A note or message that arrived between function outputs then
+// follows them all.
+func toolResultsFirst(blocks []sdk.ContentBlockParamUnion) []sdk.ContentBlockParamUnion {
+	out := make([]sdk.ContentBlockParamUnion, 0, len(blocks))
+	for _, b := range blocks {
+		if b.OfToolResult != nil {
+			out = append(out, b)
+		}
+	}
+	for _, b := range blocks {
+		if b.OfToolResult == nil {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // replayable reports whether a reasoning item goes back to Claude as a

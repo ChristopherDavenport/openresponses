@@ -707,3 +707,29 @@ func TestEncodeEffortWithoutThinking(t *testing.T) {
 		t.Fatalf("temperature 1: no thinking: %v", body)
 	}
 }
+
+// TestEncodeToolResultsFirst covers a message between function outputs:
+// within the user turn every tool_result comes first, then the text.
+func TestEncodeToolResultsFirst(t *testing.T) {
+	p := encode(t, openresponses.Request{Input: openresponses.Items{
+		openresponses.UserText("go"),
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "a", Arguments: `{}`},
+		&openresponses.FunctionCall{CallID: "toolu_2", Name: "b", Arguments: `{}`},
+		openresponses.NewFunctionCallOutput("toolu_1", "one"),
+		openresponses.DeveloperText("reminder"),
+		openresponses.NewFunctionCallOutput("toolu_2", "two"),
+		openresponses.UserText("and"),
+	}})
+	var kinds []string
+	for _, c := range p.Messages[2].Content {
+		switch {
+		case c.OfToolResult != nil:
+			kinds = append(kinds, c.OfToolResult.ToolUseID)
+		case c.OfText != nil:
+			kinds = append(kinds, c.OfText.Text)
+		}
+	}
+	if strings.Join(kinds, ",") != "toolu_1,toolu_2,reminder,and" {
+		t.Fatalf("user turn = %v", kinds)
+	}
+}

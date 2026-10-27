@@ -42,6 +42,9 @@
   for a host that appends a standing instruction at the end of the
   input: it is now read as part of the turn, not as system prompt; put
   it in `instructions` or at the front.
+  Within a user turn every `tool_result` comes first and the text
+  after, so a note between two function outputs no longer splits the
+  results, which Claude refused.
 - A `call_id` outside Claude's `tool_use` id pattern, such as
   `functions.read:0` from an OpenAI-compatible server, is sent as `call_`
   and the first 24 hex digits of its SHA-256, the same on the call and
