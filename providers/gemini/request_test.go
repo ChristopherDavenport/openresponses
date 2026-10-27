@@ -51,12 +51,30 @@ func TestEncodeSystemInstruction(t *testing.T) {
 	for _, p := range cfg.SystemInstruction.Parts {
 		got = append(got, p.Text)
 	}
-	want := []string{"Be brief.", "You are a pirate.", "Answer in French."}
+	want := []string{"Be brief.", "You are a pirate."}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("system parts = %q, want %q", got, want)
 	}
-	if len(contents) != 1 || contents[0].Role != genai.RoleUser || contents[0].Parts[0].Text != "Hello" {
-		t.Fatalf("contents = %+v, want one user turn", contents)
+	// A developer message after the conversation has started stays where
+	// it was put, as user text, rather than moving into the system
+	// instruction.
+	if len(contents) != 1 || contents[0].Role != genai.RoleUser || len(contents[0].Parts) != 2 ||
+		contents[0].Parts[0].Text != "Hello" || contents[0].Parts[1].Text != "Answer in French." {
+		t.Fatalf("contents = %+v, want one user turn of Hello then the developer text", contents)
+	}
+
+	// After a model turn it opens the next user turn.
+	contents, cfg = encode(t, openresponses.Request{Input: openresponses.Items{
+		openresponses.UserText("Hi"),
+		openresponses.AssistantText("Hello."),
+		openresponses.SystemText("Be formal from here."),
+		openresponses.UserText("How are you?"),
+	}})
+	if cfg.SystemInstruction != nil {
+		t.Fatalf("system = %+v, want none", cfg.SystemInstruction)
+	}
+	if len(contents) != 3 || contents[2].Role != genai.RoleUser || len(contents[2].Parts) != 2 || contents[2].Parts[0].Text != "Be formal from here." {
+		t.Fatalf("contents = %+v", contents)
 	}
 	if cfg.CandidateCount != 1 {
 		t.Fatalf("CandidateCount = %d, want 1", cfg.CandidateCount)

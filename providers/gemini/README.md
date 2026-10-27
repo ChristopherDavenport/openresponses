@@ -61,6 +61,16 @@ endpoint — is assumed to take levels. Override it when that is wrong:
 gemini.New(client, gemini.WithThinking(gemini.ThinkingBudget))
 ```
 
+## Input order
+
+`instructions` and the system and developer messages that precede
+every other input item form the system instruction, in that order. A
+system or developer message after any other item stays where it is: its
+text, unchanged, becomes text parts of the user turn at that point,
+joining a user turn already open or opening one after a model turn.
+Moving it into the system instruction would change what it applies to.
+Only text is accepted in a system or developer message.
+
 ## What the request mapping rejects and ignores
 
 A request field Gemini has no equivalent for comes back as an

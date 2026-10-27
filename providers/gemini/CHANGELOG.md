@@ -22,6 +22,12 @@
   out, and one with no issuer whose `encrypted_content` is not base64
   is left out as foreign rather than refused. Only Gemini's own
   signatures, and unattributed base64 ones, go back to Gemini (#56).
+- Behaviour change: a system or developer message after any other
+  input item stays in place as user text instead of moving into the
+  system instruction. Only those that precede every other item, with
+  `instructions`, form the system instruction. A host that appends a
+  standing instruction at the end of the input will see it reach the
+  model as part of the last user turn (#55).
 
 ## v0.0.16 - 2026-10-26
 

@@ -358,8 +358,10 @@ func callingMode(m openresponses.ToolChoiceMode, param string) (genai.FunctionCa
 // Everything the user side sends (messages, function outputs) joins one
 // user turn; everything the model side produced (messages, function
 // calls, reasoning, extension parts) joins one model turn, so a function
-// response always directly follows the turn that called it. System and
-// developer messages are returned separately for the system instruction.
+// response always directly follows the turn that called it. The system
+// and developer messages that precede every other item are returned
+// separately for the system instruction; one after any other item stays
+// in place as text parts of the user turn.
 //
 // A reasoning item's signature goes back on the first non-thought part
 // after it, which is where Gemini put it (see decoder.part). It is held
@@ -402,8 +404,14 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 		}
 		appendParts(role, parts)
 	}
+	// leading holds while every item so far is a system or developer
+	// message; only those join the system instruction.
+	leading := true
 	for i, item := range items {
 		param := fmt.Sprintf("input[%d]", i)
+		if m, ok := item.(*openresponses.Message); !ok || (m.Role != openresponses.RoleSystem && m.Role != openresponses.RoleDeveloper) {
+			leading = false
+		}
 		switch it := item.(type) {
 		case *openresponses.Message:
 			parts, err := encodeParts(it.Content, param+".content")
@@ -421,7 +429,14 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 						return nil, nil, unsupported(fmt.Sprintf("%s.content[%d].type", param, j))
 					}
 				}
-				system = append(system, parts...)
+				if leading {
+					system = append(system, parts...)
+					continue
+				}
+				// After any other item, the instruction stays where the
+				// conversation put it: moving it into the system instruction
+				// would change what it applies to.
+				add(genai.RoleUser, parts)
 			default:
 				return nil, nil, invalid(param+".role", fmt.Sprintf("unknown role %q", it.Role))
 			}
