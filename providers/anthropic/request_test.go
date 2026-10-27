@@ -218,6 +218,9 @@ func TestEncodeInputErrors(t *testing.T) {
 		{"item reference", openresponses.Items{&openresponses.ItemReference{ID: "msg_1"}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"foreign item", openresponses.Items{&openresponses.UnknownItem{Type: "gemini.executable_code", Raw: json.RawMessage(`{"type":"gemini.executable_code"}`)}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"extension without block", openresponses.Items{&openresponses.UnknownItem{Type: "anthropic.server_tool_use", Raw: json.RawMessage(`{"type":"anthropic.server_tool_use"}`)}}, openresponses.CodeInvalidValue, "input[0]"},
+		{"foreign part", openresponses.Items{openresponses.UserMessage(&openresponses.UnknownContent{Type: "gemini.thought", Raw: json.RawMessage(`{"type":"gemini.thought","part":{}}`)})}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
+		{"part without block", openresponses.Items{&openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{&openresponses.UnknownContent{Type: "anthropic.tool_reference", Raw: json.RawMessage(`{"type":"anthropic.tool_reference"}`)}}}}}, openresponses.CodeInvalidValue, "input[0].output[0]"},
+		{"part in the system prompt", openresponses.Items{&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{&openresponses.UnknownContent{Type: "anthropic.tool_reference", Raw: json.RawMessage(`{"type":"anthropic.tool_reference","block":{"type":"tool_reference","tool_name":"x"}}`)}}}}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
 		{"system image", openresponses.Items{&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{&openresponses.InputImage{ImageURL: "data:image/png;base64,aGk="}}}}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
 		{"bare base64 without filename", openresponses.Items{openresponses.UserMessage(&openresponses.InputFile{FileData: "aGk="})}, openresponses.CodeInvalidValue, "input[0].content[0].filename"},
 		{"unsupported file type", openresponses.Items{openresponses.UserMessage(&openresponses.InputFile{Filename: "a.zip", FileData: "aGk="})}, openresponses.CodeInvalidValue, "input[0].content[0].file_data"},
@@ -244,6 +247,27 @@ func TestEncodeExtensionItem(t *testing.T) {
 	block := content[0].(map[string]any)
 	if messages[0].(map[string]any)["role"] != "assistant" || block["type"] != "server_tool_use" || block["id"] != "srvtoolu_1" {
 		t.Fatalf("block = %v", block)
+	}
+}
+
+// TestEncodeExtensionPart covers an anthropic.<block type> content part:
+// it is sent as the block it carries, in a tool result and in a message.
+func TestEncodeExtensionPart(t *testing.T) {
+	ref := &openresponses.UnknownContent{Type: "anthropic.tool_reference", Raw: json.RawMessage(
+		`{"type":"anthropic.tool_reference","block":{"type":"tool_reference","tool_name":"get_weather"}}`)}
+	p := encode(t, openresponses.Request{Input: openresponses.Items{
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "tool_search", Arguments: `{}`},
+		&openresponses.FunctionCallOutput{CallID: "toolu_1", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{ref}}},
+		openresponses.UserMessage(&openresponses.InputText{Text: "and"}, ref),
+	}})
+	body := wire(t, p)
+	user := body["messages"].([]any)[1].(map[string]any)["content"].([]any)
+	result := user[0].(map[string]any)["content"].([]any)[0].(map[string]any)
+	if result["type"] != "tool_reference" || result["tool_name"] != "get_weather" {
+		t.Fatalf("tool result content = %v", result)
+	}
+	if b := user[2].(map[string]any); b["type"] != "tool_reference" || b["tool_name"] != "get_weather" {
+		t.Fatalf("message content = %v", b)
 	}
 }
 

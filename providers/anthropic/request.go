@@ -438,7 +438,7 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			}
 			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{sdk.NewThinkingBlock(it.EncryptedContent, text)})
 		case *openresponses.UnknownItem:
-			block, err := extensionBlock(it)
+			block, err := extensionBlock(it.Type, it.Raw)
 			if err != nil {
 				return nil, nil, invalid(p, err.Error())
 			}
@@ -540,6 +540,15 @@ func encodeFunctionOutput(out *openresponses.FunctionCallOutput, p string) (sdk.
 			case block.OfImage != nil:
 				result.Content = append(result.Content, sdk.ToolResultBlockParamContentUnion{OfImage: block.OfImage})
 			}
+		case *openresponses.UnknownContent:
+			block, err := extensionBlock(c.Type, c.Raw)
+			if err != nil {
+				return sdk.ContentBlockParamUnion{}, invalid(pp, err.Error())
+			}
+			if block == nil {
+				return sdk.ContentBlockParamUnion{}, unsupported(pp + ".type")
+			}
+			result.Content = append(result.Content, param.Override[sdk.ToolResultBlockParamContentUnion](block))
 		default:
 			return sdk.ContentBlockParamUnion{}, unsupported(pp + ".type")
 		}
@@ -547,27 +556,28 @@ func encodeFunctionOutput(out *openresponses.FunctionCallOutput, p string) (sdk.
 	return sdk.ContentBlockParamUnion{OfToolResult: &result}, nil
 }
 
-// extensionBlock returns the block an anthropic.* item carries: the item
-// is {"type": "anthropic.<block type>", ..., "block": <block>}. It
-// returns nil, nil for an item without the slug.
-func extensionBlock(u *openresponses.UnknownItem) (json.RawMessage, error) {
-	if !strings.HasPrefix(u.Type, slug) {
+// extensionBlock returns the block an anthropic.* item or content part
+// carries: either is {"type": "anthropic.<block type>", ..., "block":
+// <block>}. It returns nil, nil for a type without the slug.
+func extensionBlock(typ string, raw json.RawMessage) (json.RawMessage, error) {
+	if !strings.HasPrefix(typ, slug) {
 		return nil, nil
 	}
 	var wrapper struct {
 		Block json.RawMessage `json:"block"`
 	}
-	if err := json.Unmarshal(u.Raw, &wrapper); err != nil {
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
 		return nil, err
 	}
-	if len(wrapper.Block) == 0 || !json.Valid(wrapper.Block) {
-		return nil, fmt.Errorf("%s item has no block", u.Type)
+	if len(wrapper.Block) == 0 || !json.Valid(wrapper.Block) || string(wrapper.Block) == "null" {
+		return nil, fmt.Errorf("%s has no block", typ)
 	}
 	return wrapper.Block, nil
 }
 
 // encodeBlocks maps message content. Text of any flavour is a text
-// block; images and files become image and document blocks.
+// block; images and files become image and document blocks; an
+// anthropic.* part is the block it carries.
 func encodeBlocks(contents openresponses.Contents, p string) ([]sdk.ContentBlockParamUnion, error) {
 	blocks := make([]sdk.ContentBlockParamUnion, 0, len(contents))
 	for j, content := range contents {
@@ -595,6 +605,15 @@ func encodeBlocks(contents openresponses.Contents, p string) ([]sdk.ContentBlock
 			blocks = append(blocks, block)
 		case *openresponses.InputVideo:
 			return nil, unsupported(pp + ".type")
+		case *openresponses.UnknownContent:
+			block, err := extensionBlock(c.Type, c.Raw)
+			if err != nil {
+				return nil, invalid(pp, err.Error())
+			}
+			if block == nil {
+				return nil, unsupported(pp + ".type")
+			}
+			blocks = append(blocks, param.Override[sdk.ContentBlockParamUnion](block))
 		default:
 			return nil, unsupported(pp + ".type")
 		}

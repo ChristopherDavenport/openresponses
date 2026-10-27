@@ -39,6 +39,10 @@
   `functions.read:0` from an OpenAI-compatible server, is sent as `call_`
   and the first 24 hex digits of its SHA-256, the same on the call and
   its output (#60). Claude refused it with a 400.
+- A content part `{"type": "anthropic.<block type>", "block": <block>}`
+  is sent as the block it carries, in a function call output and in
+  message content (#63). It was refused, so a session holding a
+  ToolSearch result's `tool_reference` blocks could not be sent again.
 
 ## v0.0.16 - 2026-10-26
 

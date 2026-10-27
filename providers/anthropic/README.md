@@ -149,6 +149,17 @@ Extension types use the `anthropic.` slug. A tool `{"type":
 tool, sent as written with the slug removed, so every tool the API
 offers is reachable without adapter changes.
 
+A content part `{"type": "anthropic.<block type>", "block": <block>}`
+is the Claude block it carries, for a block that has no Open Responses
+part, such as the `tool_reference` blocks of a tool search result. The
+adapter sends the block as given wherever it sends content: in a
+function call output's `tool_result` and in a user or assistant
+message. Whether the Messages API takes that block type there is the
+API's to say. A part without a JSON `block` is `invalid_request`, and
+one in a leading system or developer message, which becomes the text
+of `system`, is refused with `unsupported_parameter`, as are content
+parts under any other slug.
+
 ## Responses
 
 Content blocks become items in order: text blocks open or extend an
