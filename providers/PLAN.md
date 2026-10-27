@@ -125,6 +125,20 @@ specification says which types a retry can help: `server_error` and
   cut short by a token limit is not an overflow: that response ends
   `incomplete` with `max_output_tokens`, Claude's
   `model_context_window_exceeded` stop included.
+- An error that arrives with an HTTP status and no type of its own
+  takes its type from the status, by `ErrorTypeForStatus`, which
+  `Client` and the Chat Completions adapter both use. Only
+  `server_error` and `too_many_requests` are retried, so a 4xx the same
+  request meets again is `invalid_request`:
+
+  | Status | Type |
+  | --- | --- |
+  | 404 | `not_found` |
+  | 408 | `server_error` |
+  | 429 | `too_many_requests` |
+  | any other 4xx (400, 401, 403, 405, 409, 413, 422, …) | `invalid_request` |
+  | 5xx and anything else | `server_error` |
+
 - `Retry-After` and the rate-limit headers travel in `Error.Headers`,
   as `Client` already does for Open Responses upstreams.
 
@@ -388,11 +402,8 @@ Where it differs from the SDK-backed adapters:
 - Tool calls stream by index and are opened when the name is known
   (the first delta everywhere in practice); a call resuming after a
   later one started is an upstream error.
-- An HTTP error's status decides its type as `Client` decides it for an
-  Open Responses upstream: 400 and 422 are `invalid_request`, 404
-  `not_found`, 429 `too_many_requests`, and any other status
-  `server_error`, so a 408 stays retryable. The exception is 401 and
-  403, which are `invalid_request` as the Errors section requires. A
+- An HTTP error's status decides its type by the Errors section's
+  table, as it does for `Client`. A
   mid-stream `{"error": …}` frame fails the response with the status
   its `code`, else its `type`, has on a non-streamed response, and that
   status's type: a code from 400 to 599, as a number (OpenRouter) or a
@@ -401,8 +412,8 @@ Where it differs from the SDK-backed adapters:
   `invalid_request_error` 400, `authentication_error` 401,
   `permission_error` 403, `server_error` 500, and Claude-compatible
   `overloaded_error` 529). A frame naming neither is a `server_error`.
-- A 400 or 422 refusal, or a frame naming neither status nor a known
-  error, is a context overflow (`context_length_exceeded`) when its code
+- A 400, 413 or 422 refusal, or a frame naming neither status nor a
+  known error, is a context overflow (`context_length_exceeded`) when its code
   is `context_length_exceeded` (OpenAI), its type is
   `exceed_context_size_error` (llama.cpp), or its message contains,
   ignoring case, "maximum context length" (OpenAI, vLLM, DeepSeek,

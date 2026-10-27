@@ -641,13 +641,12 @@ func (e *apiError) contextOverflow() bool {
 	return false
 }
 
-// toError maps the envelope by status as the root Client does, except
-// that a refusal of the adapter's credentials (401, 403) is
-// invalid_request as providers/PLAN.md requires. A status of 0, from a
-// stream frame that names no known error, leaves the status to the type:
-// invalid_request for an overflow, server_error otherwise. The
-// envelope's type, and a code the adapter replaces, are kept under the
-// adapter's slug.
+// toError maps the envelope by status with
+// [openresponses.ErrorTypeForStatus], the rule the root Client follows.
+// A status of 0, from a stream frame that names no known error, leaves
+// the status to the type: invalid_request for an overflow, server_error
+// otherwise. The envelope's type, and a code the adapter replaces, are
+// kept under the adapter's slug.
 func (e *apiError) toError(status int, headers http.Header) *openresponses.Error {
 	code := e.code()
 	if code == "" {
@@ -659,22 +658,18 @@ func (e *apiError) toError(status int, headers http.Header) *openresponses.Error
 	if code == "" {
 		code = "upstream_error"
 	}
+	typ := openresponses.ErrorTypeForStatus(status)
+	if overflowStatus(status) && e.contextOverflow() {
+		code, typ = openresponses.CodeContextLengthExceeded, openresponses.ErrorTypeInvalidRequest
+	}
 	var out *openresponses.Error
-	switch status {
-	case http.StatusNotFound:
+	switch typ {
+	case openresponses.ErrorTypeNotFound:
 		out = openresponses.NotFound(code, e.Message, e.Param)
-	case http.StatusTooManyRequests:
+	case openresponses.ErrorTypeTooManyRequests:
 		out = openresponses.TooManyRequests(code, e.Message)
-	case http.StatusBadRequest, http.StatusUnprocessableEntity, 0,
-		http.StatusUnauthorized, http.StatusForbidden:
-		switch {
-		case status != http.StatusUnauthorized && status != http.StatusForbidden && e.contextOverflow():
-			out = openresponses.InvalidRequest(openresponses.CodeContextLengthExceeded, e.Message, e.Param)
-		case status == 0:
-			out = openresponses.ServerError(code, e.Message)
-		default:
-			out = openresponses.InvalidRequest(code, e.Message, e.Param)
-		}
+	case openresponses.ErrorTypeInvalidRequest:
+		out = openresponses.InvalidRequest(code, e.Message, e.Param)
 	default:
 		out = openresponses.ServerError(code, e.Message)
 	}
@@ -697,6 +692,18 @@ func (e *apiError) toError(status int, headers http.Header) *openresponses.Error
 		}
 	}
 	return out
+}
+
+// overflowStatus reports whether an upstream refuses a context overflow
+// with status: 0 for a frame that names no status, a bad request, or a
+// body too large. A refusal of the
+// adapter's credentials is never one, whatever its message.
+func overflowStatus(status int) bool {
+	switch status {
+	case 0, http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		return true
+	}
+	return false
 }
 
 // Members of an error under the adapter's slug: the upstream envelope's

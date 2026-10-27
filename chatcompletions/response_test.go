@@ -312,6 +312,7 @@ func TestStreamErrorFrame(t *testing.T) {
 		{`{"error":{"message":"Your request timed out","code":408}}`, openresponses.ErrorTypeServerError, "408", 408},
 		{`{"error":{"message":"busy","code":"503"}}`, openresponses.ErrorTypeServerError, "503", 503},
 		{`{"error":{"message":"bad","code":"400"}}`, openresponses.ErrorTypeInvalidRequest, "400", 400},
+		{`{"error":{"message":"conflict","code":409}}`, openresponses.ErrorTypeInvalidRequest, "409", 409},
 	}
 	for _, tc := range cases {
 		t.Run(tc.frame, func(t *testing.T) {
@@ -382,6 +383,8 @@ func TestMapError(t *testing.T) {
 		// The status decides the type as the root Client decides it, so a
 		// timeout stays retryable.
 		{"timeout", 408, `{"error":{"message":"Your request timed out","code":408}}`, nil, openresponses.ErrorTypeServerError, "408", "Your request timed out", "", ""},
+		{"conflict", 409, `{"error":{"message":"busy","type":"conflict_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, "conflict_error", "busy", "", ""},
+		{"payload too large", 413, `request entity too large`, nil, openresponses.ErrorTypeInvalidRequest, "http_413", "request entity too large", "", ""},
 		{"unprocessable", 422, `{"error":{"message":"bad","type":"invalid_request_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, "invalid_request_error", "bad", "", ""},
 		{"plain text", 503, `upstream unavailable`, nil, openresponses.ErrorTypeServerError, "http_503", "upstream unavailable", "", ""},
 	}

@@ -323,22 +323,9 @@ func errorFromHTTP(res *http.Response) *Error {
 		}
 	}
 	if out.Type == "" {
-		out.Type = errorTypeForStatus(res.StatusCode)
+		out.Type = ErrorTypeForStatus(res.StatusCode)
 	}
 	return out
-}
-
-func errorTypeForStatus(status int) ErrorType {
-	switch status {
-	case http.StatusBadRequest, http.StatusUnprocessableEntity:
-		return ErrorTypeInvalidRequest
-	case http.StatusNotFound:
-		return ErrorTypeNotFound
-	case http.StatusTooManyRequests:
-		return ErrorTypeTooManyRequests
-	default:
-		return ErrorTypeServerError
-	}
 }
 
 // decodeJSON decodes a body of at most max bytes into v.

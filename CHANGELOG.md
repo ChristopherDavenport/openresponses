@@ -96,6 +96,14 @@ versions may break the API.
   without its `Extra` members. A response carries an extension member of
   `reasoning` only when the adapter honoured it, which the adapter
   decides.
+- `ErrorTypeForStatus` is the type of an error that arrives with an
+  HTTP status and no type, and `Client` uses it: 404 is `not_found`,
+  408 `server_error`, 429 `too_many_requests`, any other 4xx
+  `invalid_request`, and anything else `server_error`.
+  **Behaviour change:** `Client` made every status it did not list a
+  `server_error`, so a 401, 403, 405, 409 or 413 without a type read as
+  retryable and a retry policy sent the same request again. They are now
+  `invalid_request` and not retried.
 - `chatcompletions` sends a `function_call_output` with image or file
   parts instead of refusing it, so an agent whose tool returns a
   screenshot runs on a Chat Completions server. The `tool` message holds
@@ -120,11 +128,10 @@ versions may break the API.
   show that the input fits, such as vLLM's refusal of a `max_tokens`
   larger than the rest of the window, is not an overflow, since
   compacting cannot fix it.
-- `chatcompletions` types an upstream HTTP error by its status as
-  `Client` does, apart from 401 and 403, and a mid-stream frame by the
+- `chatcompletions` types an upstream HTTP error by its status with
+  `ErrorTypeForStatus`, as `Client` does, and a mid-stream frame by the
   status its code names, so a 408 is a retryable `server_error` rather
-  than `invalid_request`; 405, 409, 413 and other unlisted 4xx statuses
-  are `server_error` too. The envelope's `type` is kept as the
+  than `invalid_request`. The envelope's `type` is kept as the
   `chatcompletions.type` member of the error, and a code the adapter
   replaces as `chatcompletions.code`.
 - `chatcompletions` reports OpenRouter's cache writes
