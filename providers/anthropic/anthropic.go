@@ -42,6 +42,7 @@ type Adapter struct {
 	openresponses.UnsupportedCompaction
 
 	messages      sdk.MessageService
+	models        *sdk.ModelService // nil without WithModels
 	continuations int
 	config
 }

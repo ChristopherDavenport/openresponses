@@ -55,6 +55,9 @@
   `input_tokens_details`, still counted in `input_tokens` (#53). A price
   table can now charge Claude's 5-minute and 1-hour write rates instead
   of the input rate.
+- `WithModels` and `Describe`: the adapter implements
+  `openresponses.Describer` from Claude's models endpoint, mapped as
+  docs/extensions.md section 7 says (#51).
 
 ## v0.0.16 - 2026-10-26
 

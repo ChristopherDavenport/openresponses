@@ -267,6 +267,23 @@ response ends incomplete, as above.
 `Retry-After`, the rate-limit headers and the request id travel with
 every error.
 
+## Model information
+
+With `WithModels(client.Models)`, the adapter implements
+`openresponses.Describer`: `Describe` reads `GET /v1/models/{model}` and
+returns the shared model information of docs/extensions.md section 7,
+with `source: "anthropic"`. `context_window` is `max_input_tokens` and
+`max_output_tokens` is `max_tokens`, each when above zero; `reasoning`
+is `capabilities.thinking.supported`; when
+`capabilities.effort.supported` is true, `efforts` is `none` followed by
+each of `low`, `medium`, `high`, `xhigh` and `max` whose
+`capabilities.effort.<level>.supported` is true. Claude does not say a
+default effort or input modalities, so those are left out, and nothing
+is filled from a table of models. A model Claude does not know is
+`not_found`. Without `WithModels`, which a Vertex AI client has no
+endpoint for, `Describe` returns `not_found` for every model, and a
+client sends its requests as asked.
+
 ## Versioning
 
 The module is tagged `providers/anthropic/vX.Y.Z`, independently of the
