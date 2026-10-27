@@ -96,6 +96,14 @@ versions may break the API.
   without its `Extra` members. A response carries an extension member of
   `reasoning` only when the adapter honoured it, which the adapter
   decides.
+- `chatcompletions` sends a `function_call_output` with image or file
+  parts instead of refusing it, so an agent whose tool returns a
+  screenshot runs on a Chat Completions server. The `tool` message holds
+  the output's text parts, or `[see next message]` when it has none, and
+  the image and file parts follow the run of tool messages in one `user`
+  message, each output's parts introduced by a text part
+  `Output of call <call_id>:`, as providers/PLAN.md states. Video in a
+  function output is still `invalid_request`.
 
 ## v0.0.16 - 2026-10-26
 
