@@ -79,6 +79,15 @@ func TestClientErrors(t *testing.T) {
 		{"500 envelope", 500, `{"error":{"type":"server_error","code":"boom","message":"bad","param":null}}`, ErrorTypeServerError, "boom"},
 		{"non-json body", 502, `<html>bad gateway</html>`, ErrorTypeServerError, ""},
 		{"envelope without type", 404, `{"error":{"code":"x","message":"m"}}`, ErrorTypeNotFound, "x"},
+		// Without a type the status decides it, by ErrorTypeForStatus: a
+		// 4xx other than 404, 408 and 429 is a refusal a retry cannot fix.
+		{"401 without type", 401, `{"error":{"code":"invalid_api_key","message":"m"}}`, ErrorTypeInvalidRequest, "invalid_api_key"},
+		{"403 without type", 403, `{"error":{"code":"denied","message":"m"}}`, ErrorTypeInvalidRequest, "denied"},
+		{"405 without type", 405, `{"error":{"code":"method","message":"m"}}`, ErrorTypeInvalidRequest, "method"},
+		{"409 without type", 409, `{"error":{"code":"conflict","message":"m"}}`, ErrorTypeInvalidRequest, "conflict"},
+		{"413 without type", 413, `{"error":{"code":"too_large","message":"m"}}`, ErrorTypeInvalidRequest, "too_large"},
+		{"408 without type", 408, `{"error":{"code":"timeout","message":"m"}}`, ErrorTypeServerError, "timeout"},
+		{"503 without type", 503, `{"error":{"code":"down","message":"m"}}`, ErrorTypeServerError, "down"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

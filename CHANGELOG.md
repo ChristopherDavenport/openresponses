@@ -96,6 +96,52 @@ versions may break the API.
   without its `Extra` members. A response carries an extension member of
   `reasoning` only when the adapter honoured it, which the adapter
   decides.
+- `ErrorTypeForStatus` is the type of an error that arrives with an
+  HTTP status and no type, and `Client` uses it: 404 is `not_found`,
+  408 `server_error`, 429 `too_many_requests`, any other 4xx
+  `invalid_request`, and anything else `server_error`.
+  **Behaviour change:** `Client` made every status it did not list a
+  `server_error`, so a 401, 403, 405, 409 or 413 without a type read as
+  retryable and a retry policy sent the same request again. They are now
+  `invalid_request` and not retried.
+- `chatcompletions` sends a `function_call_output` with image or file
+  parts instead of refusing it, so an agent whose tool returns a
+  screenshot runs on a Chat Completions server. The `tool` message holds
+  the output's text parts, or `[see next message]` when it has none, and
+  the image and file parts follow the run of tool messages in one `user`
+  message, each output's parts introduced by a text part
+  `Output of call <call_id>:`, as providers/PLAN.md states. Video in a
+  function output is still `invalid_request`.
+- `chatcompletions` maps an `{"error": …}` frame inside a stream as the
+  same error would map on a non-streamed response, from its `code` or
+  `type` (`rate_limit_exceeded` is 429 `too_many_requests`,
+  `overloaded_error` 529 `server_error`, `authentication_error` 401
+  `invalid_request`) or OpenRouter's numeric status code. Every such
+  frame was a 500 `server_error`, so a rate limit mid-stream read as a
+  server failure.
+- `chatcompletions` reports a context overflow as `invalid_request` with
+  code `context_length_exceeded` whatever the upstream calls it, so
+  `IsContextLengthExceeded` matches it. It recognises OpenAI's code,
+  llama.cpp's `exceed_context_size_error` and the messages vLLM,
+  DeepSeek, OpenRouter, Mistral and the Claude- and Gemini-compatible
+  endpoints send; providers/PLAN.md lists them. A message whose counts
+  show that the input fits, such as vLLM's refusal of a `max_tokens`
+  larger than the rest of the window, is not an overflow, since
+  compacting cannot fix it.
+- `chatcompletions` types an upstream HTTP error by its status with
+  `ErrorTypeForStatus`, as `Client` does, and a mid-stream frame by the
+  status its code names, so a 408 is a retryable `server_error` rather
+  than `invalid_request`. The envelope's `type` is kept as the
+  `chatcompletions.type` member of the error, and a code the adapter
+  replaces as `chatcompletions.code`.
+- `chatcompletions` reports OpenRouter's cache writes
+  (`prompt_tokens_details.cache_write_tokens`) as
+  `openresponses-experimental.cache_write_tokens`, reads DeepSeek's
+  `prompt_cache_hit_tokens` as `cached_tokens`, and keeps the usage
+  members it does not map, such as OpenRouter's `cost` and OpenAI's
+  `audio_tokens`, in the `Extra` of the usage object or details object
+  they arrived in. They were dropped, so a cache write was priced as
+  plain input and DeepSeek's cache reads were not seen at all.
 
 ## v0.0.16 - 2026-10-26
 
