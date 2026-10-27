@@ -247,16 +247,18 @@ func f32(p *float64) *float32 {
 }
 
 // effortBudgets is the thinking-token ladder for the generations that take
-// a budget rather than a level. Gemini documents neither a mapping nor the
-// per-model ceilings, so these are the widest values legal across the 2.5
-// family: flash-lite's floor is 512 and flash and flash-lite cap at 24576,
-// where pro would allow 32768.
+// a budget rather than a level. Gemini documents no mapping, so minimal
+// to high are the widest values legal across the 2.5 family: flash-lite's
+// floor is 512 and flash and flash-lite cap at 24576. xhigh is the most
+// a model offers, the largest budget the family takes, pro's 32768; a
+// model with a lower ceiling refuses it, as rule 1 leaves to Gemini.
 var effortBudgets = map[openresponses.ReasoningEffort]int32{
 	openresponses.ReasoningEffortNone:    0,
 	openresponses.ReasoningEffortMinimal: 512,
 	openresponses.ReasoningEffortLow:     4096,
 	openresponses.ReasoningEffortMedium:  8192,
 	openresponses.ReasoningEffortHigh:    24576,
+	openresponses.ReasoningEffortXHigh:   32768,
 }
 
 var effortLevels = map[openresponses.ReasoningEffort]genai.ThinkingLevel{
@@ -264,6 +266,9 @@ var effortLevels = map[openresponses.ReasoningEffort]genai.ThinkingLevel{
 	openresponses.ReasoningEffortLow:     genai.ThinkingLevelLow,
 	openresponses.ReasoningEffortMedium:  genai.ThinkingLevelMedium,
 	openresponses.ReasoningEffortHigh:    genai.ThinkingLevelHigh,
+	// The specification calls xhigh the maximum available, and HIGH is
+	// Gemini's top level.
+	openresponses.ReasoningEffortXHigh: genai.ThinkingLevelHigh,
 }
 
 // encodeReasoning maps effort onto a thinking level or a thinking budget,
@@ -275,11 +280,11 @@ var effortLevels = map[openresponses.ReasoningEffort]genai.ThinkingLevel{
 // below a model's floor is raised by Gemini, and some models cannot stop
 // thinking. Each is reported upstream rather than guessed at here.
 func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking) (*genai.ThinkingConfig, error) {
-	// Only effort and summary are read. Gemini has no setting above
-	// high, so openresponses-experimental.effort is ignored and
-	// reasoning.effort, which its writer sets to the nearest value, is
-	// mapped instead (docs/extensions.md section 3); any other member of
-	// reasoning is ignored too (PLAN.md rule 3).
+	// Only effort and summary are read. xhigh already maps to Gemini's
+	// highest setting, so openresponses-experimental.effort is ignored and
+	// reasoning.effort, which its writer sets to xhigh, is mapped instead
+	// (docs/extensions.md section 3); any other member of reasoning is
+	// ignored too (PLAN.md rule 3).
 	if r.Effort == "" && r.Summary == "" {
 		return nil, nil
 	}

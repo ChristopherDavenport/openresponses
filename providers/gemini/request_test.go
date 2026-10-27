@@ -419,8 +419,10 @@ func TestEncodeReasoning(t *testing.T) {
 		// can stop thinking is for Gemini to say, not the adapter.
 		{name: "3 none", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortNone, budget: genai.Ptr(int32(0))},
 		{name: "unknown none", model: "projects/p/locations/l/endpoints/123", effort: openresponses.ReasoningEffortNone, budget: genai.Ptr(int32(0))},
-		{name: "xhigh", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortXHigh, code: openresponses.CodeInvalidValue},
-		{name: "xhigh on 2.5", model: "gemini-2.5-pro", effort: openresponses.ReasoningEffortXHigh, code: openresponses.CodeInvalidValue},
+		// xhigh is the most the model offers: the top level, and the
+		// largest 2.5 budget, which a model with a lower ceiling refuses.
+		{name: "xhigh", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortXHigh, level: genai.ThinkingLevelHigh},
+		{name: "xhigh on 2.5", model: "gemini-2.5-pro", effort: openresponses.ReasoningEffortXHigh, budget: genai.Ptr(int32(32768))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -467,12 +469,14 @@ func TestEncodeReasoningEffortMax(t *testing.T) {
 		t.Fatalf("high with member = %+v, %v", tc, err)
 	}
 
-	// A writer sets xhigh beside max; without the member xhigh is refused,
-	// and the member does not change that.
+	// A writer sets xhigh beside max, and xhigh is already Gemini's
+	// highest setting.
 	var r openresponses.ReasoningConfig
 	r.SetExtendedEffort(openresponses.EffortMax)
-	_, err = encodeReasoning(r, "gemini-3-pro-preview", ThinkingAuto)
-	wantErr(t, err, openresponses.CodeInvalidValue, "reasoning.effort")
+	tc, err = encodeReasoning(r, "gemini-3-pro-preview", ThinkingAuto)
+	if err != nil || tc.ThinkingLevel != genai.ThinkingLevelHigh {
+		t.Fatalf("max = %+v, %v; want HIGH", tc, err)
+	}
 }
 
 // A summary of thinking that was switched off is contradictory, and
@@ -497,7 +501,6 @@ func TestEncodeConfigErrors(t *testing.T) {
 		{"truncation auto", openresponses.Request{Truncation: openresponses.TruncationAuto}, openresponses.CodeUnsupportedParameter, "truncation"},
 		{"verbosity", openresponses.Request{Text: openresponses.TextConfig{Verbosity: openresponses.VerbosityLow}}, openresponses.CodeUnsupportedParameter, "text.verbosity"},
 		{"service_tier", openresponses.Request{ServiceTier: "gold"}, openresponses.CodeInvalidValue, "service_tier"},
-		{"effort xhigh", openresponses.Request{Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh}}, openresponses.CodeInvalidValue, "reasoning.effort"},
 		{"bad schema", openresponses.Request{Text: openresponses.TextConfig{Format: openresponses.JSONSchemaFormat("o", json.RawMessage(`{`), false)}}, openresponses.CodeInvalidValue, "text.format.schema"},
 		{"format type", openresponses.Request{Text: openresponses.TextConfig{Format: &openresponses.TextFormat{Type: "yaml"}}}, openresponses.CodeInvalidValue, "text.format.type"},
 	}

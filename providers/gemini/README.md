@@ -59,21 +59,27 @@ Each effort maps as follows:
 | `low` | `LOW` | 4096 |
 | `medium` | `MEDIUM` | 8192 |
 | `high` | `HIGH` | 24576 |
+| `xhigh` | `HIGH` | 32768 |
 
 `thinkingLevel` has no value for `none`, and the generations that take
 levels still accept a budget, so `none` is a zero budget in both
 encodings. A model that cannot stop thinking refuses it upstream, and
 the request fails with Gemini's message as `invalid_request`; the
-adapter does not decide that on the model's behalf. The budgets are the
-widest values legal across the 2.5 family, which Google documents
-neither a mapping nor per-model ceilings for. `xhigh` is
-`invalid_request` in both: neither field has a value above `high`.
+adapter does not decide that on the model's behalf. Google documents
+neither a mapping nor per-model ceilings for budgets, so `minimal` to
+`high` are the widest values legal across the 2.5 family. `xhigh`,
+which the specification calls the maximum available, is Gemini's
+highest setting: the top level, `HIGH`, and the largest budget the 2.5
+family takes, 2.5 Pro's 32768. A model with a lower ceiling, such as
+2.5 Flash at 24576, refuses that budget upstream, and the request fails
+with Gemini's message.
 
 `openresponses-experimental.effort` in `reasoning` (docs/extensions.md
 section 3) is ignored, as a shared member this adapter does not
-implement: Gemini has no setting above `high`. The adapter maps
-`reasoning.effort` as if the member were absent, so `max`, whose writer
-sets `reasoning.effort` to `xhigh` beside it, is refused as `xhigh` is.
+implement: `xhigh` is already Gemini's highest setting. The adapter
+maps `reasoning.effort` as if the member were absent, so `max`, whose
+writer sets `reasoning.effort` to `xhigh` beside it, gets that highest
+setting.
 
 A model ID that does not name its generation, such as a tuned model or
 a private endpoint, is assumed to take levels. Override it when that is
@@ -101,9 +107,9 @@ naming the field, rather than being dropped: `parallel_tool_calls:
 false`, `max_tool_calls`, `safety_identifier`, `truncation: auto`,
 `text.verbosity`, `file_id` on images and files, `compaction` and
 `item_reference` items, and tools and items from other providers'
-slugs. `reasoning.effort: xhigh` is `invalid_request` with `code:
-invalid_value` (see above), and so is `reasoning.summary` alongside
-`reasoning.effort: none`, which is contradictory.
+slugs. `reasoning.summary` alongside `reasoning.effort: none` is
+`invalid_request` with `code: invalid_value`, since the two
+contradict each other.
 `previous_response_id` reaching the adapter means the handler has no
 `ResponseStore`, and is `previous_response_not_found`.
 
