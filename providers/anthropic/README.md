@@ -213,6 +213,27 @@ cache-creation tokens in `input_tokens`, reports cache reads in
 `cached_tokens` and thinking in `reasoning_tokens`, and sums across
 resumed turns; `model` on the response is the version Claude served.
 
+Cache writes are reported in `input_tokens_details` as the shared
+members of docs/extensions.md section 5, and stay counted in
+`input_tokens`. `openresponses-experimental.cache_write_tokens` is
+`cache_creation_input_tokens`, present when it is above zero.
+`openresponses-experimental.cache_write_tokens_by_ttl` maps
+`cache_creation.ephemeral_5m_input_tokens` to `5m` and
+`ephemeral_1h_input_tokens` to `1h`, leaving out an entry of zero. It is
+present only when `message_start` carries `cache_creation` and its two
+counts sum to `cache_creation_input_tokens`; `message_delta` has no
+split, so the one from `message_start` stands for the turn while it
+still sums. Across resumed turns both are summed, and the split is
+dropped when a turn with writes had none.
+
+```json
+"input_tokens_details": {
+  "cached_tokens": 4,
+  "openresponses-experimental.cache_write_tokens": 2100,
+  "openresponses-experimental.cache_write_tokens_by_ttl": {"5m": 100, "1h": 2000}
+}
+```
+
 ## Errors
 
 An upstream failure keeps the API's error type as the code, and the

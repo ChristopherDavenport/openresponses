@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -91,6 +92,7 @@ type decoder struct {
 
 	usage       openresponses.Usage // across turns
 	turn        openresponses.Usage // this turn, replaced by message_delta
+	split       *sdk.CacheCreation  // this turn's cache writes by TTL, from message_start
 	stop        sdk.StopReason
 	stopDetails sdk.RefusalStopDetails
 	seen        bool
@@ -145,8 +147,13 @@ func (d *decoder) event(ev sdk.MessageStreamEventUnion) error {
 				d.em.Response().Model = string(v.Message.Model)
 			}
 		}
+		d.split = nil
+		if v.Message.Usage.JSON.CacheCreation.Valid() {
+			split := v.Message.Usage.CacheCreation
+			d.split = &split
+		}
 		d.turn = usage(v.Message.Usage.InputTokens, v.Message.Usage.CacheReadInputTokens, v.Message.Usage.CacheCreationInputTokens,
-			v.Message.Usage.OutputTokens, v.Message.Usage.OutputTokensDetails.ThinkingTokens)
+			d.split, v.Message.Usage.OutputTokens, v.Message.Usage.OutputTokensDetails.ThinkingTokens)
 		return nil
 	case sdk.ContentBlockStartEvent:
 		return d.startBlock(v)
@@ -158,8 +165,10 @@ func (d *decoder) event(ev sdk.MessageStreamEventUnion) error {
 		d.stop = v.Delta.StopReason
 		d.stopDetails = v.Delta.StopDetails
 		if v.Usage.InputTokens > 0 {
+			// message_delta has no split by TTL; the one from message_start
+			// stands if it still sums to the count.
 			d.turn = usage(v.Usage.InputTokens, v.Usage.CacheReadInputTokens, v.Usage.CacheCreationInputTokens,
-				v.Usage.OutputTokens, v.Usage.OutputTokensDetails.ThinkingTokens)
+				d.split, v.Usage.OutputTokens, v.Usage.OutputTokensDetails.ThinkingTokens)
 		} else {
 			d.turn.OutputTokens = int(v.Usage.OutputTokens)
 			d.turn.OutputTokensDetails.ReasoningTokens = int(v.Usage.OutputTokensDetails.ThinkingTokens)
@@ -440,8 +449,10 @@ func (d *decoder) finish() error {
 }
 
 // usage maps token counts. Open Responses counts every input token,
-// cached ones included, in input_tokens.
-func usage(input, cacheRead, cacheCreation, output, thinking int64) openresponses.Usage {
+// cached ones included, in input_tokens. Cache writes are reported as
+// the shared cache_write_tokens member, split by TTL when Claude's split
+// sums to its count.
+func usage(input, cacheRead, cacheCreation int64, split *sdk.CacheCreation, output, thinking int64) openresponses.Usage {
 	u := openresponses.Usage{
 		InputTokens:  int(input + cacheRead + cacheCreation),
 		OutputTokens: int(output),
@@ -449,7 +460,27 @@ func usage(input, cacheRead, cacheCreation, output, thinking int64) openresponse
 	u.InputTokensDetails.CachedTokens = int(cacheRead)
 	u.OutputTokensDetails.ReasoningTokens = int(thinking)
 	u.TotalTokens = u.InputTokens + u.OutputTokens
+	if cacheCreation > 0 {
+		if split != nil && split.Ephemeral5mInputTokens+split.Ephemeral1hInputTokens == cacheCreation {
+			u.InputTokensDetails.SetCacheWriteTokensByTTL(ttlSplit(map[string]int{
+				"5m": int(split.Ephemeral5mInputTokens),
+				"1h": int(split.Ephemeral1hInputTokens),
+			}))
+		} else {
+			u.InputTokensDetails.SetCacheWriteTokens(int(cacheCreation))
+		}
+	}
 	return u
+}
+
+// ttlSplit drops the entries of a split by TTL that wrote nothing.
+func ttlSplit(m map[string]int) map[string]int {
+	for k, n := range m {
+		if n == 0 {
+			delete(m, k)
+		}
+	}
+	return m
 }
 
 func addUsage(a, b openresponses.Usage) openresponses.Usage {
@@ -458,6 +489,28 @@ func addUsage(a, b openresponses.Usage) openresponses.Usage {
 	a.TotalTokens += b.TotalTokens
 	a.InputTokensDetails.CachedTokens += b.InputTokensDetails.CachedTokens
 	a.OutputTokensDetails.ReasoningTokens += b.OutputTokensDetails.ReasoningTokens
+	aw, aok := a.InputTokensDetails.CacheWriteTokens()
+	bw, bok := b.InputTokensDetails.CacheWriteTokens()
+	if !aok && !bok {
+		return a
+	}
+	// A fresh map, so the usage already on the response is not changed.
+	a.InputTokensDetails.Extra = maps.Clone(a.InputTokensDetails.Extra)
+	as, asok := a.InputTokensDetails.CacheWriteTokensByTTL()
+	bs, bsok := b.InputTokensDetails.CacheWriteTokensByTTL()
+	if (!aok || asok) && (!bok || bsok) {
+		sum := map[string]int{}
+		for k, n := range as {
+			sum[k] += n
+		}
+		for k, n := range bs {
+			sum[k] += n
+		}
+		a.InputTokensDetails.SetCacheWriteTokensByTTL(sum)
+	} else {
+		// A turn without the split leaves the sum without one.
+		a.InputTokensDetails.SetCacheWriteTokens(aw + bw)
+	}
 	return a
 }
 

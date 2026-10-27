@@ -536,6 +536,70 @@ func TestStreamErrorEvent(t *testing.T) {
 	}
 }
 
+// TestStreamCacheWrites covers cache writes: counted in input_tokens and
+// reported as the shared members, split by TTL when Claude splits them,
+// and summed across resumed turns.
+func TestStreamCacheWrites(t *testing.T) {
+	start := func(creation string) string {
+		return `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":4,` + creation + `}}}`
+	}
+	split := start(`"cache_creation_input_tokens":2100,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":2000}`)
+
+	u := run(t, hello(), split, textStart, textDelta(0, "x"), textStop, endTurn, msgStop).Response().Usage
+	if u.InputTokens != 2114 || u.InputTokensDetails.CachedTokens != 4 {
+		t.Fatalf("usage = %+v", u)
+	}
+	if n, ok := u.InputTokensDetails.CacheWriteTokens(); !ok || n != 2100 {
+		t.Fatalf("cache_write_tokens = %d, %v", n, ok)
+	}
+	if byTTL, ok := u.InputTokensDetails.CacheWriteTokensByTTL(); !ok || len(byTTL) != 2 || byTTL["5m"] != 100 || byTTL["1h"] != 2000 {
+		t.Fatalf("cache_write_tokens_by_ttl = %v, %v", byTTL, ok)
+	}
+
+	// No split: the count alone. No writes: neither member.
+	u = run(t, hello(), msgStart, textStart, textDelta(0, "x"), textStop, endTurn, msgStop).Response().Usage
+	if n, ok := u.InputTokensDetails.CacheWriteTokens(); !ok || n != 2 {
+		t.Fatalf("cache_write_tokens = %d, %v", n, ok)
+	}
+	if _, ok := u.InputTokensDetails.CacheWriteTokensByTTL(); ok {
+		t.Fatalf("a split Claude did not report: %v", u.InputTokensDetails.Extra)
+	}
+	u = run(t, hello(), start(`"cache_creation_input_tokens":0`), textStart, textDelta(0, "x"), textStop, endTurn, msgStop).Response().Usage
+	if len(u.InputTokensDetails.Extra) != 0 {
+		t.Fatalf("no writes, members %v", u.InputTokensDetails.Extra)
+	}
+
+	// Summed across a resumed turn.
+	var turns int
+	var mu sync.Mutex
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		turns++
+		n := turns
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n == 1 {
+			writeSSE(w, split,
+				`{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}`,
+				textStop,
+				`{"type":"message_delta","delta":{"stop_reason":"pause_turn","stop_sequence":null},"usage":{"output_tokens":3}}`, msgStop)
+			return
+		}
+		writeSSE(w, start(`"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_5m_input_tokens":50,"ephemeral_1h_input_tokens":0}`), textStart, textDelta(0, "Done."), textStop, endTurn, msgStop)
+	})
+	sink, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u = sink.Response().Usage
+	if n, _ := u.InputTokensDetails.CacheWriteTokens(); n != 2150 {
+		t.Fatalf("cache_write_tokens = %d, want both turns", n)
+	}
+	if byTTL, _ := u.InputTokensDetails.CacheWriteTokensByTTL(); byTTL["5m"] != 150 || byTTL["1h"] != 2000 {
+		t.Fatalf("cache_write_tokens_by_ttl = %v", byTTL)
+	}
+}
+
 // WithCacheTTL reaches the request the adapter sends.
 func TestWithCacheTTL(t *testing.T) {
 	var body map[string]any

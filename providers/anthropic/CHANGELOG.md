@@ -49,6 +49,12 @@
   explanation is still the refusal part. When Claude sends none, the
   adapter no longer writes a refusal of its own ("The request was
   refused (cyber).").
+- Cache writes are reported as
+  `openresponses-experimental.cache_write_tokens` with the split by TTL,
+  `openresponses-experimental.cache_write_tokens_by_ttl`, in
+  `input_tokens_details`, still counted in `input_tokens` (#53). A price
+  table can now charge Claude's 5-minute and 1-hour write rates instead
+  of the input rate.
 
 ## v0.0.16 - 2026-10-26
 
