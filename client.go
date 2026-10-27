@@ -15,10 +15,11 @@ import (
 // Client talks to an Open Responses server over HTTP, SSE and WebSocket.
 // Create one and share it; it is safe for concurrent use.
 //
-// Over HTTP the client sends a [Text] part of a function_call_output as
-// an [InputText] with the same text, since the specification allows only
-// input_text, input_image, input_file and input_video parts there. A
-// tool written to Text's earlier documentation keeps working against a
+// Over HTTP, and over WebSocket through websocket.Conn, the client sends
+// a [Text] part of a function_call_output as an [InputText] with the
+// same text ([NormalizeOutputParts]), since the specification allows
+// only input_text, input_image, input_file and input_video parts there.
+// A tool written to Text's earlier documentation keeps working against a
 // server that refuses the text part. The caller's request is not
 // changed.
 type Client struct {
@@ -136,7 +137,7 @@ func (c *Client) BaseURL() string { return c.baseURL }
 // [Client].
 func (c *Client) Create(ctx context.Context, req Request) (*Response, error) {
 	req.Stream = false
-	req.Input = textOutputPartsAsInput(req.Input)
+	req.Input = NormalizeOutputParts(req.Input)
 	res, err := c.post(ctx, "/responses", req, "application/json")
 	if err != nil {
 		return nil, err
@@ -153,7 +154,7 @@ func (c *Client) Create(ctx context.Context, req Request) (*Response, error) {
 // The caller must Close the stream.
 func (c *Client) CreateStream(ctx context.Context, req Request) (*EventStream, error) {
 	req.Stream = true
-	req.Input = textOutputPartsAsInput(req.Input)
+	req.Input = NormalizeOutputParts(req.Input)
 	res, err := c.post(ctx, "/responses", req, "text/event-stream")
 	if err != nil {
 		return nil, err
@@ -173,7 +174,7 @@ func (c *Client) CreateStream(ctx context.Context, req Request) (*EventStream, e
 
 // Compact sends a compaction request.
 func (c *Client) Compact(ctx context.Context, req CompactRequest) (*CompactResponse, error) {
-	req.Input = textOutputPartsAsInput(req.Input)
+	req.Input = NormalizeOutputParts(req.Input)
 	res, err := c.post(ctx, "/responses/compact", req, "application/json")
 	if err != nil {
 		return nil, err
@@ -186,13 +187,15 @@ func (c *Client) Compact(ctx context.Context, req CompactRequest) (*CompactRespo
 	return &out, nil
 }
 
-// textOutputPartsAsInput returns input with every text part of a
-// function_call_output replaced by an input_text part with the same text
-// and Extra. The specification allows only input_text, input_image,
+// NormalizeOutputParts returns input with every [Text] part of a
+// function_call_output replaced by an [InputText] with the same text and
+// Extra. The specification allows only input_text, input_image,
 // input_file and input_video there, and a server may refuse a text part
 // (Ollama does). Items that need no change are shared; input itself is
-// never modified, and is returned as is when nothing changes.
-func textOutputPartsAsInput(input Items) Items {
+// never modified, and is returned as is when nothing changes. [Client]
+// and websocket.Conn apply it to every request they send; a transport
+// outside this package that sends requests itself should too.
+func NormalizeOutputParts(input Items) Items {
 	var out Items
 	for i, item := range input {
 		fco, ok := item.(*FunctionCallOutput)

@@ -76,10 +76,11 @@ versions may break the API.
   outputs. A `function_call_output` takes `input_text`, `input_image`,
   `input_file` and `input_video` parts, so a tool result's text is an
   `InputText`; a `text` part there is off-spec, and Ollama refuses the
-  request (ChristopherDavenport/agenttool#100). `Client` now sends a
-  `text` part of a `function_call_output` as `input_text` over HTTP,
-  without changing the caller's request, so a tool written to the old
-  documentation keeps working.
+  request (ChristopherDavenport/agenttool#100). `Client` and
+  `websocket.Conn` now send a `text` part of a `function_call_output` as
+  `input_text`, without changing the caller's request, so a tool written
+  to the old documentation keeps working. `NormalizeOutputParts` is that
+  rewrite, for a transport that sends requests itself.
 - `Response.Clone` copies the response's reasoning, text and tool choice,
   with every `Extra` map in them deep-copied, and `NewResponse` copies
   the `Extra` maps of the tools and tool choice it echoes. A clone or a

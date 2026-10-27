@@ -404,3 +404,46 @@ func TestProxyChain(t *testing.T) {
 		t.Fatalf("Turn: %v %+v", err, turn)
 	}
 }
+
+// recorder is the echo adapter, remembering the last request it served.
+type recorder struct {
+	echo.Adapter
+	last chan openresponses.Request
+}
+
+func (r *recorder) CreateStream(ctx context.Context, req openresponses.Request, sink openresponses.EventSink) error {
+	r.last <- req
+	return r.Adapter.CreateStream(ctx, req, sink)
+}
+
+// TestTurnSendsTextOutputPartsAsInputText checks that a text part of a
+// function_call_output goes out over WebSocket as input_text, as over
+// HTTP, without changing the caller's request.
+func TestTurnSendsTextOutputPartsAsInputText(t *testing.T) {
+	rec := &recorder{last: make(chan openresponses.Request, 1)}
+	srv := httptest.NewServer(Handler(openresponses.NewHandler(rec)))
+	t.Cleanup(srv.Close)
+	ctx := testContext(t)
+	conn, err := Dial(ctx, openresponses.NewClient(srv.URL+"/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	text := &openresponses.Text{Text: "### Page state"}
+	output := &openresponses.FunctionCallOutput{CallID: "c1", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{text}}}
+	store := false
+	req := openresponses.Request{Model: "m", Store: &store, Input: openresponses.Items{
+		&openresponses.FunctionCall{CallID: "c1", Name: "shot", Arguments: "{}"}, output, openresponses.UserText("next"),
+	}}
+	if _, err := conn.Turn(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	got := (<-rec.last).Input[1].(*openresponses.FunctionCallOutput).Output.Parts[0]
+	if p, ok := got.(*openresponses.InputText); !ok || p.Text != "### Page state" {
+		t.Errorf("server received %#v, want input_text", got)
+	}
+	if req.Input[1] != output || output.Output.Parts[0] != openresponses.Content(text) {
+		t.Error("the caller's request was changed")
+	}
+}

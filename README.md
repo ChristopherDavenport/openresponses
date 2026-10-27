@@ -77,8 +77,9 @@ second, err := conn.Turn(ctx, openresponses.Request{
 ```
 
 In a `function_call_output`, the client sends a `text` part as
-`input_text`, the text part the specification allows there, so a tool
-that built `Text` parts still reaches a server that refuses them.
+`input_text`, the text part the specification allows there, over HTTP
+and WebSocket alike (`NormalizeOutputParts`), so a tool that built `Text`
+parts still reaches a server that refuses them.
 
 Non-2xx responses and error events surface as `*openresponses.Error`,
 with `IsNotFound`, `IsRateLimited`, `IsInvalidRequest` and
