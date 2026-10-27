@@ -109,7 +109,7 @@ func encodeConfig(req openresponses.Request, cfg config) (sdk.MessageNewParams, 
 	if thinking == ThinkingAuto {
 		thinking = thinkingFor(req.Model)
 	}
-	if err := encodeReasoning(req.Reasoning, thinking, &p); err != nil {
+	if err := encodeReasoning(req.Reasoning, req.Model, thinking, &p); err != nil {
 		return p, err
 	}
 
@@ -147,7 +147,7 @@ func encodeConfig(req openresponses.Request, cfg config) (sdk.MessageNewParams, 
 // table). The shared openresponses-experimental.effort member, when it
 // asks for max, takes the place of reasoning.effort. Whether a model
 // takes the value is the model's business.
-func encodeReasoning(r openresponses.ReasoningConfig, thinking Thinking, p *sdk.MessageNewParams) error {
+func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking, p *sdk.MessageNewParams) error {
 	effort := sdk.OutputConfigEffort("")
 	switch r.Effort {
 	case "":
@@ -168,6 +168,10 @@ func encodeReasoning(r openresponses.ReasoningConfig, thinking Thinking, p *sdk.
 		effort = sdk.OutputConfigEffortMax
 	}
 	switch {
+	case effort == "none" && thinking == ThinkingAlwaysOn:
+		// Sending a request the model is known to refuse would lose the
+		// reason; this one names it.
+		return invalid("reasoning.effort", fmt.Sprintf("model %s always thinks and cannot turn thinking off; use effort low instead of none", model))
 	case effort == "none" && thinking == ThinkingBetweenTools:
 		p.Thinking = sdk.ThinkingConfigParamUnion{OfBetweenTools: &sdk.ThinkingConfigBetweenToolsParam{}}
 	case effort == "none":
@@ -217,23 +221,36 @@ func thinkingBudget(effort sdk.OutputConfigEffort, maxTokens int64) int64 {
 }
 
 // thinkingFor derives the effort encoding from a model ID, for
-// [ThinkingAuto]. The generation is the first number after "claude-"
-// and the one after it when that is a one- or two-digit minor version,
-// so claude-opus-4-5, claude-3-7-sonnet-20250219,
-// claude-sonnet-4@20250514 and us.anthropic.claude-haiku-4-5-20251001-v1:0
-// all read. An ID with no generation is assumed to be the newest.
+// [ThinkingAuto], by the README's table. The family is the first of
+// opus, sonnet, haiku, fable and mythos after "claude-"; the version is
+// the first number after "claude-" and the one after it when that is a
+// one- or two-digit minor version. So claude-opus-4-5,
+// claude-3-7-sonnet-20250219, claude-sonnet-4@20250514 and
+// us.anthropic.claude-haiku-4-5-20251001-v1:0 all read. An ID that names
+// no version is taken to take adaptive thinking with none disabled,
+// which most current models accept.
 func thinkingFor(model string) Thinking {
 	i := strings.Index(model, "claude-")
 	if i < 0 {
-		return ThinkingBetweenTools
+		return ThinkingAdaptive
 	}
 	name := model[i+len("claude-"):]
 	if j := strings.IndexAny(name, "@[:"); j >= 0 {
 		name = name[:j]
 	}
+	family := ""
 	major, minor := -1, 0
 	parts := strings.Split(name, "-")
 	for k, part := range parts {
+		switch part {
+		case "opus", "sonnet", "haiku", "fable", "mythos":
+			if family == "" {
+				family = part
+			}
+		}
+		if major >= 0 {
+			continue
+		}
 		if n, ok := version(part); ok {
 			major = n
 			if k+1 < len(parts) {
@@ -241,18 +258,23 @@ func thinkingFor(model string) Thinking {
 					minor = m
 				}
 			}
-			break
 		}
 	}
+	atLeast := func(maj, min int) bool { return major > maj || major == maj && minor >= min }
 	switch {
+	case family == "fable" || family == "mythos":
+		// Always on, Mythos Preview included.
+		return ThinkingAlwaysOn
 	case major < 0:
-		return ThinkingBetweenTools
-	case major < 4 || major == 4 && minor < 6:
-		return ThinkingBudget
-	case major < 5 || major == 5 && minor < 5:
 		return ThinkingAdaptive
+	case !atLeast(4, 6):
+		return ThinkingBudget
+	case family == "opus" && atLeast(5, 5):
+		return ThinkingAlwaysOn
+	case family == "sonnet" && atLeast(5, 5):
+		return ThinkingBetweenTools
 	}
-	return ThinkingBetweenTools
+	return ThinkingAdaptive
 }
 
 // version reads a one- or two-digit version number; a date such as

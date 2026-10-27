@@ -102,47 +102,69 @@ says.
 
 ## Reasoning effort
 
-Claude has taken three encodings of a reasoning effort, one per model
-generation, and each generation refuses the others. The adapter picks
-the encoding from the model ID and never refuses an effort on a model's
-behalf: a value the model does not take comes back as the API's
-`invalid_request`.
+Claude models differ in the thinking types they take, and each refuses
+the others with a 400. The adapter picks the encoding from the model ID
+by the table below, which follows Anthropic's per-model table in
+[Troubleshooting thinking](https://platform.claude.com/docs/en/build-with-claude/thinking-troubleshooting#thinking-support-defaults-and-rejected-configurations)
+and [Extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking)
+(as read 2026-10-27). `WithThinking` fixes the encoding.
 
-| Effort | Claude before 4.6 (`ThinkingBudget`) | 4.6 up to 5.5 (`ThinkingAdaptive`) | 5.5 and later (`ThinkingBetweenTools`) |
-|---|---|---|---|
-| `none` | `thinking: disabled` | `thinking: disabled` | `thinking: between_tools` |
-| `minimal`, `low` | `thinking: enabled`, `budget_tokens: 1024` | `output_config.effort: low` | as 4.6 |
-| `medium` | `budget_tokens: 4096` | `output_config.effort: medium` | as 4.6 |
-| `high` | `budget_tokens: 16384` | `output_config.effort: high` | as 4.6 |
-| `xhigh` | `budget_tokens: 24576` | `output_config.effort: xhigh` | as 4.6 |
-| `openresponses-experimental.effort: max` | `budget_tokens: 32000` | `output_config.effort: max` | as 4.6 |
-| no effort, a summary | `budget_tokens: 16384` (the API's default effort, `high`) | `thinking: adaptive`, no `output_config.effort` | as 4.6 |
+| Models | Encoding | `none` sends |
+|---|---|---|
+| Claude before 4.6 (Opus 4.5, Sonnet 4.5, Haiku 4.5, Claude 4, 3.x) | `ThinkingBudget` | `thinking: disabled` |
+| Opus 4.6 to 4.8, Sonnet 4.6, Opus 5, Sonnet 5, Haiku 5.5; an ID that names no version | `ThinkingAdaptive` | `thinking: disabled` |
+| Sonnet 5.5 and later Sonnets | `ThinkingBetweenTools` | `thinking: between_tools` |
+| Opus 5.5 and later Opuses, every Fable and Mythos | `ThinkingAlwaysOn` | nothing: `invalid_request` |
+
+The documents say Opus 5.5, Fable 5 and 5.1, Mythos 5 and 5.1 and
+Mythos Preview are "Always on" and "cannot turn thinking off": they
+refuse `disabled`, and "only Claude Sonnet 5.5 accepts
+`between_tools`". A request with `none` for one of them would fail, so
+the adapter refuses it itself, with `invalid_request`, `param`
+`reasoning.effort` and a message naming the model, instead of sending
+it. That is the one place the adapter refuses a value on a model's
+behalf: the API states the refusal for every such model. `low` is the
+least thinking those models take.
+
+The other efforts:
+
+| Effort | `ThinkingBudget` | the adaptive encodings |
+|---|---|---|
+| `minimal`, `low` | `thinking: enabled`, `budget_tokens: 1024` | `output_config.effort: low` |
+| `medium` | `budget_tokens: 4096` | `output_config.effort: medium` |
+| `high` | `budget_tokens: 16384` | `output_config.effort: high` |
+| `xhigh` | `budget_tokens: 24576` | `output_config.effort: xhigh` |
+| `openresponses-experimental.effort: max` | `budget_tokens: 32000` | `output_config.effort: max` |
+| no effort, a summary | `budget_tokens: 16384` (the API's default effort, `high`) | `thinking: adaptive`, no `output_config.effort` |
 
 - Under the adaptive encodings, every effort except `none` also sends
   `thinking: adaptive`, with `display: summarized` when
   `reasoning.summary` is set and `display: omitted` when it is not.
-  Claude 4.6 to 4.8 do not think without it; with `omitted` the thinking
-  text is empty and the signature still comes back, so the reasoning
-  item round-trips.
+  Opus 4.6 to 4.8 and Sonnet 4.6 do not think without it; with
+  `omitted` the thinking text is empty and the signature still comes
+  back, so the reasoning item round-trips.
 - Under `ThinkingBudget`, `output_config.effort` is not sent, and any
   summary setting leaves the display to the model. The budget must be
   below `max_tokens`: when it is not, it is lowered to `max_tokens - 1`,
   but never below the API's minimum of 1024, so a `max_output_tokens`
   of 1024 or less with an effort is the API's to refuse.
-- `none` turns thinking off and ignores `reasoning.summary`.
+- `none` turns thinking off and ignores `reasoning.summary`. It sends no
+  `output_config.effort`, so the API's limits on `disabled` and
+  `between_tools` at `xhigh` and `max` do not arise.
 - The shared member `openresponses-experimental.effort: max` on
   `reasoning` (docs/extensions.md, section 3) takes the place of
   `reasoning.effort`. The specification's `xhigh` is never sent as
   `max`, because Claude has both. The response does not echo the
   member.
-- The generation is read from the model ID: the first number after
-  `claude-`, and the one after it when that is a one- or two-digit minor
-  version, so `claude-opus-4-5`, `claude-3-7-sonnet-20250219`,
-  `claude-sonnet-4@20250514` (Vertex) and
-  `us.anthropic.claude-haiku-4-5-20251001-v1:0` (Bedrock) all read. An
-  ID with no `claude-` and a number after it, such as an inference
-  profile ARN, is taken to be the newest generation. `WithThinking`
-  fixes the encoding for such an ID.
+- The model is read from the ID. The family is the first of `opus`,
+  `sonnet`, `haiku`, `fable` and `mythos` after `claude-`; the version is
+  the first number after `claude-`, and the one after it when that is a
+  one- or two-digit minor version. So `claude-opus-4-5`,
+  `claude-3-7-sonnet-20250219`, `claude-sonnet-4@20250514` (Vertex) and
+  `us.anthropic.claude-haiku-4-5-20251001-v1:0` (Bedrock) all read. A
+  Fable or Mythos ID is `ThinkingAlwaysOn` whatever its version. An ID
+  with no version after `claude-`, such as an inference profile ARN, is
+  `ThinkingAdaptive`, the encoding most current models take.
 
 Extension types use the `anthropic.` slug. A tool `{"type":
 "anthropic.web_search_20260209", "name": "web_search"}` is that server

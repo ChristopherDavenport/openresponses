@@ -473,9 +473,10 @@ func TestEncodeReasoning(t *testing.T) {
 		want      map[string]any // thinking, or nil for none sent
 		effort    string         // output_config.effort, or "" for none sent
 	}{
-		{"none on 5.5", "claude-sonnet-5-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "between_tools"}, ""},
-		{"none on an unknown id", "my-tuned-model", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "between_tools"}, ""},
-		{"none on 5", "claude-opus-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
+		{"none on Sonnet 5.5", "claude-sonnet-5-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "between_tools"}, ""},
+		{"none on Haiku 5.5", "claude-haiku-5-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
+		{"none on an unknown id", "my-tuned-model", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
+		{"none on Opus 5", "claude-opus-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
 		{"none on 4.5", "claude-haiku-4-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone, Summary: openresponses.ReasoningSummaryAuto}, map[string]any{"type": "disabled"}, ""},
 		{"effort without summary thinks", "claude-opus-4-8", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "adaptive", "display": "omitted"}, "high"},
 		{"effort with summary", "claude-opus-4-6", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortMinimal, Summary: openresponses.ReasoningSummaryDetailed}, map[string]any{"type": "adaptive", "display": "summarized"}, "low"},
@@ -490,7 +491,7 @@ func TestEncodeReasoning(t *testing.T) {
 		{"budget below max_output_tokens", "claude-haiku-4-5", ThinkingAuto, ptr(8000), openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(7999)}, ""},
 		{"budget never below the minimum", "claude-haiku-4-5", ThinkingAuto, ptr(512), openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(1024)}, ""},
 		{"fixed budget", "my-tuned-model", ThinkingBudget, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(16384)}, ""},
-		{"fixed adaptive", "claude-sonnet-5-5", ThinkingAdaptive, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
+		{"fixed adaptive", "claude-opus-5-5", ThinkingAdaptive, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
 		{"nothing asked", "claude-opus-4-5", ThinkingAuto, nil, openresponses.ReasoningConfig{}, nil, ""},
 	}
 	for _, tc := range cases {
@@ -517,21 +518,43 @@ func TestEncodeReasoning(t *testing.T) {
 	}
 }
 
+// TestEncodeReasoningAlwaysOn covers none on a model that cannot turn
+// thinking off: refused, naming the model, rather than sent to fail.
+func TestEncodeReasoningAlwaysOn(t *testing.T) {
+	for _, model := range []string{"claude-opus-5-5", "claude-fable-5", "claude-fable-5-1", "claude-mythos-5-1", "claude-mythos-preview"} {
+		_, err := encodeRequest(openresponses.Request{Model: model, Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}}, defaults)
+		wantErr(t, err, openresponses.CodeInvalidValue, "reasoning.effort")
+		if !strings.Contains(err.Error(), model) {
+			t.Fatalf("%s: error does not name the model: %v", model, err)
+		}
+	}
+	// Any other effort is sent.
+	p := encode(t, openresponses.Request{Model: "claude-opus-5-5", Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}})
+	if wire(t, p)["output_config"].(map[string]any)["effort"] != "low" {
+		t.Fatalf("effort low on Opus 5.5 = %v", wire(t, p))
+	}
+}
+
 func TestThinkingFor(t *testing.T) {
 	cases := map[string]Thinking{
 		"claude-opus-4":                           ThinkingBudget,
 		"claude-opus-4-1-20250805":                ThinkingBudget,
 		"claude-3-5-haiku-latest":                 ThinkingBudget,
+		"anthropic.claude-opus-4-5-20251101-v1:0": ThinkingBudget,
 		"claude-opus-4-6":                         ThinkingAdaptive,
 		"claude-sonnet-4-6[1m]":                   ThinkingAdaptive,
 		"claude-opus-4-8":                         ThinkingAdaptive,
-		"claude-fable-5-1":                        ThinkingAdaptive,
-		"claude-opus-5-5":                         ThinkingBetweenTools,
-		"claude-haiku-5-5":                        ThinkingBetweenTools,
-		"claude-opus-6":                           ThinkingBetweenTools,
-		"anthropic.claude-opus-4-5-20251101-v1:0": ThinkingBudget,
-		"arn:aws:bedrock:us-east-1:1:application-inference-profile/x": ThinkingBetweenTools,
-		"": ThinkingBetweenTools,
+		"claude-opus-5":                           ThinkingAdaptive,
+		"claude-sonnet-5":                         ThinkingAdaptive,
+		"claude-haiku-5-5":                        ThinkingAdaptive,
+		"claude-sonnet-5-5":                       ThinkingBetweenTools,
+		"claude-opus-5-5":                         ThinkingAlwaysOn,
+		"claude-fable-5":                          ThinkingAlwaysOn,
+		"claude-fable-5-1":                        ThinkingAlwaysOn,
+		"claude-mythos-5-1":                       ThinkingAlwaysOn,
+		"claude-mythos-preview":                   ThinkingAlwaysOn,
+		"arn:aws:bedrock:us-east-1:1:application-inference-profile/x": ThinkingAdaptive,
+		"": ThinkingAdaptive,
 	}
 	for model, want := range cases {
 		if got := thinkingFor(model); got != want {

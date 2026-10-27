@@ -2,13 +2,15 @@
 
 ## Unreleased
 
-- `reasoning.effort` is encoded the way the model's generation takes it,
-  picked from the model ID by the table in the README, and
-  `WithThinking` fixes the encoding for an ID that does not name its
-  generation (#32, #33). Claude before 4.6 is sent `thinking: enabled`
-  with a `budget_tokens` per effort instead of adaptive thinking, which
-  it refused at every effort. Claude 5.5 and later are sent `thinking:
-  between_tools` for `none` instead of `disabled`, which they refuse.
+- `reasoning.effort` is encoded the way the model takes it, picked from
+  the model ID by the table in the README, and `WithThinking` fixes the
+  encoding for an ID that does not name its model (#32, #33). Claude
+  before 4.6 is sent `thinking: enabled` with a `budget_tokens` per
+  effort instead of adaptive thinking, which it refused at every effort.
+  Sonnet 5.5 is sent `thinking: between_tools` for `none` instead of
+  `disabled`, which it refuses. Opus 5.5, Fable and Mythos cannot turn
+  thinking off, so `none` for them is `invalid_request` naming the model
+  instead of a request the API refuses.
 - An effort now also sends `thinking: adaptive` on Claude 4.6 and later,
   with `display: omitted` when no summary is requested. Before, an
   effort without `reasoning.summary` sent only `output_config.effort`,

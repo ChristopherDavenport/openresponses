@@ -82,32 +82,34 @@ func WithCacheTTL(ttl sdk.CacheControlEphemeralTTL) Option {
 	return func(a *Adapter) { a.cacheTTL = ttl }
 }
 
-// Thinking selects how reasoning.effort is encoded. Claude has taken
-// three encodings, one per model generation, and each generation refuses
-// the others; the README has the table.
+// Thinking selects how reasoning.effort is encoded. Claude models differ
+// in the thinking types they take and refuse the others, so the encoding
+// is chosen per model; the README has the table.
 type Thinking int
 
 const (
-	// ThinkingAuto derives the encoding from the model ID: ThinkingBudget
-	// for Claude before 4.6, ThinkingAdaptive from 4.6 up to 5.5, and
-	// ThinkingBetweenTools for 5.5, later models and any ID that does not
-	// name a generation.
+	// ThinkingAuto derives the encoding from the model ID, by the
+	// README's table.
 	ThinkingAuto Thinking = iota
 	// ThinkingBudget sends an effort as thinking enabled with a
 	// budget_tokens from the README's table, and none as thinking
-	// disabled. output_config.effort is not sent.
+	// disabled. output_config.effort is not sent. Claude before 4.6.
 	ThinkingBudget
 	// ThinkingAdaptive sends an effort as output_config.effort with
 	// adaptive thinking, and none as thinking disabled.
 	ThinkingAdaptive
 	// ThinkingBetweenTools is ThinkingAdaptive with none sent as thinking
-	// between_tools, which Claude 5.5 takes in place of disabled.
+	// between_tools, which Claude Sonnet 5.5 takes in place of disabled.
 	ThinkingBetweenTools
+	// ThinkingAlwaysOn is ThinkingAdaptive for a model that cannot turn
+	// thinking off (Claude Opus 5.5, Fable, Mythos): none is refused with
+	// invalid_request rather than sent to fail.
+	ThinkingAlwaysOn
 )
 
 // WithThinking fixes the reasoning.effort encoding rather than deriving
-// it from the model ID. Set it for an ID that does not say which
-// generation it serves, such as a Bedrock inference profile ARN.
+// it from the model ID. Set it for an ID that does not say which model
+// it serves, such as a Bedrock inference profile ARN.
 func WithThinking(t Thinking) Option {
 	return func(a *Adapter) { a.thinking = t }
 }
