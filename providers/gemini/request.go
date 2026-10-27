@@ -109,15 +109,29 @@ func forwardable(extra map[string]any) map[string]any {
 }
 
 // forwardExtra adds members to the GenerateContent body without
-// replacing a key the mapping set.
+// replacing a key the mapping set. Gemini's JSON parser takes a field's
+// proto name (system_instruction) as well as its JSON name
+// (systemInstruction), so the two spellings are one key: a member whose
+// camelCase form the body already has is not forwarded, and of two
+// members that spell one field, the first in sorted order is.
 func forwardExtra(cfg *genai.GenerateContentConfig, members map[string]any) {
 	if len(members) == 0 {
 		return
 	}
+	names := make([]string, 0, len(members))
+	for name := range members {
+		names = append(names, name)
+	}
+	slices.Sort(names)
 	cfg.HTTPOptions = &genai.HTTPOptions{ExtrasRequestProvider: func(body map[string]any) map[string]any {
-		for k, v := range members {
-			if _, set := body[k]; !set {
-				body[k] = v
+		set := make(map[string]bool, len(body))
+		for k := range body {
+			set[camel(k)] = true
+		}
+		for _, k := range names {
+			if !set[camel(k)] {
+				set[camel(k)] = true
+				body[k] = members[k]
 			}
 		}
 		return body

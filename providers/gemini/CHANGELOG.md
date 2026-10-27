@@ -56,7 +56,8 @@
   parameter is defined yet) is `invalid_request` naming the member,
   shared members are ignored, and any other is dropped. `WithExtra`
   forwards those others into the `GenerateContent` body without
-  overriding a mapped key. Off by default.
+  overriding a mapped key in either its snake_case or camelCase
+  spelling. Off by default.
 - On a model whose ID the README's table puts in the levels
   generation, whatever `WithThinking` sets, a model step with a
   function call and no thought signature gets Google's documented

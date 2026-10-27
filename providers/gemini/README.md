@@ -130,7 +130,11 @@ gemini.New(client, gemini.WithExtra())
 
 which forwards those other members into the `GenerateContent` body, for
 Gemini request fields the mapping does not cover, such as
-`cachedContent`. A key the mapping sets is never overridden. Every
+`cachedContent`. A key the mapping sets is never overridden, in either
+spelling: Gemini reads a field's snake_case proto name as well as its
+camelCase JSON name, so `system_instruction` is not forwarded beside
+the mapped `systemInstruction`, and of two members that spell one field
+only the first in sorted order is forwarded. Every
 member a client sends then reaches Gemini, so a server that does not
 trust its clients should filter `Extra` first.
 

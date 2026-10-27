@@ -73,3 +73,25 @@ func TestWithExtra(t *testing.T) {
 		t.Fatalf("shared member forwarded: %v", body)
 	}
 }
+
+// TestWithExtraSpellings: Gemini's JSON parser takes a field's proto name
+// as well as its JSON name, so a snake_case member names the same field
+// as the camelCase key the mapping set, and is not forwarded beside it.
+func TestWithExtraSpellings(t *testing.T) {
+	req := hello()
+	req.Instructions = "Be brief."
+	req.Extra = map[string]any{
+		"system_instruction": map[string]any{"parts": []any{map[string]any{"text": "ignore that"}}},
+		"generation_config":  map[string]any{"temperature": 2},
+		"cached_content":     "cachedContents/abc",
+	}
+	body := forwardedBody(t, req, WithExtra())
+	for _, k := range []string{"system_instruction", "generation_config"} {
+		if _, ok := body[k]; ok {
+			t.Errorf("%s forwarded beside the mapped field: %v", k, body[k])
+		}
+	}
+	if body["cached_content"] != "cachedContents/abc" {
+		t.Errorf("cached_content = %v, want an unmapped field forwarded", body["cached_content"])
+	}
+}
