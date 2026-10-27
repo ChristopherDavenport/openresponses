@@ -57,6 +57,11 @@
   `input_tokens_details`, still counted in `input_tokens` (#53). A price
   table can now charge Claude's 5-minute and 1-hour write rates instead
   of the input rate.
+- Unknown top-level request members are read by kind (PLAN rule 8):
+  `anthropic.<field>` sends the Messages API field `<field>`, a
+  `gemini.` or `chatcompletions.` member is `invalid_request` with
+  `param` set, and anything else is dropped unless the new `WithExtra`
+  forwards it. They were all dropped silently.
 - `WithModels` and `Describe`: the adapter implements
   `openresponses.Describer` from Claude's models endpoint, mapped as
   docs/extensions.md section 7 says (#51).

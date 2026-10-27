@@ -78,6 +78,29 @@ messages: every user-side item (user messages, function outputs) joins
 one user message and every assistant-side item (assistant messages,
 function calls, reasoning, `anthropic.` items) one assistant message.
 
+### Request members outside the specification
+
+Unknown top-level members of a request (`Request.Extra`) are read by
+kind, as PLAN rule 8 and docs/extensions.md section 1.5 say:
+
+- `anthropic.<field>` is a Messages API parameter: the request is sent
+  with `<field>` set to the member's value, as given, so
+  `{"anthropic.top_k": 5}` sends `top_k: 5` and
+  `{"anthropic.inference_geo": "us"}` sends `inference_geo: "us"`. A
+  member naming a field the adapter already sets from the request
+  (`anthropic.max_tokens`, `anthropic.thinking` when an effort is set,
+  ...) is `invalid_request` with `code: invalid_value` and `param` the
+  member's name, rather than overriding the mapping. Whether Claude
+  takes the field is the API's to say.
+- A member under another adapter's slug, `gemini.` or
+  `chatcompletions.`, is `invalid_request` with `code:
+  unsupported_parameter` and `param` the member's name: it is a setting
+  for a provider this one cannot honour.
+- A shared `openresponses-experimental.` member at the top level is not
+  one this adapter implements, so it is ignored.
+- Any other member is dropped. `WithExtra` forwards it into the request
+  as it is, never overriding a field the adapter set; off by default.
+
 ## What the request mapping rejects and ignores
 
 A request field the Messages API has no equivalent for comes back as an

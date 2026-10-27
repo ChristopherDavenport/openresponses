@@ -621,3 +621,56 @@ func TestEncodeCallIDRewrite(t *testing.T) {
 		t.Fatalf("an id the pattern takes should pass unchanged: %+v", calls[1])
 	}
 }
+
+// TestEncodeExtra covers the request's unknown top-level members (PLAN
+// rule 8): anthropic. members are Messages API fields, another provider's
+// members are refused, and the rest are dropped unless WithExtra forwards
+// them.
+func TestEncodeExtra(t *testing.T) {
+	req := openresponses.Request{Model: "claude-opus-5", Extra: map[string]any{
+		"anthropic.top_k":                    5,
+		"anthropic.inference_geo":            "us",
+		"openresponses-experimental.unknown": true,
+		"routing":                            "fast",
+		"model":                              "other",
+	}}
+	body := wire(t, encode(t, req))
+	if body["top_k"] != float64(5) || body["inference_geo"] != "us" {
+		t.Fatalf("anthropic. members = %v", body)
+	}
+	for _, key := range []string{"routing", "anthropic.top_k", "openresponses-experimental.unknown"} {
+		if _, ok := body[key]; ok {
+			t.Fatalf("%s sent: %v", key, body)
+		}
+	}
+
+	p, err := encodeRequest(req, config{maxTokens: DefaultMaxTokens, forwardExtra: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = wire(t, p)
+	if body["routing"] != "fast" || body["model"] != "claude-opus-5" {
+		t.Fatalf("forwarded = %v; a mapped field is never overridden", body)
+	}
+	if _, ok := body["openresponses-experimental.unknown"]; ok {
+		t.Fatalf("a shared member is not forwarded: %v", body)
+	}
+
+	cases := []struct {
+		name  string
+		extra map[string]any
+		code  string
+		param string
+	}{
+		{"another provider", map[string]any{"gemini.thinking_config": map[string]any{}}, openresponses.CodeUnsupportedParameter, "gemini.thinking_config"},
+		{"chat completions", map[string]any{"chatcompletions.n": 2}, openresponses.CodeUnsupportedParameter, "chatcompletions.n"},
+		{"a mapped field", map[string]any{"anthropic.max_tokens": 10}, openresponses.CodeInvalidValue, "anthropic.max_tokens"},
+		{"no field", map[string]any{"anthropic.": 1}, openresponses.CodeInvalidValue, "anthropic."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := encodeRequest(openresponses.Request{Extra: tc.extra}, defaults)
+			wantErr(t, err, tc.code, tc.param)
+		})
+	}
+}

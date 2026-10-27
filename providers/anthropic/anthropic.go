@@ -52,6 +52,9 @@ type config struct {
 	maxTokens int64
 	cacheTTL  sdk.CacheControlEphemeralTTL
 	thinking  Thinking
+	// forwardExtra sends the request's unknown top-level members; see
+	// [WithExtra].
+	forwardExtra bool
 }
 
 var _ openresponses.Adapter = (*Adapter)(nil)
@@ -112,6 +115,18 @@ const (
 // it serves, such as a Bedrock inference profile ARN.
 func WithThinking(t Thinking) Option {
 	return func(a *Adapter) { a.thinking = t }
+}
+
+// WithExtra forwards the request's unknown top-level members (Extra)
+// into the Messages request as they are, for parameters the mapping does
+// not cover. Fields the mapping sets are never overridden. Members under
+// a slug are never forwarded: anthropic. members are always sent, as the
+// README defines them, shared openresponses-experimental. members are
+// read or ignored, and another provider's are refused. Any member a
+// client sends then reaches Claude, so a server that does not trust its
+// clients should filter Extra first.
+func WithExtra() Option {
+	return func(a *Adapter) { a.forwardExtra = true }
 }
 
 // New returns an adapter over messages, the Messages field of any client

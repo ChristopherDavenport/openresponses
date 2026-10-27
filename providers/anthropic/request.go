@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"mime"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/ChristopherDavenport/openresponses"
@@ -44,7 +46,66 @@ func encodeRequest(req openresponses.Request, cfg config) (sdk.MessageNewParams,
 	}
 	p.Messages = messages
 	p.System = system
+	if err := encodeExtra(req.Extra, cfg.forwardExtra, &p); err != nil {
+		return sdk.MessageNewParams{}, err
+	}
 	return p, nil
+}
+
+// providerSlugs are the slugs of the other adapters in this repository.
+// A request member under one is a setting for a provider this adapter
+// cannot honour.
+var providerSlugs = []string{"gemini.", "chatcompletions."}
+
+// encodeExtra reads the request's unknown top-level members by kind
+// (PLAN rule 8). An anthropic.<field> member is the Messages API field
+// <field>, sent as given; one naming a field the mapping already set is
+// refused rather than allowed to contradict it. A member under another
+// provider's slug is refused. A shared openresponses-experimental.
+// member at the top level is not one this adapter implements, so it is
+// ignored. Anything else is dropped, or forwarded under [WithExtra]
+// without overriding a mapped field.
+func encodeExtra(extra map[string]any, forward bool, p *sdk.MessageNewParams) error {
+	if len(extra) == 0 {
+		return nil
+	}
+	mapped, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	var set map[string]json.RawMessage
+	if err := json.Unmarshal(mapped, &set); err != nil {
+		return err
+	}
+	fields := map[string]any{}
+	for _, key := range slices.Sorted(maps.Keys(extra)) {
+		if field, ok := strings.CutPrefix(key, slug); ok {
+			if field == "" {
+				return invalid(key, "an anthropic. member names a Messages API field after the slug")
+			}
+			if _, ok := set[field]; ok {
+				return invalid(key, fmt.Sprintf("%s conflicts with %s, which the request already sets", key, field))
+			}
+			fields[field] = extra[key]
+			continue
+		}
+		if slices.ContainsFunc(providerSlugs, func(s string) bool { return strings.HasPrefix(key, s) }) {
+			return openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
+				fmt.Sprintf("%s is a setting for another provider, which the Messages API cannot honour", key), key)
+		}
+		if strings.HasPrefix(key, openresponses.ExtensionSlug) || !forward {
+			continue
+		}
+		if _, ok := set[key]; !ok {
+			if _, ok := fields[key]; !ok {
+				fields[key] = extra[key]
+			}
+		}
+	}
+	if len(fields) > 0 {
+		p.SetExtraFields(fields)
+	}
+	return nil
 }
 
 func unsupported(param string) *openresponses.Error {
