@@ -43,6 +43,12 @@
   is sent as the block it carries, in a function call output and in
   message content (#63). It was refused, so a session holding a
   ToolSearch result's `tool_reference` blocks could not be sent again.
+- A `refusal` stop ends the response incomplete with `content_filter`
+  instead of completing it, and its category is
+  `incomplete_details["anthropic.refusal_category"]` (#59). Claude's
+  explanation is still the refusal part. When Claude sends none, the
+  adapter no longer writes a refusal of its own ("The request was
+  refused (cyber).").
 
 ## v0.0.16 - 2026-10-26
 

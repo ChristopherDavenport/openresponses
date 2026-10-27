@@ -291,18 +291,41 @@ func TestStreamStopReasons(t *testing.T) {
 		t.Fatalf("message = %+v", msg)
 	}
 
-	sink = run(t, hello(), msgStart,
+	// A refusal is a content filter: incomplete, with Claude's
+	// explanation as the refusal part and its category under the slug.
+	sink = run(t, hello(), msgStart, textStart, textDelta(0, "Sure, "), textStop,
 		`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"cyber","explanation":"No."}},"usage":{"output_tokens":1}}`, msgStop)
 	resp = sink.Response()
 	msg := resp.Output[0].(*openresponses.Message)
-	if resp.Status != openresponses.ResponseStatusCompleted || len(msg.Content) != 1 {
-		t.Fatalf("refusal = %+v", resp)
+	if resp.Status != openresponses.ResponseStatusIncomplete || resp.IncompleteDetails.Reason != openresponses.IncompleteReasonContentFilter || len(msg.Content) != 2 {
+		t.Fatalf("refusal = %+v %+v", resp.Status, resp.IncompleteDetails)
 	}
-	if r, ok := msg.Content[0].(*openresponses.Refusal); !ok || r.Refusal != "No." {
-		t.Fatalf("refusal part = %+v", msg.Content[0])
+	if r, ok := msg.Content[1].(*openresponses.Refusal); !ok || r.Refusal != "No." {
+		t.Fatalf("refusal part = %+v", msg.Content[1])
+	}
+	var incomplete *openresponses.ResponseIncompleteEvent
+	for _, ev := range sink.Events() {
+		if e, ok := ev.(*openresponses.ResponseIncompleteEvent); ok {
+			incomplete = e
+		}
+	}
+	data, err := json.Marshal(incomplete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"anthropic.refusal_category":"cyber"`) {
+		t.Fatalf("response.incomplete = %s", data)
 	}
 
-	_, err := streamtest.Run(context.Background(), newAdapter(t, sse(msgStart, textStart, textDelta(0, "x"), textStop)), hello())
+	// Without an explanation the adapter writes no refusal text.
+	sink = run(t, hello(), msgStart,
+		`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":null,"explanation":null}},"usage":{"output_tokens":1}}`, msgStop)
+	resp = sink.Response()
+	if resp.Status != openresponses.ResponseStatusIncomplete || len(resp.Output) != 0 || resp.IncompleteDetails.Extra[refusalCategoryMember] != nil {
+		t.Fatalf("refusal without explanation = %+v %+v", resp.Output, resp.IncompleteDetails)
+	}
+
+	_, err = streamtest.Run(context.Background(), newAdapter(t, sse(msgStart, textStart, textDelta(0, "x"), textStop)), hello())
 	wantErr(t, err, "truncated_stream", "")
 }
 

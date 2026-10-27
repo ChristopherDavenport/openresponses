@@ -59,9 +59,17 @@ const issuer = "anthropic"
 // item or response before the event is sent, so the event carries them
 // as the final response does.
 func (d *decoder) annotate(ev openresponses.StreamEvent) {
-	if added, ok := ev.(*openresponses.OutputItemAddedEvent); ok {
-		if rs, ok := added.Item.(*openresponses.ReasoningItem); ok {
+	switch ev := ev.(type) {
+	case *openresponses.OutputItemAddedEvent:
+		if rs, ok := ev.Item.(*openresponses.ReasoningItem); ok {
 			rs.SetIssuer(issuer)
+		}
+	case *openresponses.ResponseIncompleteEvent:
+		if details := ev.Response.IncompleteDetails; details != nil && d.refusalCategory != "" {
+			if details.Extra == nil {
+				details.Extra = map[string]any{}
+			}
+			details.Extra[refusalCategoryMember] = d.refusalCategory
 		}
 	}
 }
@@ -86,7 +94,15 @@ type decoder struct {
 	stop        sdk.StopReason
 	stopDetails sdk.RefusalStopDetails
 	seen        bool
+	// refusalCategory is the category of a refusal stop, set on
+	// incomplete_details as [refusalCategoryMember].
+	refusalCategory string
 }
+
+// refusalCategoryMember is the incomplete_details member carrying the
+// category Claude gives a refusal stop (cyber, bio, ...). Categories
+// differ by provider, so it is under this adapter's slug.
+const refusalCategoryMember = slug + "refusal_category"
 
 // rawBlock accumulates a block the specification has no item for, so it
 // can be re-emitted whole when it stops: the start event's JSON plus any
@@ -403,22 +419,20 @@ func (d *decoder) finish() error {
 	case sdk.StopReasonMaxTokens, sdk.StopReasonModelContextWindowExceeded:
 		return d.em.Incomplete(openresponses.IncompleteReasonMaxOutputTokens)
 	case sdk.StopReasonRefusal:
-		m, err := d.openMessage()
-		if err != nil {
-			return err
-		}
-		text := d.stopDetails.Explanation
-		if text == "" {
-			text = "The request was refused"
-			if d.stopDetails.Category != "" {
-				text += " (" + string(d.stopDetails.Category) + ")"
+		// A safety classifier ended the generation, which is a content
+		// filter. Claude's explanation, when it sends one, is the refusal
+		// part; the adapter writes none of its own.
+		if text := d.stopDetails.Explanation; text != "" {
+			m, err := d.openMessage()
+			if err != nil {
+				return err
 			}
-			text += "."
+			if err := m.Refusal(text); err != nil {
+				return err
+			}
 		}
-		if err := m.Refusal(text); err != nil {
-			return err
-		}
-		return d.em.Complete()
+		d.refusalCategory = string(d.stopDetails.Category)
+		return d.em.Incomplete(openresponses.IncompleteReasonContentFilter)
 	case "":
 		return openresponses.ServerError("truncated_stream", "the Messages stream ended without a stop reason")
 	}

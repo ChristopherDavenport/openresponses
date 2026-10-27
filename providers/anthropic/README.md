@@ -190,8 +190,21 @@ apart, so an item with no issuer is sent as Claude's.
 
 `end_turn`, `tool_use` and `stop_sequence` complete the response.
 `max_tokens` and `model_context_window_exceeded` end it incomplete
-with `max_output_tokens`. `refusal` adds a `refusal` content part
-carrying the explanation and completes. `pause_turn` resumes the turn
+with `max_output_tokens`. `refusal`, a stop Claude's safety classifiers
+make, ends it incomplete with `content_filter`, as the Gemini adapter
+ends a safety stop. Claude's `stop_details.explanation`, when it sends
+one, becomes a `refusal` content part of the assistant message, after
+any text already streamed; when it sends none there is no refusal part,
+since the adapter writes no refusal text of its own. The category
+(`cyber`, `bio`, ...) is the member `anthropic.refusal_category` of
+`incomplete_details`, present when Claude names one:
+
+```json
+"incomplete_details": {"reason": "content_filter", "anthropic.refusal_category": "cyber"}
+```
+
+Categories differ by provider, so the member is under this adapter's
+slug rather than a shared one. `pause_turn` resumes the turn
 with its own output replayed, up to the configured continuations.
 Web search citations become `url_citation` annotations spanning the
 cited text block; document citations pass through as
