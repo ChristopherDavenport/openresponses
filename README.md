@@ -247,6 +247,12 @@ response keys are preserved in `Extra`. That passthrough is a policy
 decision for a server: any key a client sends reaches the upstream
 provider unless the adapter clears or filters `Extra`.
 
+Where the specification has no member for something more than one
+provider needs (reasoning effort above `xhigh`, who issued a reasoning
+item, cache writes, a common code for context overflow), this library
+defines a shared extension under the `openresponses.` slug. Each one is
+specified in [docs/extensions.md](docs/extensions.md).
+
 Errors built from remote data (an HTTP error response, an error event or
 a WebSocket error frame) carry only the headers that describe a failure,
 such as `Retry-After` and the rate-limit family, so a peer cannot plant
