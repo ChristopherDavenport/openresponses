@@ -517,11 +517,10 @@ func addUsage(a, b openresponses.Usage) openresponses.Usage {
 // mapError converts an SDK error into the matching *openresponses.Error.
 // The API's error type is the code and decides the type and status, so
 // a failure reads the same whether it came as an HTTP status or as an
-// error event inside a 200 stream. A body without Claude's error type,
-// or with one the table does not know, falls back to the HTTP status by
-// the rule every adapter shares (404 not_found, 408 server_error, 429
-// too_many_requests, other 4xx invalid_request, the rest server_error),
-// and a 2xx status never stands.
+// error event inside a 200 stream: the type is
+// [openresponses.ErrorTypeForStatus] of the type's status. A body without
+// Claude's error type, or with one the table does not know, falls back
+// to the HTTP status by the same rule, and a 2xx status never stands.
 // The headers that describe the failure (Retry-After, the rate-limit
 // family, the request id) travel with it.
 func mapError(err error) error {
@@ -551,21 +550,12 @@ func mapError(err error) error {
 	}
 	message := apiMessage(apiErr)
 	var out *openresponses.Error
-	switch {
-	case code == "invalid_request_error" && strings.Contains(strings.ToLower(message), "prompt is too long"):
+	if code == "invalid_request_error" && strings.Contains(strings.ToLower(message), "prompt is too long") {
 		out = openresponses.ContextLengthExceeded(message)
-	case status == http.StatusNotFound:
-		out = openresponses.NotFound(code, message, "")
-	case status == http.StatusTooManyRequests:
-		out = openresponses.TooManyRequests(code, message)
-	case status == http.StatusRequestTimeout:
-		out = openresponses.ServerError(code, message)
-	case status >= 400 && status < 500:
-		// Credential and permission refusals land here too: a retry
-		// cannot fix them, so they are never server_error.
-		out = openresponses.InvalidRequest(code, message, "")
-	default:
-		out = openresponses.ServerError(code, message)
+	} else {
+		// Credential and permission refusals are 401 and 403, so
+		// invalid_request: a retry cannot fix them.
+		out = &openresponses.Error{Type: openresponses.ErrorTypeForStatus(status), Code: code, Message: message}
 	}
 	// Zero leaves the status to the type.
 	out.StatusCode = status

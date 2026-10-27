@@ -148,8 +148,8 @@ refuse `disabled`, and "only Claude Sonnet 5.5 accepts
 `between_tools`". A request with `none` for one of them would fail, so
 the adapter refuses it itself, with `invalid_request`, `param`
 `reasoning.effort` and a message naming the model, instead of sending
-it. That is the one place the adapter refuses a value on a model's
-behalf: the API states the refusal for every such model. `low` is the
+it. PLAN rule 1 allows this one refusal on a model's behalf because the
+document above states the API's refusal for every such model. `low` is the
 least thinking those models take.
 
 The other efforts:
@@ -315,10 +315,13 @@ came as an HTTP status or as an `error` event inside a 200 stream:
 A refusal of the adapter's own key or permissions is `invalid_request`,
 since a retry cannot fix it. A body without Claude's error envelope, as
 Vertex AI (`RESOURCE_EXHAUSTED`), Bedrock and proxies send, or with an
-error type not in the table, takes its type from the HTTP status: 404
-`not_found`, 408 `server_error`, 429 `too_many_requests`, any other 4xx
-`invalid_request`, and `server_error` for the rest, keeping the status
-and with code `api_error` when there is no type. Inside a stream,
+error type not in the table, takes its type from the HTTP status by
+the rule every adapter shares (`openresponses.ErrorTypeForStatus`, the
+status table in PLAN.md "Errors"): 404 `not_found`, 408 `server_error`,
+429 `too_many_requests`, any other 4xx `invalid_request`, and
+`server_error` for the rest, keeping the status and with code
+`api_error` when there is no type. The table above is the same rule
+applied to each type's status. Inside a stream,
 whose status is 200, an unknown type is `server_error` with no status
 of its own, so it reads as 500. A 2xx status is never put on an error.
 
