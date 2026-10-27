@@ -161,18 +161,30 @@ func UnmarshalExtra(data []byte, v any) (extra map[string]any, absent map[string
 		return nil, nil, err
 	}
 	info := structInfoOf(reflect.TypeOf(v))
-	declared := make(map[string]json.RawMessage, len(all))
-	for k, raw := range all {
-		if info.keys[k] {
-			declared[k] = raw
-		}
-	}
 	if all != nil {
-		known, err := json.Marshal(declared)
-		if err != nil {
-			return nil, nil, err
+		// The object of declared keys is spliced from the original bytes
+		// rather than re-encoded, so a raw value (an unknown item, tool
+		// parameters) reaches its field byte for byte: json.Marshal would
+		// compact it and escape <, > and &.
+		var known bytes.Buffer
+		known.WriteByte('{')
+		for k, raw := range all {
+			if !info.keys[k] {
+				continue
+			}
+			if known.Len() > 1 {
+				known.WriteByte(',')
+			}
+			key, err := json.Marshal(k)
+			if err != nil {
+				return nil, nil, err
+			}
+			known.Write(key)
+			known.WriteByte(':')
+			known.Write(raw)
 		}
-		if err := json.Unmarshal(known, v); err != nil {
+		known.WriteByte('}')
+		if err := json.Unmarshal(known.Bytes(), v); err != nil {
 			return nil, nil, err
 		}
 	}

@@ -414,3 +414,34 @@ func TestExtraIsExact(t *testing.T) {
 		t.Errorf("Extra set a declared member: %s", out)
 	}
 }
+
+// TestRawValuesKeptByteForByte checks that a raw value the root keeps
+// (an unknown item, function tool parameters) reaches its field with the
+// bytes it arrived with: no compaction, no HTML escaping.
+func TestRawValuesKeptByteForByte(t *testing.T) {
+	item := `{"type":"acme.x", "note":"a<b&c",  "n": [1, 2]}`
+	params := `{ "description" : "x<y & z>w" }`
+	tools := `[{"type":"function","name":"f","description":"","parameters":` + params + `}]`
+
+	var resp Response
+	if err := json.Unmarshal([]byte(`{"id":"r","output":[`+item+`],"tools":`+tools+`}`), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(resp.Output[0].(*UnknownItem).Raw); got != item {
+		t.Errorf("response output raw = %s, want %s", got, item)
+	}
+	if got := string(resp.Tools[0].(*FunctionTool).Parameters); got != params {
+		t.Errorf("response tool parameters = %s, want %s", got, params)
+	}
+
+	var req Request
+	if err := json.Unmarshal([]byte(`{"model":"m","input":[`+item+`],"tools":`+tools+`}`), &req); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(req.Input[0].(*UnknownItem).Raw); got != item {
+		t.Errorf("request input raw = %s, want %s", got, item)
+	}
+	if got := string(req.Tools[0].(*FunctionTool).Parameters); got != params {
+		t.Errorf("request tool parameters = %s, want %s", got, params)
+	}
+}
