@@ -169,10 +169,17 @@ treated by its issuer, compared as a whole string:
 | issuer | what is sent |
 |---|---|
 | `gemini` | the summary as a thought part and `encrypted_content`, base64-decoded, as the signature; content that is not base64 is `invalid_request` on `encrypted_content` |
-| absent, `encrypted_content` empty | the summary as a thought part, no signature |
-| absent, `encrypted_content` base64 | as `gemini`: items recorded before the member existed keep working |
-| absent, `encrypted_content` not base64 | nothing: the content is another provider's signature, so the item is left out |
-| any other value, `gemini/<variant>` included | nothing: the item is left out whole, summary included, since its summary is another model's reasoning rather than thoughts Gemini had |
+| absent | nothing: the item is left out whole |
+| any other value, `gemini/<variant>` included | nothing: the item is left out whole |
+
+An item with no issuer is of unknown origin. Its content cannot say
+otherwise: Claude's thinking signatures are base64 as Gemini's are, so
+an unstamped Claude item would pass for Gemini's own and Gemini 3 would
+refuse its bytes. Leaving such items out is safe for Gemini sessions
+recorded before the issuer member existed too: on Gemini 3 the step
+they led gets the placeholder below, and earlier generations need no
+signature. A left-out item's summary goes too, since it is reasoning
+Gemini did not have.
 
 Gemini 3 refuses a model step that calls a function without a thought
 signature, and a transcript another provider wrote, or one whose

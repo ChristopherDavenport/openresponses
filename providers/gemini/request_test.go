@@ -85,10 +85,11 @@ func TestEncodeTurns(t *testing.T) {
 	contents, _ := encode(t, openresponses.Request{
 		Input: openresponses.Items{
 			openresponses.UserText("What is the weather?"),
-			&openresponses.ReasoningItem{
-				Summary:          openresponses.Contents{&openresponses.SummaryText{Text: "Need a lookup."}},
-				EncryptedContent: base64.StdEncoding.EncodeToString([]byte("sig")),
-			},
+			func() *openresponses.ReasoningItem {
+				r := geminiReasoning(base64.StdEncoding.EncodeToString([]byte("sig")))
+				r.Summary = openresponses.Contents{&openresponses.SummaryText{Text: "Need a lookup."}}
+				return r
+			}(),
 			openresponses.AssistantText("Let me check."),
 			&openresponses.FunctionCall{CallID: "call_1", Name: "weather", Arguments: `{"city":"Oslo"}`},
 			openresponses.NewFunctionCallOutput("call_1", "rainy"),
@@ -220,8 +221,11 @@ func TestEncodeReasoningIssuer(t *testing.T) {
 		sig     string
 	}{
 		{"own", withSummary(geminiReasoning(sig)), true, "sig"},
-		{"no issuer, base64", withSummary(&openresponses.ReasoningItem{EncryptedContent: sig}), true, "sig"},
-		{"no issuer, empty", withSummary(&openresponses.ReasoningItem{}), true, ""},
+		// An item with no issuer is of unknown origin. Claude's
+		// signatures are base64 too, so the content cannot tell, and the
+		// item is left out whatever it holds.
+		{"no issuer, base64", withSummary(&openresponses.ReasoningItem{EncryptedContent: sig}), false, ""},
+		{"no issuer, empty", withSummary(&openresponses.ReasoningItem{}), false, ""},
 		{"no issuer, not base64", withSummary(&openresponses.ReasoningItem{EncryptedContent: "EqQB***"}), false, ""},
 		{"another issuer", withSummary(foreign(sig)), false, ""},
 		{"another issuer's variant", withSummary(func() *openresponses.ReasoningItem {
@@ -629,5 +633,27 @@ func TestEncodePlaceholderSignature(t *testing.T) {
 	contents, _ = encode(t, openresponses.Request{Model: "gemini-3-pro-preview", Input: own})
 	if got := string(contents[1].Parts[0].ThoughtSignature); got != "sig" {
 		t.Fatalf("own signature = %q, want sig", got)
+	}
+}
+
+// TestEncodeUnstampedClaudeReasoning: a Claude thinking signature is
+// padded standard base64, so an unstamped Claude item looks like
+// Gemini's. It is left out, and the step it led gets the placeholder on
+// a Gemini 3 model rather than Claude's bytes.
+func TestEncodeUnstampedClaudeReasoning(t *testing.T) {
+	claude := base64.StdEncoding.EncodeToString([]byte("\x08\x04\x12\xa9\x08\n\x10claude-protobuf-signature-bytes"))
+	items := openresponses.Items{
+		openresponses.UserText("weather?"),
+		&openresponses.ReasoningItem{EncryptedContent: claude, Summary: openresponses.Contents{&openresponses.SummaryText{Text: "claude thinking"}}},
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "weather", Arguments: `{}`},
+	}
+	contents, _ := encode(t, openresponses.Request{Model: "gemini-3-pro-preview", Input: items})
+	for _, p := range contents[1].Parts {
+		if p.FunctionCall != nil && string(p.ThoughtSignature) != string(placeholderSignature) {
+			t.Errorf("call signature = %q, want the placeholder", p.ThoughtSignature)
+		}
+		if p.Thought {
+			t.Errorf("unattributed summary sent as a Gemini thought: %q", p.Text)
+		}
 	}
 }

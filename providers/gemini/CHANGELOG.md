@@ -18,10 +18,11 @@
   status. One with a 4xx or 5xx `code` maps as the same envelope on a
   non-2xx response does (#54).
 - Reasoning items carry `"openresponses-experimental.issuer":
-  "gemini"`. On input, a reasoning item another issuer wrote is left
-  out, and one with no issuer whose `encrypted_content` is not base64
-  is left out as foreign rather than refused. Only Gemini's own
-  signatures, and unattributed base64 ones, go back to Gemini (#56).
+  "gemini"`. On input only those go back to Gemini. A reasoning item
+  another issuer wrote, or one with no issuer, is left out whole,
+  summary included: Claude's signatures are base64 too, so an
+  unattributed item's origin cannot be told. On Gemini 3 its step gets
+  the placeholder signature instead (#56).
 - Behaviour change: a system or developer message after any other
   input item stays in place as user text instead of moving into the
   system instruction. Only those that precede every other item, with

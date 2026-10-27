@@ -575,33 +575,28 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 }
 
 // signature decides what a reasoning item sends back, by who issued it
-// (docs/extensions.md section 4). An item this adapter issued sends its
-// thought signature, and one that is not base64 is invalid_request. An
-// item another provider issued is left out whole: its signature is
-// meaningless to Gemini, and its summary is that provider's reasoning,
-// not thoughts Gemini had. An item that names no issuer was recorded
-// before the member existed, or by something that does not write it; it
-// is taken as this adapter's unless its encrypted_content is detectably
-// foreign, which for Gemini's base64 signatures means not base64, and
-// then it is left out. An empty encrypted_content is no signature, and
-// the item's summary is still sent. keep reports whether the item is
-// sent at all.
+// (docs/extensions.md section 4). Only an item this adapter issued is
+// sent: its summary as a thought part and its thought signature, where
+// one that is not base64 is invalid_request. Every other item is left
+// out whole, summary included, and keep is false. An item another
+// provider issued carries a signature meaningless to Gemini and a
+// summary of another model's reasoning. An item that names no issuer is
+// of unknown origin, and its content cannot tell: Claude's signatures are
+// base64 like Gemini's. Leaving it out costs a Gemini session recorded
+// before the issuer existed nothing, since on Gemini 3 the step it led
+// gets the placeholder signature and earlier generations need none.
 func signature(it *openresponses.ReasoningItem, param string) (sig []byte, keep bool, err error) {
-	own := it.Issuer() == issuer
-	if !own && it.Issuer() != "" {
+	if it.Issuer() != issuer {
 		return nil, false, nil
 	}
 	if it.EncryptedContent == "" {
 		return nil, true, nil
 	}
 	sig, err = base64.StdEncoding.DecodeString(it.EncryptedContent)
-	switch {
-	case err == nil:
-		return sig, true, nil
-	case own:
+	if err != nil {
 		return nil, false, invalid(param+".encrypted_content", "encrypted_content is not base64: "+err.Error())
 	}
-	return nil, false, nil
+	return sig, true, nil
 }
 
 // placeholderSignature is the value Google documents for a function

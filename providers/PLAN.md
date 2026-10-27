@@ -279,12 +279,11 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   it there, giving it a thought part of its own only when the turn
   ends without one. The replayed turn has Gemini's own layout.
 - Every reasoning item the decoder emits carries
-  `openresponses-experimental.issuer: "gemini"` (rule 5). On input a
-  signature is sent only from an item issued by `gemini`, or from one
-  with no issuer whose `encrypted_content` is base64. An item another
-  issuer wrote is left out whole, summary included, and so is an
-  unattributed item whose content is not base64. On a model that takes
-  thinking levels, a model step that calls a function and has no
+  `openresponses-experimental.issuer: "gemini"` (rule 5). On input
+  only an item issued by `gemini` is sent. One another issuer wrote, or
+  one with no issuer, is left out whole, summary included: Claude's
+  signatures are base64 as Gemini's are, so an unattributed item's
+  origin cannot be told. On a Gemini 3 model, a model step that calls a function and has no
   signature on any part gets Google's documented placeholder,
   `skip_thought_signature_validator`, on its first call, so Gemini 3
   accepts a transcript switched from another provider.

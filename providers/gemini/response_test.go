@@ -203,7 +203,7 @@ func TestSignatureAtEndOfTurn(t *testing.T) {
 	// A signature with nothing after it in the model turn gets a thought
 	// part of its own, ahead of the next user turn.
 	contents, _, err := encodeInput(openresponses.Items{
-		&openresponses.ReasoningItem{EncryptedContent: "c2ln"},
+		geminiReasoning("c2ln"),
 		openresponses.UserText("next"),
 	})
 	if err != nil {
