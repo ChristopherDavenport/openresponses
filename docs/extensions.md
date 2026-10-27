@@ -289,8 +289,9 @@ pause), the counts are summed. The Claude adapter maps `cache_creation`:
 these tokens at it, and the remaining
 `input_tokens − cached_tokens − cache_write_tokens` at the input rate.
 A reader MAY treat OpenRouter's unprefixed `cache_write_tokens` as the
-same quantity when the shared member is absent. Neither adapter writes
-the unprefixed name.
+same quantity when the shared member is absent. This library's reader
+does, so usage that reaches it through OpenRouter is priced the same
+way. Neither adapter writes the unprefixed name.
 
 **Replaces** the unprefixed `cache_write_tokens` proposed in #53 (a
 field the specification does not have) and a raw

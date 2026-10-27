@@ -47,7 +47,8 @@ versions may break the API.
   `SetCacheWriteTokens` and `SetCacheWriteTokensByTTL` carry prompt
   cache writes, split by TTL when the provider reports it; a split with
   a malformed key or value reads as absent (`nil, false`), never as the
-  part that could be read. `EffortMax`
+  part that could be read. `CacheWriteTokens` reads OpenRouter's
+  unprefixed `cache_write_tokens` when the shared member is absent. `EffortMax`
   is not a `ReasoningEffort` constant: the specification's enum stops at
   `xhigh`. No adapter writes or reads these members yet.
 - `Info` is what a model accepts (context window, output limit, whether

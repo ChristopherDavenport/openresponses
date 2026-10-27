@@ -152,3 +152,17 @@ func TestCacheWriteTokensByTTLInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestCacheWriteTokensOpenRouterFallback(t *testing.T) {
+	var d InputTokensDetails
+	if err := json.Unmarshal([]byte(`{"cached_tokens":0,"cache_write_tokens":5}`), &d); err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := d.CacheWriteTokens(); !ok || n != 5 {
+		t.Errorf("unprefixed count = %d, %v", n, ok)
+	}
+	d.SetCacheWriteTokens(9)
+	if n, _ := d.CacheWriteTokens(); n != 9 {
+		t.Errorf("shared member did not win: %d", n)
+	}
+}

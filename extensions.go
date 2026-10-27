@@ -33,6 +33,11 @@ const (
 	MemberModelInfo = ExtensionSlug + "model_info"
 )
 
+// openRouterCacheWriteTokens is the unprefixed member OpenRouter reports
+// cache writes under, which [InputTokensDetails.CacheWriteTokens] reads
+// when the shared member is absent. Nothing in this library writes it.
+const openRouterCacheWriteTokens = "cache_write_tokens"
+
 // EffortMax is the one value defined for [MemberEffort]: the most
 // reasoning the model offers, above xhigh where the provider
 // distinguishes the two. It is not a value of the specification's
@@ -85,11 +90,17 @@ func (r *ReasoningItem) SetIssuer(issuer string) {
 }
 
 // CacheWriteTokens returns [MemberCacheWriteTokens], the input tokens
-// written to the prompt cache, and whether the member is present and
-// valid, a non-negative integer. They are counted in the usage's input
-// tokens and are disjoint from CachedTokens.
+// written to the prompt cache, and whether a valid count, a
+// non-negative integer, is present. They are counted in the usage's
+// input tokens and are disjoint from CachedTokens. When the shared
+// member is absent it reads OpenRouter's unprefixed cache_write_tokens,
+// the same quantity, as docs/extensions.md section 5 allows.
 func (d InputTokensDetails) CacheWriteTokens() (int, bool) {
-	n, ok := intValue(d.Extra[MemberCacheWriteTokens])
+	v, present := d.Extra[MemberCacheWriteTokens]
+	if !present {
+		v = d.Extra[openRouterCacheWriteTokens]
+	}
+	n, ok := intValue(v)
 	if !ok || n < 0 {
 		return 0, false
 	}
