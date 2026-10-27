@@ -1,12 +1,16 @@
 package anthropic
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"mime"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/ChristopherDavenport/openresponses"
@@ -21,15 +25,15 @@ const slug = "anthropic."
 // encodeRequest translates a request into the parameters of one Messages
 // call. Fields the Messages API has no equivalent for are rejected with
 // invalid_request naming the field; nothing is dropped silently.
-// maxTokens and cacheTTL are the adapter's settings; see [WithMaxTokens]
-// and [WithCacheTTL].
-func encodeRequest(req openresponses.Request, maxTokens int64, cacheTTL sdk.CacheControlEphemeralTTL) (sdk.MessageNewParams, error) {
+// cfg holds the adapter's settings; see [WithMaxTokens], [WithCacheTTL]
+// and [WithThinking].
+func encodeRequest(req openresponses.Request, cfg config) (sdk.MessageNewParams, error) {
 	if req.PreviousResponseID != "" {
 		// The handler resolves continuation when it has a store. Reaching
 		// here means it has none, and the Messages API keeps no state.
 		return sdk.MessageNewParams{}, openresponses.PreviousResponseNotFound(req.PreviousResponseID)
 	}
-	p, err := encodeConfig(req, maxTokens, cacheTTL)
+	p, err := encodeConfig(req, cfg)
 	if err != nil {
 		return sdk.MessageNewParams{}, err
 	}
@@ -42,7 +46,66 @@ func encodeRequest(req openresponses.Request, maxTokens int64, cacheTTL sdk.Cach
 	}
 	p.Messages = messages
 	p.System = system
+	if err := encodeExtra(req.Extra, cfg.forwardExtra, &p); err != nil {
+		return sdk.MessageNewParams{}, err
+	}
 	return p, nil
+}
+
+// providerSlugs are the slugs of the other adapters in this repository.
+// A request member under one is a setting for a provider this adapter
+// cannot honour.
+var providerSlugs = []string{"gemini.", "chatcompletions."}
+
+// encodeExtra reads the request's unknown top-level members by kind
+// (PLAN rule 8). An anthropic.<field> member is the Messages API field
+// <field>, sent as given; one naming a field the mapping already set is
+// refused rather than allowed to contradict it. A member under another
+// provider's slug is refused. A shared openresponses-experimental.
+// member at the top level is not one this adapter implements, so it is
+// ignored. Anything else is dropped, or forwarded under [WithExtra]
+// without overriding a mapped field.
+func encodeExtra(extra map[string]any, forward bool, p *sdk.MessageNewParams) error {
+	if len(extra) == 0 {
+		return nil
+	}
+	mapped, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	var set map[string]json.RawMessage
+	if err := json.Unmarshal(mapped, &set); err != nil {
+		return err
+	}
+	fields := map[string]any{}
+	for _, key := range slices.Sorted(maps.Keys(extra)) {
+		if field, ok := strings.CutPrefix(key, slug); ok {
+			if field == "" {
+				return invalid(key, "an anthropic. member names a Messages API field after the slug")
+			}
+			if _, ok := set[field]; ok {
+				return invalid(key, fmt.Sprintf("%s conflicts with %s, which the request already sets", key, field))
+			}
+			fields[field] = extra[key]
+			continue
+		}
+		if slices.ContainsFunc(providerSlugs, func(s string) bool { return strings.HasPrefix(key, s) }) {
+			return openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
+				fmt.Sprintf("%s is a setting for another provider, which the Messages API cannot honour", key), key)
+		}
+		if strings.HasPrefix(key, openresponses.ExtensionSlug) || !forward {
+			continue
+		}
+		if _, ok := set[key]; !ok {
+			if _, ok := fields[key]; !ok {
+				fields[key] = extra[key]
+			}
+		}
+	}
+	if len(fields) > 0 {
+		p.SetExtraFields(fields)
+	}
+	return nil
 }
 
 func unsupported(param string) *openresponses.Error {
@@ -55,8 +118,8 @@ func invalid(param, message string) *openresponses.Error {
 }
 
 // encodeConfig maps the request's settings.
-func encodeConfig(req openresponses.Request, maxTokens int64, cacheTTL sdk.CacheControlEphemeralTTL) (sdk.MessageNewParams, error) {
-	p := sdk.MessageNewParams{Model: sdk.Model(req.Model), MaxTokens: maxTokens}
+func encodeConfig(req openresponses.Request, cfg config) (sdk.MessageNewParams, error) {
+	p := sdk.MessageNewParams{Model: sdk.Model(req.Model), MaxTokens: cfg.maxTokens}
 	if req.MaxOutputTokens != nil {
 		p.MaxTokens = int64(*req.MaxOutputTokens)
 	}
@@ -88,7 +151,7 @@ func encodeConfig(req openresponses.Request, maxTokens int64, cacheTTL sdk.Cache
 		// so the request opts in; the key itself has nothing to name. An
 		// unset TTL is left off, and the API applies its five minutes.
 		p.CacheControl = sdk.NewCacheControlEphemeralParam()
-		p.CacheControl.TTL = cacheTTL
+		p.CacheControl.TTL = cfg.cacheTTL
 	}
 	// metadata is the client's own bookkeeping; the response echoes it and
 	// nothing upstream wants it.
@@ -103,7 +166,11 @@ func encodeConfig(req openresponses.Request, maxTokens int64, cacheTTL sdk.Cache
 		return p, unsupported("service_tier")
 	}
 
-	if err := encodeReasoning(req.Reasoning, &p); err != nil {
+	thinking := cfg.thinking
+	if thinking == ThinkingAuto {
+		thinking = thinkingFor(req.Model)
+	}
+	if err := encodeReasoning(req.Reasoning, req.Model, thinking, thinkingConflict(req), &p); err != nil {
 		return p, err
 	}
 
@@ -136,30 +203,188 @@ func encodeConfig(req openresponses.Request, maxTokens int64, cacheTTL sdk.Cache
 	return p, nil
 }
 
-// encodeReasoning maps effort onto output_config.effort and the summary
-// setting onto thinking display. "none" disables thinking; whether a
-// model allows that is the model's business.
-func encodeReasoning(r openresponses.ReasoningConfig, p *sdk.MessageNewParams) error {
+// encodeReasoning maps the effort and the summary setting onto the
+// encoding the model's generation takes (see [Thinking] and the README's
+// table). The shared openresponses-experimental.effort member, when it
+// asks for max, takes the place of reasoning.effort. Whether a model
+// takes the value is the model's business.
+func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking, conflict string, p *sdk.MessageNewParams) error {
+	effort := sdk.OutputConfigEffort("")
 	switch r.Effort {
 	case "":
 	case openresponses.ReasoningEffortNone:
-		p.Thinking = sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
-		return nil
+		effort = "none"
 	case openresponses.ReasoningEffortMinimal, openresponses.ReasoningEffortLow:
-		p.OutputConfig.Effort = sdk.OutputConfigEffortLow
+		effort = sdk.OutputConfigEffortLow
 	case openresponses.ReasoningEffortMedium:
-		p.OutputConfig.Effort = sdk.OutputConfigEffortMedium
+		effort = sdk.OutputConfigEffortMedium
 	case openresponses.ReasoningEffortHigh:
-		p.OutputConfig.Effort = sdk.OutputConfigEffortHigh
+		effort = sdk.OutputConfigEffortHigh
 	case openresponses.ReasoningEffortXHigh:
-		p.OutputConfig.Effort = sdk.OutputConfigEffortXhigh
+		effort = sdk.OutputConfigEffortXhigh
 	default:
 		return invalid("reasoning.effort", fmt.Sprintf("unknown reasoning effort %q", r.Effort))
 	}
-	if r.Summary != "" {
-		p.Thinking = sdk.ThinkingConfigParamUnion{OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{Display: sdk.ThinkingConfigAdaptiveDisplaySummarized}}
+	if r.ExtendedEffort() == openresponses.EffortMax {
+		effort = sdk.OutputConfigEffortMax
+	}
+	switch {
+	case effort == "none" && thinking == ThinkingAlwaysOn:
+		// Sending a request the model is known to refuse would lose the
+		// reason; this one names it.
+		return invalid("reasoning.effort", fmt.Sprintf("model %s always thinks and cannot turn thinking off; use effort low instead of none", model))
+	case effort == "none" && thinking == ThinkingBetweenTools:
+		p.Thinking = sdk.ThinkingConfigParamUnion{OfBetweenTools: &sdk.ThinkingConfigBetweenToolsParam{}}
+	case effort == "none":
+		p.Thinking = sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
+	case effort == "" && r.Summary == "":
+	case conflict != "" && r.Summary != "":
+		// No thinking, so no summary to show.
+		return openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
+			fmt.Sprintf("reasoning.summary needs thinking, which Claude refuses with %s", conflict), "reasoning.summary")
+	case conflict != "" && thinking == ThinkingBudget:
+		// Before 4.6 an effort is only a thinking budget.
+		return openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
+			fmt.Sprintf("%s rules out thinking, the only way model %s takes reasoning.effort", conflict, model), conflict)
+	case thinking == ThinkingBudget:
+		if effort == "" {
+			// A summary alone asks for thinking at the API's default
+			// effort, which is high.
+			effort = sdk.OutputConfigEffortHigh
+		}
+		p.Thinking = sdk.ThinkingConfigParamUnion{OfEnabled: &sdk.ThinkingConfigEnabledParam{BudgetTokens: thinkingBudget(effort, p.MaxTokens)}}
+	case conflict != "":
+		// Claude refuses thinking with a forced tool or modified
+		// sampling, so the effort goes alone.
+		p.OutputConfig.Effort = effort
+	default:
+		p.OutputConfig.Effort = effort
+		// Thinking is sent with every effort: Claude 4.6 to 4.8 do not
+		// think without it. Without a summary the thinking text is
+		// omitted, and the signature still comes back.
+		display := sdk.ThinkingConfigAdaptiveDisplayOmitted
+		if r.Summary != "" {
+			display = sdk.ThinkingConfigAdaptiveDisplaySummarized
+		}
+		p.Thinking = sdk.ThinkingConfigParamUnion{OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{Display: display}}
 	}
 	return nil
+}
+
+// thinkingConflict returns the request parameter Claude refuses
+// thinking with, or "": a forced tool (tool_choice required or a named
+// function), a temperature other than 1, a top_p below 0.95, or top_k
+// (anthropic.top_k). The README's table says what each encoding does
+// then.
+func thinkingConflict(req openresponses.Request) string {
+	switch {
+	case req.ToolChoice.Function != nil || req.ToolChoice.Mode == openresponses.ToolChoiceRequired:
+		return "tool_choice"
+	case req.Temperature != nil && *req.Temperature != 1:
+		return "temperature"
+	case req.TopP != nil && *req.TopP < 0.95:
+		return "top_p"
+	}
+	if _, ok := req.Extra[slug+"top_k"]; ok {
+		return slug + "top_k"
+	}
+	return ""
+}
+
+// thinkingBudgets are the budget_tokens sent for each effort under
+// [ThinkingBudget]. Each is below [DefaultMaxTokens], and 1024 is the
+// API's minimum.
+var thinkingBudgets = map[sdk.OutputConfigEffort]int64{
+	sdk.OutputConfigEffortLow:    1024,
+	sdk.OutputConfigEffortMedium: 4096,
+	sdk.OutputConfigEffortHigh:   16384,
+	sdk.OutputConfigEffortXhigh:  24576,
+	sdk.OutputConfigEffortMax:    32000,
+}
+
+// thinkingBudget returns the budget for effort, lowered below maxTokens
+// as the API requires, but never below the API's minimum of 1024: a
+// max_tokens that leaves no room for that is the API's to refuse.
+func thinkingBudget(effort sdk.OutputConfigEffort, maxTokens int64) int64 {
+	b := thinkingBudgets[effort]
+	if b >= maxTokens {
+		b = max(maxTokens-1, 1024)
+	}
+	return b
+}
+
+// thinkingFor derives the effort encoding from a model ID, for
+// [ThinkingAuto], by the README's table. The family is the first of
+// opus, sonnet, haiku, fable and mythos after "claude-"; the version is
+// the first number after "claude-" and the one after it when that is a
+// one- or two-digit minor version, with - or . between them. So
+// claude-opus-4-5, claude-opus-4.5 (OpenRouter's form),
+// claude-3-7-sonnet-20250219, claude-sonnet-4@20250514 and
+// us.anthropic.claude-haiku-4-5-20251001-v1:0 all read. An ID that names
+// no version is taken to take adaptive thinking with none disabled,
+// which most current models accept.
+func thinkingFor(model string) Thinking {
+	i := strings.Index(model, "claude-")
+	if i < 0 {
+		return ThinkingAdaptive
+	}
+	name := model[i+len("claude-"):]
+	if j := strings.IndexAny(name, "@[:"); j >= 0 {
+		name = name[:j]
+	}
+	family := ""
+	major, minor := -1, 0
+	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '-' || r == '.' })
+	for k, part := range parts {
+		switch part {
+		case "opus", "sonnet", "haiku", "fable", "mythos":
+			if family == "" {
+				family = part
+			}
+		}
+		if major >= 0 {
+			continue
+		}
+		if n, ok := version(part); ok {
+			major = n
+			if k+1 < len(parts) {
+				if m, ok := version(parts[k+1]); ok {
+					minor = m
+				}
+			}
+		}
+	}
+	atLeast := func(maj, min int) bool { return major > maj || major == maj && minor >= min }
+	switch {
+	case family == "fable" || family == "mythos":
+		// Always on, Mythos Preview included.
+		return ThinkingAlwaysOn
+	case major < 0:
+		return ThinkingAdaptive
+	case !atLeast(4, 6):
+		return ThinkingBudget
+	case family == "opus" && atLeast(5, 5):
+		return ThinkingAlwaysOn
+	case family == "sonnet" && atLeast(5, 5):
+		return ThinkingBetweenTools
+	}
+	return ThinkingAdaptive
+}
+
+// version reads a one- or two-digit version number; a date such as
+// 20250514 is not one.
+func version(s string) (int, bool) {
+	if len(s) == 0 || len(s) > 2 {
+		return 0, false
+	}
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, true
 }
 
 // encodeTools maps function tools and passes anthropic.* tools through:
@@ -256,8 +481,10 @@ func encodeToolChoice(c openresponses.ToolChoice, disableParallel bool) (sdk.Too
 // joins one user message; everything the assistant produced (messages,
 // function calls, reasoning, extension blocks) joins one assistant
 // message, so a tool result always directly follows the message that
-// called it. System and developer messages are returned separately for
-// the system prompt.
+// called it. System and developer messages before every other item are
+// returned separately for the system prompt; a later one stays where it
+// is, as user text, so the system prompt and the cached prefix it
+// starts do not change.
 func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system []sdk.TextBlockParam, err error) {
 	add := func(role sdk.MessageParamRole, blocks []sdk.ContentBlockParamUnion) {
 		if len(blocks) == 0 {
@@ -269,8 +496,13 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 		}
 		messages = append(messages, sdk.MessageParam{Role: role, Content: blocks})
 	}
+	leading := true // no item but system and developer messages yet
 	for i, item := range items {
 		p := fmt.Sprintf("input[%d]", i)
+		msg, isMessage := item.(*openresponses.Message)
+		if !isMessage || msg.Role != openresponses.RoleSystem && msg.Role != openresponses.RoleDeveloper {
+			leading = false
+		}
 		switch it := item.(type) {
 		case *openresponses.Message:
 			blocks, err := encodeBlocks(it.Content, p+".content")
@@ -283,6 +515,10 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			case openresponses.RoleAssistant:
 				add(sdk.MessageParamRoleAssistant, blocks)
 			case openresponses.RoleSystem, openresponses.RoleDeveloper:
+				if !leading {
+					add(sdk.MessageParamRoleUser, blocks)
+					continue
+				}
 				for j, b := range blocks {
 					if b.OfText == nil {
 						return nil, nil, unsupported(fmt.Sprintf("%s.content[%d].type", p, j))
@@ -297,7 +533,7 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			if err != nil {
 				return nil, nil, invalid(p+".arguments", "arguments is not a JSON object: "+err.Error())
 			}
-			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{sdk.NewToolUseBlock(it.CallID, input, it.Name)})
+			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{sdk.NewToolUseBlock(toolUseID(it.CallID), input, it.Name)})
 		case *openresponses.FunctionCallOutput:
 			block, err := encodeFunctionOutput(it, p+".output")
 			if err != nil {
@@ -305,6 +541,11 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			}
 			add(sdk.MessageParamRoleUser, []sdk.ContentBlockParamUnion{block})
 		case *openresponses.ReasoningItem:
+			if !replayable(it) {
+				// Claude refuses a thinking block it did not sign; see
+				// replayable.
+				continue
+			}
 			// A thinking block is its text and its signature, both returned
 			// unchanged. The text lives in the summary (see decoder).
 			text := it.Summary.Text()
@@ -313,7 +554,7 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			}
 			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{sdk.NewThinkingBlock(it.EncryptedContent, text)})
 		case *openresponses.UnknownItem:
-			block, err := extensionBlock(it)
+			block, err := extensionBlock(it.Type, it.Raw)
 			if err != nil {
 				return nil, nil, invalid(p, err.Error())
 			}
@@ -327,7 +568,67 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			return nil, nil, unsupported(p + ".type")
 		}
 	}
+	for i, m := range messages {
+		if m.Role == sdk.MessageParamRoleUser {
+			messages[i].Content = toolResultsFirst(m.Content)
+		}
+	}
 	return messages, system, nil
+}
+
+// toolResultsFirst orders a user turn the way Claude requires: every
+// tool_result block first, then the other blocks, each kind in input
+// order. A note or message that arrived between function outputs then
+// follows them all.
+func toolResultsFirst(blocks []sdk.ContentBlockParamUnion) []sdk.ContentBlockParamUnion {
+	out := make([]sdk.ContentBlockParamUnion, 0, len(blocks))
+	for _, b := range blocks {
+		if b.OfToolResult != nil {
+			out = append(out, b)
+		}
+	}
+	for _, b := range blocks {
+		if b.OfToolResult == nil {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// replayable reports whether a reasoning item goes back to Claude as a
+// thinking block (docs/extensions.md, section 4). An item this adapter
+// issued does, and so does one with no issuer, as items recorded before
+// the issuer member carry none. An item another issuer stamped does not,
+// and neither does one without encrypted_content, which is never a
+// signature. Claude's signatures and the base64 the Gemini adapter
+// writes cannot be told apart, so an item with no issuer is not
+// otherwise inspected.
+func replayable(it *openresponses.ReasoningItem) bool {
+	if it.EncryptedContent == "" {
+		return false
+	}
+	switch it.Issuer() {
+	case "", issuer:
+		return true
+	}
+	return false
+}
+
+// toolUseID returns the id a call_id is sent as. Claude holds tool_use
+// ids to ^[a-zA-Z0-9_-]+$, and other servers mint call_ids outside it
+// (functions.read:0), so such an id is rewritten to call_ followed by
+// the first 24 hex digits of its SHA-256. The function is the same for
+// the call and its output, so they still pair; an id the pattern accepts
+// passes unchanged. Responses carry Claude's own ids, so a rewritten id
+// never appears in one.
+func toolUseID(callID string) string {
+	if callID != "" && strings.IndexFunc(callID, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-')
+	}) < 0 {
+		return callID
+	}
+	sum := sha256.Sum256([]byte(callID))
+	return "call_" + hex.EncodeToString(sum[:])[:24]
 }
 
 func decodeArguments(s string) (map[string]any, error) {
@@ -343,9 +644,10 @@ func decodeArguments(s string) (map[string]any, error) {
 
 // encodeFunctionOutput builds the tool_result block. Text and media parts
 // are carried as content; the tool_use_id is the call_id, which is the
-// id Claude issued when the call came from this adapter.
+// id Claude issued when the call came from this adapter, rewritten as
+// [toolUseID] says when it is not.
 func encodeFunctionOutput(out *openresponses.FunctionCallOutput, p string) (sdk.ContentBlockParamUnion, error) {
-	result := sdk.ToolResultBlockParam{ToolUseID: out.CallID}
+	result := sdk.ToolResultBlockParam{ToolUseID: toolUseID(out.CallID)}
 	if out.Output.Parts == nil {
 		if out.Output.Text != "" {
 			result.Content = []sdk.ToolResultBlockParamContentUnion{{OfText: &sdk.TextBlockParam{Text: out.Output.Text}}}
@@ -378,6 +680,15 @@ func encodeFunctionOutput(out *openresponses.FunctionCallOutput, p string) (sdk.
 			case block.OfImage != nil:
 				result.Content = append(result.Content, sdk.ToolResultBlockParamContentUnion{OfImage: block.OfImage})
 			}
+		case *openresponses.UnknownContent:
+			block, err := extensionBlock(c.Type, c.Raw)
+			if err != nil {
+				return sdk.ContentBlockParamUnion{}, invalid(pp, err.Error())
+			}
+			if block == nil {
+				return sdk.ContentBlockParamUnion{}, unsupported(pp + ".type")
+			}
+			result.Content = append(result.Content, param.Override[sdk.ToolResultBlockParamContentUnion](block))
 		default:
 			return sdk.ContentBlockParamUnion{}, unsupported(pp + ".type")
 		}
@@ -385,27 +696,28 @@ func encodeFunctionOutput(out *openresponses.FunctionCallOutput, p string) (sdk.
 	return sdk.ContentBlockParamUnion{OfToolResult: &result}, nil
 }
 
-// extensionBlock returns the block an anthropic.* item carries: the item
-// is {"type": "anthropic.<block type>", ..., "block": <block>}. It
-// returns nil, nil for an item without the slug.
-func extensionBlock(u *openresponses.UnknownItem) (json.RawMessage, error) {
-	if !strings.HasPrefix(u.Type, slug) {
+// extensionBlock returns the block an anthropic.* item or content part
+// carries: either is {"type": "anthropic.<block type>", ..., "block":
+// <block>}. It returns nil, nil for a type without the slug.
+func extensionBlock(typ string, raw json.RawMessage) (json.RawMessage, error) {
+	if !strings.HasPrefix(typ, slug) {
 		return nil, nil
 	}
 	var wrapper struct {
 		Block json.RawMessage `json:"block"`
 	}
-	if err := json.Unmarshal(u.Raw, &wrapper); err != nil {
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
 		return nil, err
 	}
-	if len(wrapper.Block) == 0 || !json.Valid(wrapper.Block) {
-		return nil, fmt.Errorf("%s item has no block", u.Type)
+	if len(wrapper.Block) == 0 || !json.Valid(wrapper.Block) || string(wrapper.Block) == "null" {
+		return nil, fmt.Errorf("%s has no block", typ)
 	}
 	return wrapper.Block, nil
 }
 
 // encodeBlocks maps message content. Text of any flavour is a text
-// block; images and files become image and document blocks.
+// block; images and files become image and document blocks; an
+// anthropic.* part is the block it carries.
 func encodeBlocks(contents openresponses.Contents, p string) ([]sdk.ContentBlockParamUnion, error) {
 	blocks := make([]sdk.ContentBlockParamUnion, 0, len(contents))
 	for j, content := range contents {
@@ -433,6 +745,15 @@ func encodeBlocks(contents openresponses.Contents, p string) ([]sdk.ContentBlock
 			blocks = append(blocks, block)
 		case *openresponses.InputVideo:
 			return nil, unsupported(pp + ".type")
+		case *openresponses.UnknownContent:
+			block, err := extensionBlock(c.Type, c.Raw)
+			if err != nil {
+				return nil, invalid(pp, err.Error())
+			}
+			if block == nil {
+				return nil, unsupported(pp + ".type")
+			}
+			blocks = append(blocks, param.Override[sdk.ContentBlockParamUnion](block))
 		default:
 			return nil, unsupported(pp + ".type")
 		}

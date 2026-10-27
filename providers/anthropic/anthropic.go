@@ -42,9 +42,19 @@ type Adapter struct {
 	openresponses.UnsupportedCompaction
 
 	messages      sdk.MessageService
-	maxTokens     int64
+	models        *sdk.ModelService // nil without WithModels
 	continuations int
-	cacheTTL      sdk.CacheControlEphemeralTTL
+	config
+}
+
+// config holds the settings the request encoder reads.
+type config struct {
+	maxTokens int64
+	cacheTTL  sdk.CacheControlEphemeralTTL
+	thinking  Thinking
+	// forwardExtra sends the request's unknown top-level members; see
+	// [WithExtra].
+	forwardExtra bool
 }
 
 var _ openresponses.Adapter = (*Adapter)(nil)
@@ -75,10 +85,54 @@ func WithCacheTTL(ttl sdk.CacheControlEphemeralTTL) Option {
 	return func(a *Adapter) { a.cacheTTL = ttl }
 }
 
+// Thinking selects how reasoning.effort is encoded. Claude models differ
+// in the thinking types they take and refuse the others, so the encoding
+// is chosen per model; the README has the table.
+type Thinking int
+
+const (
+	// ThinkingAuto derives the encoding from the model ID, by the
+	// README's table.
+	ThinkingAuto Thinking = iota
+	// ThinkingBudget sends an effort as thinking enabled with a
+	// budget_tokens from the README's table, and none as thinking
+	// disabled. output_config.effort is not sent. Claude before 4.6.
+	ThinkingBudget
+	// ThinkingAdaptive sends an effort as output_config.effort with
+	// adaptive thinking, and none as thinking disabled.
+	ThinkingAdaptive
+	// ThinkingBetweenTools is ThinkingAdaptive with none sent as thinking
+	// between_tools, which Claude Sonnet 5.5 takes in place of disabled.
+	ThinkingBetweenTools
+	// ThinkingAlwaysOn is ThinkingAdaptive for a model that cannot turn
+	// thinking off (Claude Opus 5.5, Fable, Mythos): none is refused with
+	// invalid_request rather than sent to fail.
+	ThinkingAlwaysOn
+)
+
+// WithThinking fixes the reasoning.effort encoding rather than deriving
+// it from the model ID. Set it for an ID that does not say which model
+// it serves, such as a Bedrock inference profile ARN.
+func WithThinking(t Thinking) Option {
+	return func(a *Adapter) { a.thinking = t }
+}
+
+// WithExtra forwards the request's unknown top-level members (Extra)
+// into the Messages request as they are, for parameters the mapping does
+// not cover. Fields the mapping sets are never overridden. Members under
+// a slug are never forwarded: anthropic. members are always sent, as the
+// README defines them, shared openresponses-experimental. members are
+// read or ignored, and another provider's are refused. Any member a
+// client sends then reaches Claude, so a server that does not trust its
+// clients should filter Extra first.
+func WithExtra() Option {
+	return func(a *Adapter) { a.forwardExtra = true }
+}
+
 // New returns an adapter over messages, the Messages field of any client
 // the SDK builds.
 func New(messages sdk.MessageService, opts ...Option) *Adapter {
-	a := &Adapter{messages: messages, maxTokens: DefaultMaxTokens, continuations: DefaultContinuations}
+	a := &Adapter{messages: messages, continuations: DefaultContinuations, config: config{maxTokens: DefaultMaxTokens}}
 	for _, opt := range opts {
 		opt(a)
 	}

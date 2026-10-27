@@ -160,6 +160,20 @@ func TestThinkingRoundTrip(t *testing.T) {
 	if !ok || rs.Summary.Text() != "Let me think." || rs.EncryptedContent != "c2lnbmF0dXJl" {
 		t.Fatalf("reasoning = %+v", out[0])
 	}
+	if rs.Issuer() != "anthropic" {
+		t.Fatalf("issuer = %q, want anthropic", rs.Issuer())
+	}
+	for _, ev := range sink.Events() {
+		if added, ok := ev.(*openresponses.OutputItemAddedEvent); ok && added.OutputIndex == 0 {
+			data, err := json.Marshal(added)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), `"openresponses-experimental.issuer":"anthropic"`) {
+				t.Fatalf("output_item.added = %s, want the issuer", data)
+			}
+		}
+	}
 	messages, _, err := encodeInput(out)
 	if err != nil {
 		t.Fatal(err)
@@ -277,18 +291,41 @@ func TestStreamStopReasons(t *testing.T) {
 		t.Fatalf("message = %+v", msg)
 	}
 
-	sink = run(t, hello(), msgStart,
+	// A refusal is a content filter: incomplete, with Claude's
+	// explanation as the refusal part and its category under the slug.
+	sink = run(t, hello(), msgStart, textStart, textDelta(0, "Sure, "), textStop,
 		`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":"cyber","explanation":"No."}},"usage":{"output_tokens":1}}`, msgStop)
 	resp = sink.Response()
 	msg := resp.Output[0].(*openresponses.Message)
-	if resp.Status != openresponses.ResponseStatusCompleted || len(msg.Content) != 1 {
-		t.Fatalf("refusal = %+v", resp)
+	if resp.Status != openresponses.ResponseStatusIncomplete || resp.IncompleteDetails.Reason != openresponses.IncompleteReasonContentFilter || len(msg.Content) != 2 {
+		t.Fatalf("refusal = %+v %+v", resp.Status, resp.IncompleteDetails)
 	}
-	if r, ok := msg.Content[0].(*openresponses.Refusal); !ok || r.Refusal != "No." {
-		t.Fatalf("refusal part = %+v", msg.Content[0])
+	if r, ok := msg.Content[1].(*openresponses.Refusal); !ok || r.Refusal != "No." {
+		t.Fatalf("refusal part = %+v", msg.Content[1])
+	}
+	var incomplete *openresponses.ResponseIncompleteEvent
+	for _, ev := range sink.Events() {
+		if e, ok := ev.(*openresponses.ResponseIncompleteEvent); ok {
+			incomplete = e
+		}
+	}
+	data, err := json.Marshal(incomplete)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"anthropic.refusal_category":"cyber"`) {
+		t.Fatalf("response.incomplete = %s", data)
 	}
 
-	_, err := streamtest.Run(context.Background(), newAdapter(t, sse(msgStart, textStart, textDelta(0, "x"), textStop)), hello())
+	// Without an explanation the adapter writes no refusal text.
+	sink = run(t, hello(), msgStart,
+		`{"type":"message_delta","delta":{"stop_reason":"refusal","stop_sequence":null,"stop_details":{"type":"refusal","category":null,"explanation":null}},"usage":{"output_tokens":1}}`, msgStop)
+	resp = sink.Response()
+	if resp.Status != openresponses.ResponseStatusIncomplete || len(resp.Output) != 0 || resp.IncompleteDetails.Extra[refusalCategoryMember] != nil {
+		t.Fatalf("refusal without explanation = %+v %+v", resp.Output, resp.IncompleteDetails)
+	}
+
+	_, err = streamtest.Run(context.Background(), newAdapter(t, sse(msgStart, textStart, textDelta(0, "x"), textStop)), hello())
 	wantErr(t, err, "truncated_stream", "")
 }
 
@@ -445,6 +482,9 @@ func TestMapError(t *testing.T) {
 		{"authentication", 401, `{"type":"error","error":{"type":"authentication_error","message":"key"}}`, nil, openresponses.ErrorTypeInvalidRequest, "authentication_error", "key", ""},
 		{"not found", 404, `{"type":"error","error":{"type":"not_found_error","message":"no model"}}`, nil, openresponses.ErrorTypeNotFound, "not_found_error", "no model", ""},
 		{"overloaded", 529, `{"type":"error","error":{"type":"overloaded_error","message":"busy"}}`, nil, openresponses.ErrorTypeServerError, "overloaded_error", "busy", ""},
+		{"permission", 403, `{"type":"error","error":{"type":"permission_error","message":"no access"}}`, nil, openresponses.ErrorTypeInvalidRequest, "permission_error", "no access", ""},
+		{"unknown type", 503, `{"type":"error","error":{"type":"new_error","message":"down"}}`, nil, openresponses.ErrorTypeServerError, "new_error", "down", ""},
+		{"context overflow", 400, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215000 tokens > 200000 maximum"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "prompt is too long: 215000 tokens > 200000 maximum", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -466,6 +506,100 @@ func TestMapError(t *testing.T) {
 	}
 }
 
+// TestStreamErrorEvent covers an error event inside a 200 stream: it maps
+// as the same error type does as an HTTP status, and never keeps the
+// stream's 200.
+func TestStreamErrorEvent(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		typ    openresponses.ErrorType
+		code   string
+		status int
+	}{
+		{"overloaded", `{"type":"overloaded_error","message":"Overloaded"}`, openresponses.ErrorTypeServerError, "overloaded_error", 529},
+		{"rate limited", `{"type":"rate_limit_error","message":"slow down"}`, openresponses.ErrorTypeTooManyRequests, "rate_limit_error", 429},
+		{"api error", `{"type":"api_error","message":"oops"}`, openresponses.ErrorTypeServerError, "api_error", 500},
+		{"unknown type", `{"type":"new_error","message":"?"}`, openresponses.ErrorTypeServerError, "new_error", 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := streamtest.Run(context.Background(), newAdapter(t, sse(msgStart, `{"type":"error","error":`+tc.body+`}`)), hello())
+			var oerr *openresponses.Error
+			if !errorsAs(err, &oerr) {
+				t.Fatalf("err = %v", err)
+			}
+			if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != tc.status {
+				t.Fatalf("err = %s/%s/%d, want %s/%s/%d", oerr.Type, oerr.Code, oerr.HTTPStatus(), tc.typ, tc.code, tc.status)
+			}
+		})
+	}
+}
+
+// TestStreamCacheWrites covers cache writes: counted in input_tokens and
+// reported as the shared members, split by TTL when Claude splits them,
+// and summed across resumed turns.
+func TestStreamCacheWrites(t *testing.T) {
+	start := func(creation string) string {
+		return `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":4,` + creation + `}}}`
+	}
+	split := start(`"cache_creation_input_tokens":2100,"cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":2000}`)
+
+	u := run(t, hello(), split, textStart, textDelta(0, "x"), textStop, endTurn, msgStop).Response().Usage
+	if u.InputTokens != 2114 || u.InputTokensDetails.CachedTokens != 4 {
+		t.Fatalf("usage = %+v", u)
+	}
+	if n, ok := u.InputTokensDetails.CacheWriteTokens(); !ok || n != 2100 {
+		t.Fatalf("cache_write_tokens = %d, %v", n, ok)
+	}
+	if byTTL, ok := u.InputTokensDetails.CacheWriteTokensByTTL(); !ok || len(byTTL) != 2 || byTTL["5m"] != 100 || byTTL["1h"] != 2000 {
+		t.Fatalf("cache_write_tokens_by_ttl = %v, %v", byTTL, ok)
+	}
+
+	// No split: the count alone. No writes: neither member.
+	u = run(t, hello(), msgStart, textStart, textDelta(0, "x"), textStop, endTurn, msgStop).Response().Usage
+	if n, ok := u.InputTokensDetails.CacheWriteTokens(); !ok || n != 2 {
+		t.Fatalf("cache_write_tokens = %d, %v", n, ok)
+	}
+	if _, ok := u.InputTokensDetails.CacheWriteTokensByTTL(); ok {
+		t.Fatalf("a split Claude did not report: %v", u.InputTokensDetails.Extra)
+	}
+	u = run(t, hello(), start(`"cache_creation_input_tokens":0`), textStart, textDelta(0, "x"), textStop, endTurn, msgStop).Response().Usage
+	if len(u.InputTokensDetails.Extra) != 0 {
+		t.Fatalf("no writes, members %v", u.InputTokensDetails.Extra)
+	}
+
+	// Summed across a resumed turn.
+	var turns int
+	var mu sync.Mutex
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		turns++
+		n := turns
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/event-stream")
+		if n == 1 {
+			writeSSE(w, split,
+				`{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}`,
+				textStop,
+				`{"type":"message_delta","delta":{"stop_reason":"pause_turn","stop_sequence":null},"usage":{"output_tokens":3}}`, msgStop)
+			return
+		}
+		writeSSE(w, start(`"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_5m_input_tokens":50,"ephemeral_1h_input_tokens":0}`), textStart, textDelta(0, "Done."), textStop, endTurn, msgStop)
+	})
+	sink, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+	if err != nil {
+		t.Fatal(err)
+	}
+	u = sink.Response().Usage
+	if n, _ := u.InputTokensDetails.CacheWriteTokens(); n != 2150 {
+		t.Fatalf("cache_write_tokens = %d, want both turns", n)
+	}
+	if byTTL, _ := u.InputTokensDetails.CacheWriteTokensByTTL(); byTTL["5m"] != 150 || byTTL["1h"] != 2000 {
+		t.Fatalf("cache_write_tokens_by_ttl = %v", byTTL)
+	}
+}
+
 // WithCacheTTL reaches the request the adapter sends.
 func TestWithCacheTTL(t *testing.T) {
 	var body map[string]any
@@ -481,5 +615,37 @@ func TestWithCacheTTL(t *testing.T) {
 	}
 	if cc, _ := body["cache_control"].(map[string]any); cc["type"] != "ephemeral" || cc["ttl"] != "1h" {
 		t.Fatalf("cache_control = %v", body["cache_control"])
+	}
+}
+
+// TestMapErrorWithoutEnvelope covers an error body without Claude's
+// envelope (Vertex, Bedrock, a proxy): the HTTP status decides, as for
+// any upstream.
+func TestMapErrorWithoutEnvelope(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		typ    openresponses.ErrorType
+	}{
+		{"vertex 429", 429, `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"}}`, openresponses.ErrorTypeTooManyRequests},
+		{"bedrock 400", 400, `{"message":"Input is too long for requested model."}`, openresponses.ErrorTypeInvalidRequest},
+		{"vertex 403", 403, `{"error":{"code":403,"message":"Permission denied","status":"PERMISSION_DENIED"}}`, openresponses.ErrorTypeInvalidRequest},
+		{"proxy 401 html", 401, `<html>401</html>`, openresponses.ErrorTypeInvalidRequest},
+		{"proxy 404", 404, `{"detail":"no route"}`, openresponses.ErrorTypeNotFound},
+		{"timeout 408", 408, `{"detail":"slow"}`, openresponses.ErrorTypeServerError},
+		{"bad gateway", 502, `<html>502</html>`, openresponses.ErrorTypeServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := streamtest.Run(context.Background(), newAdapter(t, apiError(tc.status, tc.body, nil)), hello())
+			var oerr *openresponses.Error
+			if !errorsAs(err, &oerr) {
+				t.Fatalf("err = %v", err)
+			}
+			if oerr.Type != tc.typ || oerr.HTTPStatus() != tc.status {
+				t.Fatalf("HTTP %d -> %s/%s/%d, want %s", tc.status, oerr.Type, oerr.Code, oerr.HTTPStatus(), tc.typ)
+			}
+		})
 	}
 }

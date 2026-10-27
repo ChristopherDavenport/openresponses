@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"strings"
 	"unicode/utf8"
@@ -20,11 +21,15 @@ import (
 // (pause_turn) is resumed with its own output replayed, up to the
 // configured number of continuations.
 func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, sink openresponses.EventSink) error {
-	params, err := encodeRequest(req, a.maxTokens, a.cacheTTL)
+	params, err := encodeRequest(req, a.config)
 	if err != nil {
 		return err
 	}
-	d := &decoder{em: openresponses.NewEmitter(sink, openresponses.NewResponse(req))}
+	d := &decoder{}
+	d.em = openresponses.NewEmitter(openresponses.EventSinkFunc(func(ev openresponses.StreamEvent) error {
+		d.annotate(ev)
+		return sink.Send(ev)
+	}), openresponses.NewResponse(req))
 	turnStart := 0
 	for turn := 0; ; turn++ {
 		if err := d.consume(a.messages.NewStreaming(ctx, params)); err != nil {
@@ -46,6 +51,30 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 	return d.finish()
 }
 
+// issuer names this adapter as the issuer of the reasoning items it
+// emits, whose encrypted_content is Claude's thinking signature
+// (docs/extensions.md, section 4).
+const issuer = "anthropic"
+
+// annotate sets the members the Emitter has no call for on an event's
+// item or response before the event is sent, so the event carries them
+// as the final response does.
+func (d *decoder) annotate(ev openresponses.StreamEvent) {
+	switch ev := ev.(type) {
+	case *openresponses.OutputItemAddedEvent:
+		if rs, ok := ev.Item.(*openresponses.ReasoningItem); ok {
+			rs.SetIssuer(issuer)
+		}
+	case *openresponses.ResponseIncompleteEvent:
+		if details := ev.Response.IncompleteDetails; details != nil && d.refusalCategory != "" {
+			if details.Extra == nil {
+				details.Extra = map[string]any{}
+			}
+			details.Extra[refusalCategoryMember] = d.refusalCategory
+		}
+	}
+}
+
 // decoder folds Messages stream events into Emitter calls. At most one
 // writer is open at a time, matching the API's sequential blocks.
 type decoder struct {
@@ -63,10 +92,19 @@ type decoder struct {
 
 	usage       openresponses.Usage // across turns
 	turn        openresponses.Usage // this turn, replaced by message_delta
+	split       *sdk.CacheCreation  // this turn's cache writes by TTL, from message_start
 	stop        sdk.StopReason
 	stopDetails sdk.RefusalStopDetails
 	seen        bool
+	// refusalCategory is the category of a refusal stop, set on
+	// incomplete_details as [refusalCategoryMember].
+	refusalCategory string
 }
+
+// refusalCategoryMember is the incomplete_details member carrying the
+// category Claude gives a refusal stop (cyber, bio, ...). Categories
+// differ by provider, so it is under this adapter's slug.
+const refusalCategoryMember = slug + "refusal_category"
 
 // rawBlock accumulates a block the specification has no item for, so it
 // can be re-emitted whole when it stops: the start event's JSON plus any
@@ -109,8 +147,13 @@ func (d *decoder) event(ev sdk.MessageStreamEventUnion) error {
 				d.em.Response().Model = string(v.Message.Model)
 			}
 		}
+		d.split = nil
+		if v.Message.Usage.JSON.CacheCreation.Valid() {
+			split := v.Message.Usage.CacheCreation
+			d.split = &split
+		}
 		d.turn = usage(v.Message.Usage.InputTokens, v.Message.Usage.CacheReadInputTokens, v.Message.Usage.CacheCreationInputTokens,
-			v.Message.Usage.OutputTokens, v.Message.Usage.OutputTokensDetails.ThinkingTokens)
+			d.split, v.Message.Usage.OutputTokens, v.Message.Usage.OutputTokensDetails.ThinkingTokens)
 		return nil
 	case sdk.ContentBlockStartEvent:
 		return d.startBlock(v)
@@ -122,8 +165,10 @@ func (d *decoder) event(ev sdk.MessageStreamEventUnion) error {
 		d.stop = v.Delta.StopReason
 		d.stopDetails = v.Delta.StopDetails
 		if v.Usage.InputTokens > 0 {
+			// message_delta has no split by TTL; the one from message_start
+			// stands if it still sums to the count.
 			d.turn = usage(v.Usage.InputTokens, v.Usage.CacheReadInputTokens, v.Usage.CacheCreationInputTokens,
-				v.Usage.OutputTokens, v.Usage.OutputTokensDetails.ThinkingTokens)
+				d.split, v.Usage.OutputTokens, v.Usage.OutputTokensDetails.ThinkingTokens)
 		} else {
 			d.turn.OutputTokens = int(v.Usage.OutputTokens)
 			d.turn.OutputTokensDetails.ReasoningTokens = int(v.Usage.OutputTokensDetails.ThinkingTokens)
@@ -383,22 +428,20 @@ func (d *decoder) finish() error {
 	case sdk.StopReasonMaxTokens, sdk.StopReasonModelContextWindowExceeded:
 		return d.em.Incomplete(openresponses.IncompleteReasonMaxOutputTokens)
 	case sdk.StopReasonRefusal:
-		m, err := d.openMessage()
-		if err != nil {
-			return err
-		}
-		text := d.stopDetails.Explanation
-		if text == "" {
-			text = "The request was refused"
-			if d.stopDetails.Category != "" {
-				text += " (" + string(d.stopDetails.Category) + ")"
+		// A safety classifier ended the generation, which is a content
+		// filter. Claude's explanation, when it sends one, is the refusal
+		// part; the adapter writes none of its own.
+		if text := d.stopDetails.Explanation; text != "" {
+			m, err := d.openMessage()
+			if err != nil {
+				return err
 			}
-			text += "."
+			if err := m.Refusal(text); err != nil {
+				return err
+			}
 		}
-		if err := m.Refusal(text); err != nil {
-			return err
-		}
-		return d.em.Complete()
+		d.refusalCategory = string(d.stopDetails.Category)
+		return d.em.Incomplete(openresponses.IncompleteReasonContentFilter)
 	case "":
 		return openresponses.ServerError("truncated_stream", "the Messages stream ended without a stop reason")
 	}
@@ -406,8 +449,10 @@ func (d *decoder) finish() error {
 }
 
 // usage maps token counts. Open Responses counts every input token,
-// cached ones included, in input_tokens.
-func usage(input, cacheRead, cacheCreation, output, thinking int64) openresponses.Usage {
+// cached ones included, in input_tokens. Cache writes are reported as
+// the shared cache_write_tokens member, split by TTL when Claude's split
+// sums to its count.
+func usage(input, cacheRead, cacheCreation int64, split *sdk.CacheCreation, output, thinking int64) openresponses.Usage {
 	u := openresponses.Usage{
 		InputTokens:  int(input + cacheRead + cacheCreation),
 		OutputTokens: int(output),
@@ -415,7 +460,27 @@ func usage(input, cacheRead, cacheCreation, output, thinking int64) openresponse
 	u.InputTokensDetails.CachedTokens = int(cacheRead)
 	u.OutputTokensDetails.ReasoningTokens = int(thinking)
 	u.TotalTokens = u.InputTokens + u.OutputTokens
+	if cacheCreation > 0 {
+		if split != nil && split.Ephemeral5mInputTokens+split.Ephemeral1hInputTokens == cacheCreation {
+			u.InputTokensDetails.SetCacheWriteTokensByTTL(ttlSplit(map[string]int{
+				"5m": int(split.Ephemeral5mInputTokens),
+				"1h": int(split.Ephemeral1hInputTokens),
+			}))
+		} else {
+			u.InputTokensDetails.SetCacheWriteTokens(int(cacheCreation))
+		}
+	}
 	return u
+}
+
+// ttlSplit drops the entries of a split by TTL that wrote nothing.
+func ttlSplit(m map[string]int) map[string]int {
+	for k, n := range m {
+		if n == 0 {
+			delete(m, k)
+		}
+	}
+	return m
 }
 
 func addUsage(a, b openresponses.Usage) openresponses.Usage {
@@ -424,12 +489,39 @@ func addUsage(a, b openresponses.Usage) openresponses.Usage {
 	a.TotalTokens += b.TotalTokens
 	a.InputTokensDetails.CachedTokens += b.InputTokensDetails.CachedTokens
 	a.OutputTokensDetails.ReasoningTokens += b.OutputTokensDetails.ReasoningTokens
+	aw, aok := a.InputTokensDetails.CacheWriteTokens()
+	bw, bok := b.InputTokensDetails.CacheWriteTokens()
+	if !aok && !bok {
+		return a
+	}
+	// A fresh map, so the usage already on the response is not changed.
+	a.InputTokensDetails.Extra = maps.Clone(a.InputTokensDetails.Extra)
+	as, asok := a.InputTokensDetails.CacheWriteTokensByTTL()
+	bs, bsok := b.InputTokensDetails.CacheWriteTokensByTTL()
+	if (!aok || asok) && (!bok || bsok) {
+		sum := map[string]int{}
+		for k, n := range as {
+			sum[k] += n
+		}
+		for k, n := range bs {
+			sum[k] += n
+		}
+		a.InputTokensDetails.SetCacheWriteTokensByTTL(sum)
+	} else {
+		// A turn without the split leaves the sum without one.
+		a.InputTokensDetails.SetCacheWriteTokens(aw + bw)
+	}
 	return a
 }
 
 // mapError converts an SDK error into the matching *openresponses.Error.
-// The HTTP status decides the type, the API's error type is the code,
-// and the headers that describe the failure (Retry-After, the rate-limit
+// The API's error type is the code and decides the type and status, so
+// a failure reads the same whether it came as an HTTP status or as an
+// error event inside a 200 stream: the type is
+// [openresponses.ErrorTypeForStatus] of the type's status. A body without
+// Claude's error type, or with one the table does not know, falls back
+// to the HTTP status by the same rule, and a 2xx status never stands.
+// The headers that describe the failure (Retry-After, the rate-limit
 // family, the request id) travel with it.
 func mapError(err error) error {
 	if err == nil {
@@ -447,22 +539,26 @@ func mapError(err error) error {
 		return openresponses.ServerError("upstream_error", err.Error())
 	}
 	code := string(apiErr.Type())
+	status, known := errorStatus[code]
+	if !known && apiErr.StatusCode >= 300 {
+		// No Claude error type, as from Vertex AI, Bedrock or a proxy, or
+		// one the table does not know: the HTTP status decides.
+		status = apiErr.StatusCode
+	}
 	if code == "" {
 		code = "api_error"
 	}
 	message := apiMessage(apiErr)
 	var out *openresponses.Error
-	switch {
-	case apiErr.StatusCode == http.StatusNotFound:
-		out = openresponses.NotFound(code, message, "")
-	case apiErr.StatusCode == http.StatusTooManyRequests:
-		out = openresponses.TooManyRequests(code, message)
-	case apiErr.StatusCode >= 400 && apiErr.StatusCode < 500:
-		out = openresponses.InvalidRequest(code, message, "")
-	default:
-		out = openresponses.ServerError(code, message)
+	if code == "invalid_request_error" && strings.Contains(strings.ToLower(message), "prompt is too long") {
+		out = openresponses.ContextLengthExceeded(message)
+	} else {
+		// Credential and permission refusals are 401 and 403, so
+		// invalid_request: a retry cannot fix them.
+		out = &openresponses.Error{Type: openresponses.ErrorTypeForStatus(status), Code: code, Message: message}
 	}
-	out.StatusCode = apiErr.StatusCode
+	// Zero leaves the status to the type.
+	out.StatusCode = status
 	if apiErr.Response != nil {
 		for name, values := range apiErr.Response.Header {
 			if !failureHeader(name) {
@@ -474,6 +570,21 @@ func mapError(err error) error {
 		}
 	}
 	return out
+}
+
+// errorStatus is the HTTP status the Messages API gives each error type
+// on a non-streamed response.
+var errorStatus = map[string]int{
+	"invalid_request_error": http.StatusBadRequest,
+	"authentication_error":  http.StatusUnauthorized,
+	"billing_error":         http.StatusPaymentRequired,
+	"permission_error":      http.StatusForbidden,
+	"not_found_error":       http.StatusNotFound,
+	"request_too_large":     http.StatusRequestEntityTooLarge,
+	"rate_limit_error":      http.StatusTooManyRequests,
+	"api_error":             http.StatusInternalServerError,
+	"timeout_error":         http.StatusGatewayTimeout,
+	"overloaded_error":      529,
 }
 
 // failureHeader reports whether a response header describes the failure

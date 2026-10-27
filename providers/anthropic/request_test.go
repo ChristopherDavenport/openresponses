@@ -12,6 +12,9 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 
+// defaults are the settings New gives an adapter.
+var defaults = config{maxTokens: DefaultMaxTokens}
+
 func errorsAs(err error, target **openresponses.Error) bool { return errors.As(err, target) }
 
 // wantErr asserts err is an *openresponses.Error with the given code and
@@ -29,7 +32,7 @@ func wantErr(t *testing.T, err error, code, param string) {
 
 func encode(t *testing.T, req openresponses.Request) sdk.MessageNewParams {
 	t.Helper()
-	p, err := encodeRequest(req, DefaultMaxTokens, "")
+	p, err := encodeRequest(req, defaults)
 	if err != nil {
 		t.Fatalf("encodeRequest: %v", err)
 	}
@@ -56,8 +59,8 @@ func TestEncodeSystem(t *testing.T) {
 		Instructions: "Be brief.",
 		Input: openresponses.Items{
 			openresponses.SystemText("You are a pirate."),
-			openresponses.UserText("Hello"),
 			openresponses.DeveloperText("Answer in French."),
+			openresponses.UserText("Hello"),
 		},
 	})
 	var got []string
@@ -72,6 +75,34 @@ func TestEncodeSystem(t *testing.T) {
 	}
 	if p.MaxTokens != DefaultMaxTokens || p.Model != "claude-opus-5" {
 		t.Fatalf("max_tokens/model = %d/%s", p.MaxTokens, p.Model)
+	}
+}
+
+// TestEncodeLateSystem covers a system or developer message after another
+// item: it stays in place as user text, and the system prompt is only
+// what came before.
+func TestEncodeLateSystem(t *testing.T) {
+	p := encode(t, openresponses.Request{Input: openresponses.Items{
+		openresponses.DeveloperText("You are dax."),
+		openresponses.UserText("Read a.go"),
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "read", Arguments: `{}`},
+		openresponses.NewFunctionCallOutput("toolu_1", "package a"),
+		openresponses.DeveloperText("The policy allowed read."),
+		openresponses.AssistantText("Done."),
+		openresponses.SystemText("Be brief."),
+	}})
+	if len(p.System) != 1 || p.System[0].Text != "You are dax." {
+		t.Fatalf("system = %+v", p.System)
+	}
+	if len(p.Messages) != 5 {
+		t.Fatalf("got %d messages, want 5", len(p.Messages))
+	}
+	tools := p.Messages[2]
+	if tools.Role != sdk.MessageParamRoleUser || len(tools.Content) != 2 || tools.Content[0].OfToolResult == nil || tools.Content[1].OfText.Text != "The policy allowed read." {
+		t.Fatalf("note after the tool result = %+v", tools)
+	}
+	if last := p.Messages[4]; last.Role != sdk.MessageParamRoleUser || last.Content[0].OfText.Text != "Be brief." {
+		t.Fatalf("trailing system message = %+v", last)
 	}
 }
 
@@ -187,6 +218,9 @@ func TestEncodeInputErrors(t *testing.T) {
 		{"item reference", openresponses.Items{&openresponses.ItemReference{ID: "msg_1"}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"foreign item", openresponses.Items{&openresponses.UnknownItem{Type: "gemini.executable_code", Raw: json.RawMessage(`{"type":"gemini.executable_code"}`)}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"extension without block", openresponses.Items{&openresponses.UnknownItem{Type: "anthropic.server_tool_use", Raw: json.RawMessage(`{"type":"anthropic.server_tool_use"}`)}}, openresponses.CodeInvalidValue, "input[0]"},
+		{"foreign part", openresponses.Items{openresponses.UserMessage(&openresponses.UnknownContent{Type: "gemini.thought", Raw: json.RawMessage(`{"type":"gemini.thought","part":{}}`)})}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
+		{"part without block", openresponses.Items{&openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{&openresponses.UnknownContent{Type: "anthropic.tool_reference", Raw: json.RawMessage(`{"type":"anthropic.tool_reference"}`)}}}}}, openresponses.CodeInvalidValue, "input[0].output[0]"},
+		{"part in the system prompt", openresponses.Items{&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{&openresponses.UnknownContent{Type: "anthropic.tool_reference", Raw: json.RawMessage(`{"type":"anthropic.tool_reference","block":{"type":"tool_reference","tool_name":"x"}}`)}}}}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
 		{"system image", openresponses.Items{&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{&openresponses.InputImage{ImageURL: "data:image/png;base64,aGk="}}}}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
 		{"bare base64 without filename", openresponses.Items{openresponses.UserMessage(&openresponses.InputFile{FileData: "aGk="})}, openresponses.CodeInvalidValue, "input[0].content[0].filename"},
 		{"unsupported file type", openresponses.Items{openresponses.UserMessage(&openresponses.InputFile{Filename: "a.zip", FileData: "aGk="})}, openresponses.CodeInvalidValue, "input[0].content[0].file_data"},
@@ -194,11 +228,11 @@ func TestEncodeInputErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := encodeRequest(openresponses.Request{Input: tc.input}, DefaultMaxTokens, "")
+			_, err := encodeRequest(openresponses.Request{Input: tc.input}, defaults)
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
-	_, err := encodeRequest(openresponses.Request{PreviousResponseID: "resp_1"}, DefaultMaxTokens, "")
+	_, err := encodeRequest(openresponses.Request{PreviousResponseID: "resp_1"}, defaults)
 	wantErr(t, err, openresponses.CodePreviousResponseNotFound, "previous_response_id")
 }
 
@@ -216,6 +250,27 @@ func TestEncodeExtensionItem(t *testing.T) {
 	}
 }
 
+// TestEncodeExtensionPart covers an anthropic.<block type> content part:
+// it is sent as the block it carries, in a tool result and in a message.
+func TestEncodeExtensionPart(t *testing.T) {
+	ref := &openresponses.UnknownContent{Type: "anthropic.tool_reference", Raw: json.RawMessage(
+		`{"type":"anthropic.tool_reference","block":{"type":"tool_reference","tool_name":"get_weather"}}`)}
+	p := encode(t, openresponses.Request{Input: openresponses.Items{
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "tool_search", Arguments: `{}`},
+		&openresponses.FunctionCallOutput{CallID: "toolu_1", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{ref}}},
+		openresponses.UserMessage(&openresponses.InputText{Text: "and"}, ref),
+	}})
+	body := wire(t, p)
+	user := body["messages"].([]any)[1].(map[string]any)["content"].([]any)
+	result := user[0].(map[string]any)["content"].([]any)[0].(map[string]any)
+	if result["type"] != "tool_reference" || result["tool_name"] != "get_weather" {
+		t.Fatalf("tool result content = %v", result)
+	}
+	if b := user[2].(map[string]any); b["type"] != "tool_reference" || b["tool_name"] != "get_weather" {
+		t.Fatalf("message content = %v", b)
+	}
+}
+
 func TestEncodeConfig(t *testing.T) {
 	p := encode(t, openresponses.Request{
 		MaxOutputTokens:  ptr(256),
@@ -225,7 +280,7 @@ func TestEncodeConfig(t *testing.T) {
 		PromptCacheKey:   "k",
 		ServiceTier:      openresponses.ServiceTierDefault,
 		Metadata:         map[string]string{"team": "a"},
-		Reasoning:        openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh, Summary: openresponses.ReasoningSummaryAuto},
+		Reasoning:        openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh},
 		Text:             openresponses.TextConfig{Format: openresponses.JSONSchemaFormat("out", json.RawMessage(`{"type":"object"}`), true)},
 	})
 	body := wire(t, p)
@@ -245,21 +300,11 @@ func TestEncodeConfig(t *testing.T) {
 	if oc["effort"] != "xhigh" || oc["format"].(map[string]any)["type"] != "json_schema" {
 		t.Fatalf("output_config = %v", oc)
 	}
-	th := body["thinking"].(map[string]any)
-	if th["type"] != "adaptive" || th["display"] != "summarized" {
-		t.Fatalf("thinking = %v", th)
+	if th, ok := body["thinking"]; ok {
+		t.Fatalf("thinking with temperature 0.5 = %v, want the effort alone", th)
 	}
 	if _, ok := body["labels"]; ok {
 		t.Fatalf("metadata must not be sent upstream: %v", body)
-	}
-
-	p = encode(t, openresponses.Request{Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}})
-	if body := wire(t, p); body["thinking"].(map[string]any)["type"] != "disabled" {
-		t.Fatalf("effort none = %v", body["thinking"])
-	}
-	p = encode(t, openresponses.Request{Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortMinimal}})
-	if body := wire(t, p); body["output_config"].(map[string]any)["effort"] != "low" {
-		t.Fatalf("effort minimal = %v", body["output_config"])
 	}
 
 	p = encode(t, openresponses.Request{})
@@ -289,7 +334,7 @@ func TestEncodeCacheTTL(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p, err := encodeRequest(openresponses.Request{PromptCacheKey: tc.key}, DefaultMaxTokens, tc.ttl)
+			p, err := encodeRequest(openresponses.Request{PromptCacheKey: tc.key}, config{maxTokens: DefaultMaxTokens, cacheTTL: tc.ttl})
 			if err != nil {
 				t.Fatalf("encodeRequest: %v", err)
 			}
@@ -332,7 +377,7 @@ func TestEncodeConfigErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := encodeRequest(tc.req, DefaultMaxTokens, "")
+			_, err := encodeRequest(tc.req, defaults)
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
@@ -374,7 +419,7 @@ func TestEncodeTools(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := encodeRequest(openresponses.Request{Tools: openresponses.Tools{tc.tool}}, DefaultMaxTokens, "")
+			_, err := encodeRequest(openresponses.Request{Tools: openresponses.Tools{tc.tool}}, defaults)
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
@@ -410,5 +455,308 @@ func TestEncodeToolChoice(t *testing.T) {
 	}
 	if _, ok := wire(t, encode(t, openresponses.Request{ParallelToolCalls: ptr(true)}))["tool_choice"]; ok {
 		t.Fatal("parallel_tool_calls: true should not add a tool_choice")
+	}
+}
+
+// TestEncodeReasoning covers the effort table in the README: one row per
+// encoding, picked from the model ID or fixed by WithThinking.
+func TestEncodeReasoning(t *testing.T) {
+	maxEffort := openresponses.ReasoningConfig{}
+	maxEffort.SetExtendedEffort(openresponses.EffortMax)
+	cases := []struct {
+		name      string
+		model     string
+		thinking  Thinking
+		maxTokens *int
+		reasoning openresponses.ReasoningConfig
+		want      map[string]any // thinking, or nil for none sent
+		effort    string         // output_config.effort, or "" for none sent
+	}{
+		{"none on Sonnet 5.5", "claude-sonnet-5-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "between_tools"}, ""},
+		{"none on Haiku 5.5", "claude-haiku-5-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
+		{"none on an unknown id", "my-tuned-model", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
+		{"none on Opus 5", "claude-opus-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
+		{"none on 4.5", "claude-haiku-4-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone, Summary: openresponses.ReasoningSummaryAuto}, map[string]any{"type": "disabled"}, ""},
+		{"effort without summary thinks", "claude-opus-4-8", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "adaptive", "display": "omitted"}, "high"},
+		{"effort with summary", "claude-opus-4-6", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortMinimal, Summary: openresponses.ReasoningSummaryDetailed}, map[string]any{"type": "adaptive", "display": "summarized"}, "low"},
+		{"summary alone", "claude-opus-5-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Summary: openresponses.ReasoningSummaryAuto}, map[string]any{"type": "adaptive", "display": "summarized"}, ""},
+		{"xhigh is not max", "claude-opus-5-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh}, map[string]any{"type": "adaptive", "display": "omitted"}, "xhigh"},
+		{"extended max", "claude-opus-5-5", ThinkingAuto, nil, maxEffort, map[string]any{"type": "adaptive", "display": "omitted"}, "max"},
+		{"budget before 4.6", "claude-haiku-4-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortMedium}, map[string]any{"type": "enabled", "budget_tokens": float64(4096)}, ""},
+		{"budget on vertex", "claude-opus-4-5@20251101", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}, map[string]any{"type": "enabled", "budget_tokens": float64(1024)}, ""},
+		{"budget on bedrock", "us.anthropic.claude-sonnet-4-20250514-v1:0", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(24576)}, ""},
+		{"budget on 3.7", "claude-3-7-sonnet-20250219", ThinkingAuto, nil, maxEffort, map[string]any{"type": "enabled", "budget_tokens": float64(32000)}, ""},
+		{"budget for a summary alone", "claude-haiku-4-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Summary: openresponses.ReasoningSummaryAuto}, map[string]any{"type": "enabled", "budget_tokens": float64(16384)}, ""},
+		{"budget below max_output_tokens", "claude-haiku-4-5", ThinkingAuto, ptr(8000), openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(7999)}, ""},
+		{"budget never below the minimum", "claude-haiku-4-5", ThinkingAuto, ptr(512), openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(1024)}, ""},
+		{"fixed budget", "my-tuned-model", ThinkingBudget, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(16384)}, ""},
+		{"fixed adaptive", "claude-opus-5-5", ThinkingAdaptive, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
+		{"nothing asked", "claude-opus-4-5", ThinkingAuto, nil, openresponses.ReasoningConfig{}, nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := encodeRequest(openresponses.Request{Model: tc.model, MaxOutputTokens: tc.maxTokens, Reasoning: tc.reasoning}, config{maxTokens: DefaultMaxTokens, thinking: tc.thinking})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := wire(t, p)
+			got, _ := body["thinking"].(map[string]any)
+			if len(got) != len(tc.want) {
+				t.Fatalf("thinking = %v, want %v", body["thinking"], tc.want)
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Fatalf("thinking = %v, want %v", got, tc.want)
+				}
+			}
+			oc, _ := body["output_config"].(map[string]any)
+			if effort, _ := oc["effort"].(string); effort != tc.effort {
+				t.Fatalf("output_config.effort = %q, want %q", effort, tc.effort)
+			}
+		})
+	}
+}
+
+// TestEncodeReasoningAlwaysOn covers none on a model that cannot turn
+// thinking off: refused, naming the model, rather than sent to fail.
+func TestEncodeReasoningAlwaysOn(t *testing.T) {
+	for _, model := range []string{"claude-opus-5-5", "claude-fable-5", "claude-fable-5-1", "claude-mythos-5-1", "claude-mythos-preview"} {
+		_, err := encodeRequest(openresponses.Request{Model: model, Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}}, defaults)
+		wantErr(t, err, openresponses.CodeInvalidValue, "reasoning.effort")
+		if !strings.Contains(err.Error(), model) {
+			t.Fatalf("%s: error does not name the model: %v", model, err)
+		}
+	}
+	// Any other effort is sent.
+	p := encode(t, openresponses.Request{Model: "claude-opus-5-5", Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}})
+	if wire(t, p)["output_config"].(map[string]any)["effort"] != "low" {
+		t.Fatalf("effort low on Opus 5.5 = %v", wire(t, p))
+	}
+}
+
+func TestThinkingFor(t *testing.T) {
+	cases := map[string]Thinking{
+		"claude-opus-4":                           ThinkingBudget,
+		"claude-opus-4-1-20250805":                ThinkingBudget,
+		"claude-3-5-haiku-latest":                 ThinkingBudget,
+		"anthropic.claude-opus-4-5-20251101-v1:0": ThinkingBudget,
+		"claude-opus-4-6":                         ThinkingAdaptive,
+		"claude-sonnet-4-6[1m]":                   ThinkingAdaptive,
+		"claude-opus-4-8":                         ThinkingAdaptive,
+		"claude-opus-5":                           ThinkingAdaptive,
+		"claude-sonnet-5":                         ThinkingAdaptive,
+		"claude-haiku-5-5":                        ThinkingAdaptive,
+		"claude-sonnet-5-5":                       ThinkingBetweenTools,
+		"claude-opus-5-5":                         ThinkingAlwaysOn,
+		"claude-fable-5":                          ThinkingAlwaysOn,
+		"claude-fable-5-1":                        ThinkingAlwaysOn,
+		"claude-mythos-5-1":                       ThinkingAlwaysOn,
+		"claude-mythos-preview":                   ThinkingAlwaysOn,
+		"claude-opus-4.5":                         ThinkingBudget,
+		"anthropic/claude-sonnet-4.6":             ThinkingAdaptive,
+		"anthropic/claude-opus-5.5":               ThinkingAlwaysOn,
+		"arn:aws:bedrock:us-east-1:1:application-inference-profile/x": ThinkingAdaptive,
+		"": ThinkingAdaptive,
+	}
+	for model, want := range cases {
+		if got := thinkingFor(model); got != want {
+			t.Errorf("thinkingFor(%q) = %d, want %d", model, got, want)
+		}
+	}
+}
+
+// TestEncodeReasoningIssuer covers which reasoning items go back as
+// thinking blocks: this adapter's and unstamped ones, not another
+// issuer's and not unsigned ones.
+func TestEncodeReasoningIssuer(t *testing.T) {
+	item := func(issuer, sig string) *openresponses.ReasoningItem {
+		rs := &openresponses.ReasoningItem{Summary: openresponses.Contents{&openresponses.SummaryText{Text: "Hmm."}}, EncryptedContent: sig}
+		rs.SetIssuer(issuer)
+		return rs
+	}
+	cases := []struct {
+		name string
+		item *openresponses.ReasoningItem
+		sent bool
+	}{
+		{"own", item("anthropic", "c2ln"), true},
+		{"no issuer", item("", "c2ln"), true},
+		{"another issuer", item("gemini", "R2VtaW5p"), false},
+		{"a variant of another issuer", item("anthropic/other", "c2ln"), false},
+		{"unsigned", item("", ""), false},
+		{"own, unsigned", item("anthropic", ""), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := encode(t, openresponses.Request{Input: openresponses.Items{
+				openresponses.UserText("Hi"), tc.item, openresponses.AssistantText("Hello"),
+			}})
+			assistant := p.Messages[1].Content
+			sent := assistant[0].OfThinking != nil
+			if sent != tc.sent || len(assistant) != map[bool]int{true: 2, false: 1}[tc.sent] {
+				t.Fatalf("assistant = %+v, want thinking sent %v", assistant, tc.sent)
+			}
+			if sent && assistant[0].OfThinking.Signature != tc.item.EncryptedContent {
+				t.Fatalf("signature = %q", assistant[0].OfThinking.Signature)
+			}
+		})
+	}
+}
+
+// TestEncodeCallIDRewrite covers a call_id outside Claude's tool_use id
+// pattern: the call and its output are sent under the same rewritten id.
+func TestEncodeCallIDRewrite(t *testing.T) {
+	p := encode(t, openresponses.Request{Input: openresponses.Items{
+		openresponses.UserText("Read it"),
+		&openresponses.FunctionCall{CallID: "functions.read:0", Name: "read", Arguments: `{}`},
+		&openresponses.FunctionCall{CallID: "toolu_01A-b", Name: "read", Arguments: `{}`},
+		openresponses.NewFunctionCallOutput("functions.read:0", "a"),
+		openresponses.NewFunctionCallOutput("toolu_01A-b", "b"),
+	}})
+	// call_ and the first 24 hex digits of sha256("functions.read:0").
+	const want = "call_c216cab2de2e56d547b4e634"
+	calls, results := p.Messages[1].Content, p.Messages[2].Content
+	if got := calls[0].OfToolUse.ID; got != want || results[0].OfToolResult.ToolUseID != want {
+		t.Fatalf("rewritten call %q, result %q, want %q", got, results[0].OfToolResult.ToolUseID, want)
+	}
+	if calls[1].OfToolUse.ID != "toolu_01A-b" || results[1].OfToolResult.ToolUseID != "toolu_01A-b" {
+		t.Fatalf("an id the pattern takes should pass unchanged: %+v", calls[1])
+	}
+}
+
+// TestEncodeExtra covers the request's unknown top-level members (PLAN
+// rule 8): anthropic. members are Messages API fields, another provider's
+// members are refused, and the rest are dropped unless WithExtra forwards
+// them.
+func TestEncodeExtra(t *testing.T) {
+	req := openresponses.Request{Model: "claude-opus-5", Extra: map[string]any{
+		"anthropic.top_k":                    5,
+		"anthropic.inference_geo":            "us",
+		"openresponses-experimental.unknown": true,
+		"routing":                            "fast",
+		"model":                              "other",
+	}}
+	body := wire(t, encode(t, req))
+	if body["top_k"] != float64(5) || body["inference_geo"] != "us" {
+		t.Fatalf("anthropic. members = %v", body)
+	}
+	for _, key := range []string{"routing", "anthropic.top_k", "openresponses-experimental.unknown"} {
+		if _, ok := body[key]; ok {
+			t.Fatalf("%s sent: %v", key, body)
+		}
+	}
+
+	p, err := encodeRequest(req, config{maxTokens: DefaultMaxTokens, forwardExtra: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = wire(t, p)
+	if body["routing"] != "fast" || body["model"] != "claude-opus-5" {
+		t.Fatalf("forwarded = %v; a mapped field is never overridden", body)
+	}
+	if _, ok := body["openresponses-experimental.unknown"]; ok {
+		t.Fatalf("a shared member is not forwarded: %v", body)
+	}
+
+	cases := []struct {
+		name  string
+		extra map[string]any
+		code  string
+		param string
+	}{
+		{"another provider", map[string]any{"gemini.thinking_config": map[string]any{}}, openresponses.CodeUnsupportedParameter, "gemini.thinking_config"},
+		{"chat completions", map[string]any{"chatcompletions.n": 2}, openresponses.CodeUnsupportedParameter, "chatcompletions.n"},
+		{"a mapped field", map[string]any{"anthropic.max_tokens": 10}, openresponses.CodeInvalidValue, "anthropic.max_tokens"},
+		{"no field", map[string]any{"anthropic.": 1}, openresponses.CodeInvalidValue, "anthropic."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := encodeRequest(openresponses.Request{Extra: tc.extra}, defaults)
+			wantErr(t, err, tc.code, tc.param)
+		})
+	}
+}
+
+// TestEncodeEffortWithoutThinking covers the requests Claude refuses
+// thinking on: a forced tool, a temperature other than 1, top_k, or a
+// top_p below 0.95. An adaptive model gets the effort alone; a summary,
+// or an effort on a budget model, cannot be honoured and is refused.
+func TestEncodeEffortWithoutThinking(t *testing.T) {
+	tool := openresponses.Tools{&openresponses.FunctionTool{Name: "f"}}
+	cases := []struct {
+		name  string
+		req   openresponses.Request
+		param string // the conflicting parameter
+	}{
+		{"required", openresponses.Request{Tools: tool, ToolChoice: openresponses.ToolChoice{Mode: openresponses.ToolChoiceRequired}}, "tool_choice"},
+		{"function", openresponses.Request{Tools: tool, ToolChoice: openresponses.ToolChoiceFunction("f")}, "tool_choice"},
+		{"temperature", openresponses.Request{Temperature: ptr(0.2)}, "temperature"},
+		{"top_k", openresponses.Request{Extra: map[string]any{"anthropic.top_k": 5}}, "anthropic.top_k"},
+		{"top_p", openresponses.Request{TopP: ptr(0.9)}, "top_p"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := tc.req
+			req.Model = "claude-opus-4-8"
+			req.Reasoning = openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}
+			body := wire(t, encode(t, req))
+			if _, ok := body["thinking"]; ok {
+				t.Fatalf("thinking sent: %v", body["thinking"])
+			}
+			if body["output_config"].(map[string]any)["effort"] != "low" {
+				t.Fatalf("output_config = %v", body["output_config"])
+			}
+
+			// A summary has nothing to show.
+			req.Reasoning.Summary = openresponses.ReasoningSummaryAuto
+			_, err := encodeRequest(req, defaults)
+			wantErr(t, err, openresponses.CodeUnsupportedParameter, "reasoning.summary")
+			req.Reasoning = openresponses.ReasoningConfig{Summary: openresponses.ReasoningSummaryAuto}
+			_, err = encodeRequest(req, defaults)
+			wantErr(t, err, openresponses.CodeUnsupportedParameter, "reasoning.summary")
+
+			// A budget model has no effort without thinking.
+			req.Model = "claude-haiku-4-5"
+			req.Reasoning = openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}
+			_, err = encodeRequest(req, defaults)
+			wantErr(t, err, openresponses.CodeUnsupportedParameter, tc.param)
+
+			// none needs no thinking, so nothing conflicts.
+			req.Reasoning = openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}
+			if body := wire(t, encode(t, req)); body["thinking"].(map[string]any)["type"] != "disabled" {
+				t.Fatalf("none = %v", body["thinking"])
+			}
+		})
+	}
+	// Temperature 1 and top_p from 0.95 are what thinking takes.
+	body := wire(t, encode(t, openresponses.Request{Model: "claude-opus-4-8", Temperature: ptr(1.0), TopP: ptr(0.95), Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}}))
+	if _, ok := body["thinking"]; !ok {
+		t.Fatalf("temperature 1, top_p 0.95: no thinking: %v", body)
+	}
+}
+
+// TestEncodeToolResultsFirst covers a message between function outputs:
+// within the user turn every tool_result comes first, then the text.
+func TestEncodeToolResultsFirst(t *testing.T) {
+	p := encode(t, openresponses.Request{Input: openresponses.Items{
+		openresponses.UserText("go"),
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "a", Arguments: `{}`},
+		&openresponses.FunctionCall{CallID: "toolu_2", Name: "b", Arguments: `{}`},
+		openresponses.NewFunctionCallOutput("toolu_1", "one"),
+		openresponses.DeveloperText("reminder"),
+		openresponses.NewFunctionCallOutput("toolu_2", "two"),
+		openresponses.UserText("and"),
+	}})
+	var kinds []string
+	for _, c := range p.Messages[2].Content {
+		switch {
+		case c.OfToolResult != nil:
+			kinds = append(kinds, c.OfToolResult.ToolUseID)
+		case c.OfText != nil:
+			kinds = append(kinds, c.OfText.Text)
+		}
+	}
+	if strings.Join(kinds, ",") != "toolu_1,toolu_2,reminder,and" {
+		t.Fatalf("user turn = %v", kinds)
 	}
 }
