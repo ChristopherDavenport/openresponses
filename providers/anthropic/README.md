@@ -142,6 +142,18 @@ encoding the item back produces the same thinking block. Keep
 reasoning items in the input you replay; Claude needs the signature
 on the next tool-use turn.
 
+Each reasoning item the adapter emits carries
+`"openresponses-experimental.issuer": "anthropic"` (docs/extensions.md,
+section 4), from its `output_item.added` event on. On input, a
+reasoning item goes back as a thinking block only when its issuer is
+exactly `anthropic` or it has none, as items recorded before the member
+existed do, and its `encrypted_content` is not empty. Any other item is
+left out of the request, the documented exception to dropping nothing:
+another issuer's signature, or an empty one, is a 400 from Claude, and
+the adapter does not send the item's summary as text instead. Claude's
+signatures and the base64 the Gemini adapter writes cannot be told
+apart, so an item with no issuer is sent as Claude's.
+
 `end_turn`, `tool_use` and `stop_sequence` complete the response.
 `max_tokens` and `model_context_window_exceeded` end it incomplete
 with `max_output_tokens`. `refusal` adds a `refusal` content part

@@ -24,7 +24,11 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 	if err != nil {
 		return err
 	}
-	d := &decoder{em: openresponses.NewEmitter(sink, openresponses.NewResponse(req))}
+	d := &decoder{}
+	d.em = openresponses.NewEmitter(openresponses.EventSinkFunc(func(ev openresponses.StreamEvent) error {
+		d.annotate(ev)
+		return sink.Send(ev)
+	}), openresponses.NewResponse(req))
 	turnStart := 0
 	for turn := 0; ; turn++ {
 		if err := d.consume(a.messages.NewStreaming(ctx, params)); err != nil {
@@ -44,6 +48,22 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 		d.stop = ""
 	}
 	return d.finish()
+}
+
+// issuer names this adapter as the issuer of the reasoning items it
+// emits, whose encrypted_content is Claude's thinking signature
+// (docs/extensions.md, section 4).
+const issuer = "anthropic"
+
+// annotate sets the members the Emitter has no call for on an event's
+// item or response before the event is sent, so the event carries them
+// as the final response does.
+func (d *decoder) annotate(ev openresponses.StreamEvent) {
+	if added, ok := ev.(*openresponses.OutputItemAddedEvent); ok {
+		if rs, ok := added.Item.(*openresponses.ReasoningItem); ok {
+			rs.SetIssuer(issuer)
+		}
+	}
 }
 
 // decoder folds Messages stream events into Emitter calls. At most one

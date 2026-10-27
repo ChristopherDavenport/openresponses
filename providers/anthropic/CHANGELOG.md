@@ -23,6 +23,11 @@
   status gave up on; it is now 529, as on a non-streamed response.
 - A context overflow, Claude's `invalid_request_error` saying "prompt is
   too long", carries the code `context_length_exceeded` (#61).
+- Reasoning items carry `openresponses-experimental.issuer: anthropic`,
+  and on input a reasoning item another issuer stamped, or one with no
+  `encrypted_content`, is left out instead of being sent as a thinking
+  block Claude refuses (#56). Items with no issuer are still sent, so
+  sessions recorded before keep working.
 
 ## v0.0.16 - 2026-10-26
 

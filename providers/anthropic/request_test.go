@@ -487,3 +487,41 @@ func TestThinkingFor(t *testing.T) {
 		}
 	}
 }
+
+// TestEncodeReasoningIssuer covers which reasoning items go back as
+// thinking blocks: this adapter's and unstamped ones, not another
+// issuer's and not unsigned ones.
+func TestEncodeReasoningIssuer(t *testing.T) {
+	item := func(issuer, sig string) *openresponses.ReasoningItem {
+		rs := &openresponses.ReasoningItem{Summary: openresponses.Contents{&openresponses.SummaryText{Text: "Hmm."}}, EncryptedContent: sig}
+		rs.SetIssuer(issuer)
+		return rs
+	}
+	cases := []struct {
+		name string
+		item *openresponses.ReasoningItem
+		sent bool
+	}{
+		{"own", item("anthropic", "c2ln"), true},
+		{"no issuer", item("", "c2ln"), true},
+		{"another issuer", item("gemini", "R2VtaW5p"), false},
+		{"a variant of another issuer", item("anthropic/other", "c2ln"), false},
+		{"unsigned", item("", ""), false},
+		{"own, unsigned", item("anthropic", ""), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := encode(t, openresponses.Request{Input: openresponses.Items{
+				openresponses.UserText("Hi"), tc.item, openresponses.AssistantText("Hello"),
+			}})
+			assistant := p.Messages[1].Content
+			sent := assistant[0].OfThinking != nil
+			if sent != tc.sent || len(assistant) != map[bool]int{true: 2, false: 1}[tc.sent] {
+				t.Fatalf("assistant = %+v, want thinking sent %v", assistant, tc.sent)
+			}
+			if sent && assistant[0].OfThinking.Signature != tc.item.EncryptedContent {
+				t.Fatalf("signature = %q", assistant[0].OfThinking.Signature)
+			}
+		})
+	}
+}

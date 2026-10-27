@@ -160,6 +160,20 @@ func TestThinkingRoundTrip(t *testing.T) {
 	if !ok || rs.Summary.Text() != "Let me think." || rs.EncryptedContent != "c2lnbmF0dXJl" {
 		t.Fatalf("reasoning = %+v", out[0])
 	}
+	if rs.Issuer() != "anthropic" {
+		t.Fatalf("issuer = %q, want anthropic", rs.Issuer())
+	}
+	for _, ev := range sink.Events() {
+		if added, ok := ev.(*openresponses.OutputItemAddedEvent); ok && added.OutputIndex == 0 {
+			data, err := json.Marshal(added)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), `"openresponses-experimental.issuer":"anthropic"`) {
+				t.Fatalf("output_item.added = %s, want the issuer", data)
+			}
+		}
+	}
 	messages, _, err := encodeInput(out)
 	if err != nil {
 		t.Fatal(err)

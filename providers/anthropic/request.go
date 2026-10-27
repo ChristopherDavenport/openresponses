@@ -412,6 +412,11 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			}
 			add(sdk.MessageParamRoleUser, []sdk.ContentBlockParamUnion{block})
 		case *openresponses.ReasoningItem:
+			if !replayable(it) {
+				// Claude refuses a thinking block it did not sign; see
+				// replayable.
+				continue
+			}
 			// A thinking block is its text and its signature, both returned
 			// unchanged. The text lives in the summary (see decoder).
 			text := it.Summary.Text()
@@ -435,6 +440,25 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 		}
 	}
 	return messages, system, nil
+}
+
+// replayable reports whether a reasoning item goes back to Claude as a
+// thinking block (docs/extensions.md, section 4). An item this adapter
+// issued does, and so does one with no issuer, as items recorded before
+// the issuer member carry none. An item another issuer stamped does not,
+// and neither does one without encrypted_content, which is never a
+// signature. Claude's signatures and the base64 the Gemini adapter
+// writes cannot be told apart, so an item with no issuer is not
+// otherwise inspected.
+func replayable(it *openresponses.ReasoningItem) bool {
+	if it.EncryptedContent == "" {
+		return false
+	}
+	switch it.Issuer() {
+	case "", issuer:
+		return true
+	}
+	return false
 }
 
 func decodeArguments(s string) (map[string]any, error) {
