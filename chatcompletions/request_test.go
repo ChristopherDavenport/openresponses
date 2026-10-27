@@ -107,6 +107,71 @@ func TestEncodeMessages(t *testing.T) {
 	}
 }
 
+// sameJSON fails unless got and want are the same JSON value.
+func sameJSON(t *testing.T, got any, want string) {
+	t.Helper()
+	g, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var w any
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatalf("want: %v", err)
+	}
+	wb, _ := json.Marshal(w)
+	if string(g) != string(wb) {
+		t.Fatalf("got  %s\nwant %s", g, wb)
+	}
+}
+
+func TestEncodeFunctionOutputMedia(t *testing.T) {
+	img := &openresponses.InputImage{ImageURL: "data:image/png;base64,iVBO", Detail: openresponses.ImageDetailHigh}
+	pdf := &openresponses.InputFile{Filename: "r.pdf", FileData: "data:application/pdf;base64,aGk="}
+	output := func(callID string, parts ...openresponses.Content) *openresponses.FunctionCallOutput {
+		return &openresponses.FunctionCallOutput{CallID: callID, Output: openresponses.FunctionCallOutputData{Parts: parts}}
+	}
+	body := wire(t, testAdapter(), openresponses.Request{Input: openresponses.Items{
+		&openresponses.FunctionCall{CallID: "call_1", Name: "screenshot"},
+		&openresponses.FunctionCall{CallID: "call_2", Name: "read"},
+		&openresponses.FunctionCall{CallID: "call_3", Name: "time"},
+		&openresponses.FunctionCall{CallID: "call_4", Name: "report"},
+		output("call_1", img),
+		output("call_2", &openresponses.InputText{Text: "page "}, &openresponses.InputText{Text: "one"}),
+		openresponses.NewFunctionCallOutput("call_3", "noon"),
+		output("call_4", &openresponses.InputText{Text: "attached"}, pdf, img),
+		openresponses.UserText("Go on"),
+		&openresponses.FunctionCall{CallID: "call_5", Name: "screenshot"},
+		output("call_5", img),
+	}})
+	ms := messages(body)
+	for i := range ms {
+		if i == 0 || i == 7 {
+			delete(ms[i], "tool_calls")
+		}
+	}
+	sameJSON(t, ms, `[
+		{"role":"assistant"},
+		{"role":"tool","tool_call_id":"call_1","content":"[see next message]"},
+		{"role":"tool","tool_call_id":"call_2","content":"page one"},
+		{"role":"tool","tool_call_id":"call_3","content":"noon"},
+		{"role":"tool","tool_call_id":"call_4","content":"attached"},
+		{"role":"user","content":[
+			{"type":"text","text":"Output of call call_1:"},
+			{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBO","detail":"high"}},
+			{"type":"text","text":"Output of call call_4:"},
+			{"type":"file","file":{"filename":"r.pdf","file_data":"data:application/pdf;base64,aGk="}},
+			{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBO","detail":"high"}}
+		]},
+		{"role":"user","content":"Go on"},
+		{"role":"assistant"},
+		{"role":"tool","tool_call_id":"call_5","content":"[see next message]"},
+		{"role":"user","content":[
+			{"type":"text","text":"Output of call call_5:"},
+			{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBO","detail":"high"}}
+		]}
+	]`)
+}
+
 func TestEncodeReasoningWithoutReplay(t *testing.T) {
 	body := wire(t, testAdapter(), openresponses.Request{Input: openresponses.Items{
 		&openresponses.ReasoningItem{Summary: openresponses.Contents{&openresponses.SummaryText{Text: "thought"}}},
@@ -264,7 +329,9 @@ func TestEncodeErrors(t *testing.T) {
 		{"image file_id", openresponses.Request{Input: openresponses.Items{openresponses.UserMessage(&openresponses.InputImage{FileID: "f"})}}, openresponses.CodeUnsupportedParameter, "input[0].content[0].file_id"},
 		{"file_url", openresponses.Request{Input: openresponses.Items{openresponses.UserMessage(&openresponses.InputFile{FileURL: "https://x/a.pdf"})}}, openresponses.CodeUnsupportedParameter, "input[0].content[0].file_url"},
 		{"system image", openresponses.Request{Input: openresponses.Items{&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{&openresponses.InputImage{ImageURL: "https://x/a.png"}}}}}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
-		{"tool output image", openresponses.Request{Input: openresponses.Items{&openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{&openresponses.InputImage{ImageURL: "https://x/a.png"}}}}}}, openresponses.CodeUnsupportedParameter, "input[0].output[0].type"},
+		{"tool output video", openresponses.Request{Input: openresponses.Items{&openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{&openresponses.InputText{Text: "clip"}, &openresponses.InputVideo{VideoURL: "https://x/v.mp4"}}}}}}, openresponses.CodeUnsupportedParameter, "input[0].output[1].type"},
+		{"tool output image file_id", openresponses.Request{Input: openresponses.Items{&openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{&openresponses.InputImage{FileID: "f"}}}}}}, openresponses.CodeUnsupportedParameter, "input[0].output[0].file_id"},
+		{"tool output file_url", openresponses.Request{Input: openresponses.Items{&openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{&openresponses.InputFile{FileURL: "https://x/a.pdf"}}}}}}, openresponses.CodeUnsupportedParameter, "input[0].output[0].file_url"},
 		{"compaction", openresponses.Request{Input: openresponses.Items{&openresponses.Compaction{EncryptedContent: "x"}}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"extension item", openresponses.Request{Input: openresponses.Items{&openresponses.UnknownItem{Type: "gemini.executable_code"}}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"previous response", openresponses.Request{PreviousResponseID: "resp_1"}, openresponses.CodePreviousResponseNotFound, "previous_response_id"},

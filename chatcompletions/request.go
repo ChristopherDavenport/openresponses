@@ -265,11 +265,20 @@ func encodeToolChoice(c openresponses.ToolChoice) any {
 // system message; system and developer messages keep their roles; the
 // assistant's consecutive items (text, function calls, reasoning) fold
 // into one assistant message, since a call is a field of the message
-// that made it; each function output is its own tool message.
+// that made it; each function output is its own tool message, and the
+// image and file parts of a run of outputs follow it in one user
+// message, since a tool message holds only text.
 func (a *Adapter) encodeInput(req openresponses.Request) ([]message, error) {
 	var messages []message
 	if req.Instructions != "" {
 		messages = append(messages, message{Role: "system", Content: req.Instructions})
+	}
+	var media []part // of the run of tool messages being written
+	flush := func() {
+		if len(media) > 0 {
+			messages = append(messages, message{Role: "user", Content: media})
+			media = nil
+		}
 	}
 	assistant := func() *message {
 		if n := len(messages); n > 0 && messages[n-1].Role == "assistant" {
@@ -280,6 +289,9 @@ func (a *Adapter) encodeInput(req openresponses.Request) ([]message, error) {
 	}
 	for i, item := range req.Input {
 		p := fmt.Sprintf("input[%d]", i)
+		if _, ok := item.(*openresponses.FunctionCallOutput); !ok {
+			flush()
+		}
 		switch it := item.(type) {
 		case *openresponses.Message:
 			switch it.Role {
@@ -320,15 +332,15 @@ func (a *Adapter) encodeInput(req openresponses.Request) ([]message, error) {
 			m := assistant()
 			m.ToolCalls = append(m.ToolCalls, toolCall{ID: it.CallID, Type: "function", Function: functionCall{Name: it.Name, Arguments: args}})
 		case *openresponses.FunctionCallOutput:
-			var content any = it.Output.Text
-			if it.Output.Parts != nil {
-				text, err := textOnly(it.Output.Parts, p+".output")
-				if err != nil {
-					return nil, err
-				}
-				content = text
+			text, parts, err := encodeOutput(it.Output, p+".output")
+			if err != nil {
+				return nil, err
 			}
-			messages = append(messages, message{Role: "tool", ToolCallID: it.CallID, Content: content})
+			messages = append(messages, message{Role: "tool", ToolCallID: it.CallID, Content: text})
+			if len(parts) > 0 {
+				media = append(media, part{Type: "text", Text: "Output of call " + it.CallID + ":"})
+				media = append(media, parts...)
+			}
 		case *openresponses.ReasoningItem:
 			// Only the field WithReasoningReplay names carries this; the
 			// protocol has no standard one, and the item is accepted either
@@ -343,7 +355,49 @@ func (a *Adapter) encodeInput(req openresponses.Request) ([]message, error) {
 			return nil, unsupported(p + ".type")
 		}
 	}
+	flush()
 	return messages, nil
+}
+
+// mediaPlaceholder is the tool message's content when a function output
+// has image or file parts and no text.
+const mediaPlaceholder = "[see next message]"
+
+// encodeOutput splits a function output into the tool message's text
+// and the image and file parts that follow the run of tool messages.
+func encodeOutput(out openresponses.FunctionCallOutputData, p string) (string, []part, error) {
+	if out.Parts == nil {
+		return out.Text, nil, nil
+	}
+	var text strings.Builder
+	var hasText bool
+	var media []part
+	for j, c := range out.Parts {
+		pp := fmt.Sprintf("%s[%d]", p, j)
+		switch c := c.(type) {
+		case *openresponses.InputText:
+			text.WriteString(c.Text)
+			hasText = true
+		case *openresponses.Text:
+			text.WriteString(c.Text)
+			hasText = true
+		case *openresponses.OutputText:
+			text.WriteString(c.Text)
+			hasText = true
+		case *openresponses.InputImage, *openresponses.InputFile:
+			mp, err := encodeMedia(c, pp)
+			if err != nil {
+				return "", nil, err
+			}
+			media = append(media, mp)
+		default:
+			return "", nil, unsupported(pp + ".type")
+		}
+	}
+	if !hasText && len(media) > 0 {
+		return mediaPlaceholder, media, nil
+	}
+	return text.String(), media, nil
 }
 
 // appendText adds text to an assistant message: a string while there is
@@ -389,32 +443,42 @@ func encodeParts(contents openresponses.Contents, p string) (any, error) {
 	parts := make([]part, 0, len(contents))
 	for j, c := range contents {
 		pp := fmt.Sprintf("%s[%d]", p, j)
-		switch c := c.(type) {
-		case *openresponses.InputText:
-			parts = append(parts, part{Type: "text", Text: c.Text})
-		case *openresponses.InputImage:
-			if c.FileID != "" {
-				return nil, unsupported(pp + ".file_id")
-			}
-			if c.ImageURL == "" {
-				return nil, openresponses.InvalidRequest(openresponses.CodeMissingRequiredParameter, "input_image needs image_url", pp)
-			}
-			img := &imageURL{URL: c.ImageURL}
-			if c.Detail != "" && c.Detail != openresponses.ImageDetailAuto {
-				img.Detail = string(c.Detail)
-			}
-			parts = append(parts, part{Type: "image_url", ImageURL: img})
-		case *openresponses.InputFile:
-			switch {
-			case c.FileURL != "":
-				return nil, unsupported(pp + ".file_url")
-			case c.FileID == "" && c.FileData == "":
-				return nil, openresponses.InvalidRequest(openresponses.CodeMissingRequiredParameter, "input_file needs file_data or file_id", pp)
-			}
-			parts = append(parts, part{Type: "file", File: &file{FileID: c.FileID, FileData: c.FileData, Filename: c.Filename}})
-		default:
-			return nil, unsupported(pp + ".type")
+		if t, ok := c.(*openresponses.InputText); ok {
+			parts = append(parts, part{Type: "text", Text: t.Text})
+			continue
 		}
+		mp, err := encodeMedia(c, pp)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, mp)
 	}
 	return parts, nil
+}
+
+// encodeMedia maps an image or file part; anything else is unsupported.
+func encodeMedia(c openresponses.Content, pp string) (part, error) {
+	switch c := c.(type) {
+	case *openresponses.InputImage:
+		if c.FileID != "" {
+			return part{}, unsupported(pp + ".file_id")
+		}
+		if c.ImageURL == "" {
+			return part{}, openresponses.InvalidRequest(openresponses.CodeMissingRequiredParameter, "input_image needs image_url", pp)
+		}
+		img := &imageURL{URL: c.ImageURL}
+		if c.Detail != "" && c.Detail != openresponses.ImageDetailAuto {
+			img.Detail = string(c.Detail)
+		}
+		return part{Type: "image_url", ImageURL: img}, nil
+	case *openresponses.InputFile:
+		switch {
+		case c.FileURL != "":
+			return part{}, unsupported(pp + ".file_url")
+		case c.FileID == "" && c.FileData == "":
+			return part{}, openresponses.InvalidRequest(openresponses.CodeMissingRequiredParameter, "input_file needs file_data or file_id", pp)
+		}
+		return part{Type: "file", File: &file{FileID: c.FileID, FileData: c.FileData, Filename: c.Filename}}, nil
+	}
+	return part{}, unsupported(pp + ".type")
 }

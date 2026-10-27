@@ -56,6 +56,28 @@ func (t ErrorType) HTTPStatus() int {
 	}
 }
 
+// ErrorTypeForStatus returns the type of an error that arrives with an
+// HTTP status and no type of its own, as providers/PLAN.md "Errors"
+// states it: 404 is not_found, 429 too_many_requests, 408 server_error,
+// any other 4xx invalid_request, and every other status server_error.
+// Only server_error and too_many_requests are worth a retry, so a 401,
+// 403, 409 or 413, which the same request meets again, is
+// invalid_request.
+func ErrorTypeForStatus(status int) ErrorType {
+	switch {
+	case status == http.StatusNotFound:
+		return ErrorTypeNotFound
+	case status == http.StatusTooManyRequests:
+		return ErrorTypeTooManyRequests
+	case status == http.StatusRequestTimeout:
+		return ErrorTypeServerError
+	case status >= 400 && status < 500:
+		return ErrorTypeInvalidRequest
+	default:
+		return ErrorTypeServerError
+	}
+}
+
 // ErrorPayload is the wire form of an error. It appears in the HTTP error
 // envelope, in error streaming events, in the WebSocket error frame and in
 // the error field of a failed response.
