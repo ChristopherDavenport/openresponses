@@ -40,22 +40,38 @@ alone.
 `reasoning.effort` reaches Gemini as one of two mutually exclusive
 fields, and sending the wrong one is a 400. Gemini 3 and later take
 `thinkingLevel`; Gemini 2.5 and earlier reject it and take
-`thinkingBudget`, in tokens. The adapter reads which from the model ID:
+`thinkingBudget`, in tokens. The adapter reads which from the model ID,
+taking the part after its last `/` so `publishers/google/models/…`
+names read the same:
 
-| effort | Gemini 3+ (`thinkingLevel`) | Gemini 2.5 (`thinkingBudget`) |
+| model ID | encoding |
+|---|---|
+| starts with `gemini-1.` or `gemini-2.` | `thinkingBudget` |
+| anything else, including an ID that names no generation | `thinkingLevel` |
+
+An ID the table does not recognise gets the newest encoding, levels.
+Each effort maps as follows:
+
+| effort | `thinkingLevel` | `thinkingBudget` |
 |---|---|---|
-| `none` | rejected — it always thinks | 0 |
+| `none` | `thinkingBudget: 0` | 0 |
 | `minimal` | `MINIMAL` | 512 |
 | `low` | `LOW` | 4096 |
 | `medium` | `MEDIUM` | 8192 |
 | `high` | `HIGH` | 24576 |
 
-The budgets are the widest values legal across the 2.5 family, which
-Google documents neither a mapping nor per-model ceilings for. `xhigh`
-is rejected in both: there is no level above `high`.
+`thinkingLevel` has no value for `none`, and the generations that take
+levels still accept a budget, so `none` is a zero budget in both
+encodings. A model that cannot stop thinking refuses it upstream, and
+the request fails with Gemini's message as `invalid_request`; the
+adapter does not decide that on the model's behalf. The budgets are the
+widest values legal across the 2.5 family, which Google documents
+neither a mapping nor per-model ceilings for. `xhigh` is
+`invalid_request` in both: neither field has a value above `high`.
 
-A model ID that does not name its generation — a tuned model, a private
-endpoint — is assumed to take levels. Override it when that is wrong:
+A model ID that does not name its generation, such as a tuned model or
+a private endpoint, is assumed to take levels. Override it when that is
+wrong; the option fixes the encoding and changes nothing else:
 
 ```go
 gemini.New(client, gemini.WithThinking(gemini.ThinkingBudget))
@@ -78,10 +94,10 @@ A request field Gemini has no equivalent for comes back as an
 naming the field, rather than being dropped: `parallel_tool_calls:
 false`, `max_tool_calls`, `safety_identifier`, `truncation: auto`,
 `text.verbosity`, `file_id` on images and files, `compaction` and
-`item_reference` items, tools and items from other
-providers' slugs, and the `reasoning.effort` values the model's
-generation cannot express (see above). `reasoning.summary` alongside
-`reasoning.effort: none` is rejected as contradictory.
+`item_reference` items, and tools and items from other providers'
+slugs. `reasoning.effort: xhigh` is `invalid_request` with `code:
+invalid_value` (see above), and so is `reasoning.summary` alongside
+`reasoning.effort: none`, which is contradictory.
 `previous_response_id` reaching the adapter means the handler has no
 `ResponseStore`, and is `previous_response_not_found`.
 

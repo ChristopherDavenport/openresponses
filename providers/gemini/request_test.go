@@ -410,8 +410,11 @@ func TestEncodeReasoning(t *testing.T) {
 		// An override beats the model ID, for a tuned endpoint.
 		{name: "forced budget", model: "gemini-3-pro-preview", opt: ThinkingBudget, effort: openresponses.ReasoningEffortHigh, budget: genai.Ptr(int32(24576))},
 		{name: "forced level", model: "gemini-2.5-pro", opt: ThinkingLevel, effort: openresponses.ReasoningEffortHigh, level: genai.ThinkingLevelHigh},
-		// Gemini 3 always thinks, so "none" cannot be expressed.
-		{name: "3 none", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortNone, code: openresponses.CodeInvalidValue},
+		// The level field has no "none", so it is a zero budget, which
+		// the generations that take levels also accept. Whether the model
+		// can stop thinking is for Gemini to say, not the adapter.
+		{name: "3 none", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortNone, budget: genai.Ptr(int32(0))},
+		{name: "unknown none", model: "projects/p/locations/l/endpoints/123", effort: openresponses.ReasoningEffortNone, budget: genai.Ptr(int32(0))},
 		{name: "xhigh", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortXHigh, code: openresponses.CodeInvalidValue},
 		{name: "xhigh on 2.5", model: "gemini-2.5-pro", effort: openresponses.ReasoningEffortXHigh, code: openresponses.CodeInvalidValue},
 	}

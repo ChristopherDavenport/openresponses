@@ -183,9 +183,9 @@ var effortLevels = map[openresponses.ReasoningEffort]genai.ThinkingLevel{
 // sending the wrong one is a 400, so exactly one field is ever set.
 //
 // Which values within an encoding a model accepts stays the model's
-// business: "minimal" exists only on some Gemini 3 models and a budget
-// below a model's floor is raised by Gemini, and both are reported
-// upstream rather than guessed at here.
+// business: "minimal" exists only on some Gemini 3 models, a budget
+// below a model's floor is raised by Gemini, and some models cannot stop
+// thinking. Each is reported upstream rather than guessed at here.
 func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking) (*genai.ThinkingConfig, error) {
 	if r.IsZero() {
 		return nil, nil
@@ -211,10 +211,13 @@ func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thi
 		return tc, nil
 	}
 	if r.Effort == openresponses.ReasoningEffortNone {
-		// A zero budget is the one way to ask for no thinking, and the
-		// generations that take levels reject it: they always think.
-		return nil, invalid("reasoning.effort",
-			"reasoning effort \"none\" has no thinking level; Gemini 3 and later cannot stop thinking")
+		// The level field has no "none". A zero budget is the one way to
+		// ask for no thinking, and the generations that take levels still
+		// accept a budget, so it is sent as one. Whether this model can
+		// stop thinking is the model's to say (PLAN.md rule 1): one that
+		// cannot refuses the request with its own message.
+		tc.ThinkingBudget = genai.Ptr(int32(0))
+		return tc, nil
 	}
 	level, ok := effortLevels[r.Effort]
 	if !ok {

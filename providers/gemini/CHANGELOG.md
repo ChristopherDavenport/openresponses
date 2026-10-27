@@ -31,6 +31,11 @@
 - The README states the usage mapping in full, and that Gemini reports
   no cache writes, so `openresponses-experimental.cache_write_tokens` is
   never set (#53).
+- `reasoning.effort: none` on a model that takes thinking levels is
+  sent as `thinkingBudget: 0` instead of being refused by the adapter.
+  Whether the model can stop thinking is for Gemini to say (PLAN.md
+  rule 1). The README gives the model ID table the encoding is chosen
+  by.
 
 ## v0.0.16 - 2026-10-26
 

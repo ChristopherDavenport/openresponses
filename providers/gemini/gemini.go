@@ -59,7 +59,8 @@ const (
 	// generation.
 	ThinkingAuto Thinking = iota
 	// ThinkingLevel always sends thinkingLevel, which Gemini 3 and later
-	// take and Gemini 2.5 and earlier reject.
+	// take and Gemini 2.5 and earlier reject. The level field has no
+	// value for effort "none", which goes as a zero thinkingBudget.
 	ThinkingLevel
 	// ThinkingBudget always sends thinkingBudget, in tokens. Gemini 2.5
 	// and earlier take only this; Gemini 3 accepts it for backward
