@@ -103,6 +103,41 @@ func MarshalWithExtra(v any, extra map[string]any, omit map[string]bool) ([]byte
 	return json.Marshal(merged)
 }
 
+// MarshalTypedWithExtra marshals v with extra merged in, as
+// MarshalWithExtra does, and injects "type": typ as MarshalTyped does. A
+// "type" key in extra is ignored, so the discriminator is never doubled.
+func MarshalTypedWithExtra(typ string, v any, extra map[string]any) ([]byte, error) {
+	if _, ok := extra["type"]; ok {
+		cp := make(map[string]any, len(extra))
+		for k, val := range extra {
+			if k != "type" {
+				cp[k] = val
+			}
+		}
+		extra = cp
+	}
+	body, err := MarshalWithExtra(v, extra, nil)
+	if err != nil {
+		return nil, err
+	}
+	return InjectType(typ, body)
+}
+
+// UnmarshalTypedExtra decodes data into v and returns the top-level keys
+// not declared by v's struct tags, less the "type" discriminator, or nil
+// when there are none. It is the decoding half of MarshalTypedWithExtra.
+func UnmarshalTypedExtra(data []byte, v any) (map[string]any, error) {
+	extra, _, err := UnmarshalExtra(data, v)
+	if err != nil {
+		return nil, err
+	}
+	delete(extra, "type")
+	if len(extra) == 0 {
+		return nil, nil
+	}
+	return extra, nil
+}
+
 // UnmarshalExtra decodes data into v and returns the top-level keys not
 // declared by v's struct tags (extra, nil when there are none) and the
 // declared keys that data did not carry (absent, nil when there are

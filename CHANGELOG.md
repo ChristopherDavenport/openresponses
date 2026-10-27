@@ -5,6 +5,28 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- Members the specification does not define are kept below the top
+  level too, as [docs/extensions.md](docs/extensions.md) section 1.3
+  requires of every object. Each built-in item and content part, the
+  URL citation, the function tool, `usage` and both its details objects,
+  `reasoning`, `text` and its `format`, the object forms of
+  `tool_choice`, `stream_options`, `incomplete_details` and the log
+  probabilities now have an `Extra` field that decoding fills and
+  encoding writes back, as `Request.Extra` and `Response.Extra` already
+  did at the top level. A proxy, store or session recorder built on this
+  package dropped them before, so a member such as a provider's cache
+  write count in `usage.input_tokens_details` was lost the first time a
+  response was decoded. Streaming event envelopes and the error object
+  do not keep them yet. **Breaking:** these types contain a map, so they
+  are no longer comparable with `==`; compare fields or use
+  `reflect.DeepEqual`.
+- `NewResponse` echoes the request's reasoning effort and summary
+  without its `Extra` members. A response carries an extension member of
+  `reasoning` only when the adapter honoured it, which the adapter
+  decides.
+
 ## v0.0.16 - 2026-10-26
 
 - A function call that the token limit cut off now ends `incomplete` in

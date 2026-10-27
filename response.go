@@ -150,12 +150,7 @@ func (r *Response) Clone() *Response {
 		cp.Tools = append(Tools(nil), r.Tools...)
 	}
 	cp.Metadata = cloneMap(r.Metadata)
-	if r.Extra != nil {
-		cp.Extra = make(map[string]any, len(r.Extra))
-		for k, v := range r.Extra {
-			cp.Extra[k] = v
-		}
-	}
+	cp.Extra = cloneExtra(r.Extra)
 	return &cp
 }
 
@@ -163,6 +158,9 @@ func (r *Response) Clone() *Response {
 // settings, as a server adapter would before generating output. The ID is
 // the caller's to set; CreatedAt is now. Tools, tool choice, reasoning
 // and metadata are copied, so filling in defaults never alters req.
+// Reasoning is echoed without its Extra members: a response carries an
+// extension such as [MemberEffort] only when the adapter honoured it
+// (docs/extensions.md, section 3), so the adapter sets it.
 func NewResponse(req Request) *Response {
 	resp := &Response{
 		Object:             ObjectResponse,
@@ -180,7 +178,7 @@ func NewResponse(req Request) *Response {
 		FrequencyPenalty:   derefOr(req.FrequencyPenalty, 0),
 		TopLogprobs:        derefOr(req.TopLogprobs, 0),
 		Temperature:        derefOr(req.Temperature, 1),
-		Reasoning:          req.Reasoning,
+		Reasoning:          ReasoningConfig{Effort: req.Reasoning.Effort, Summary: req.Reasoning.Summary},
 		MaxOutputTokens:    cloneptr(req.MaxOutputTokens),
 		MaxToolCalls:       cloneptr(req.MaxToolCalls),
 		Store:              req.Stored(),
@@ -259,14 +257,28 @@ func cloneToolChoice(tc ToolChoice) ToolChoice {
 }
 
 func cloneTextConfig(tc TextConfig) TextConfig {
-	out := TextConfig{Verbosity: tc.Verbosity}
+	out := TextConfig{Verbosity: tc.Verbosity, Extra: cloneExtra(tc.Extra)}
 	if tc.Format != nil {
 		format := *tc.Format
 		if format.Schema != nil {
 			format.Schema = append(json.RawMessage(nil), tc.Format.Schema...)
 		}
 		format.Strict = cloneptr(tc.Format.Strict)
+		format.Extra = cloneExtra(tc.Format.Extra)
 		out.Format = &format
+	}
+	return out
+}
+
+// cloneExtra copies the top level of an Extra map. Its values are
+// decoded JSON and treated as immutable.
+func cloneExtra(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
 	}
 	return out
 }
@@ -300,6 +312,23 @@ func derefOr[T any](p *T, def T) T {
 // IncompleteDetails explains why a response stopped early.
 type IncompleteDetails struct {
 	Reason IncompleteReason `json:"reason"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
+}
+
+// MarshalJSON emits the details with their Extra members.
+func (d IncompleteDetails) MarshalJSON() ([]byte, error) {
+	type plain IncompleteDetails
+	return jsonx.MarshalWithExtra(plain(d), d.Extra, nil)
+}
+
+// UnmarshalJSON decodes the details and keeps unknown members in Extra.
+func (d *IncompleteDetails) UnmarshalJSON(data []byte) error {
+	type plain IncompleteDetails
+	extra, _, err := jsonx.UnmarshalExtra(data, (*plain)(d))
+	d.Extra = extra
+	return err
 }
 
 // Usage is the token accounting for a response.
@@ -309,16 +338,68 @@ type Usage struct {
 	TotalTokens         int                 `json:"total_tokens"`
 	InputTokensDetails  InputTokensDetails  `json:"input_tokens_details"`
 	OutputTokensDetails OutputTokensDetails `json:"output_tokens_details"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
+}
+
+// MarshalJSON emits the usage with its Extra members.
+func (u Usage) MarshalJSON() ([]byte, error) {
+	type plain Usage
+	return jsonx.MarshalWithExtra(plain(u), u.Extra, nil)
+}
+
+// UnmarshalJSON decodes the usage and keeps unknown members in Extra.
+func (u *Usage) UnmarshalJSON(data []byte) error {
+	type plain Usage
+	extra, _, err := jsonx.UnmarshalExtra(data, (*plain)(u))
+	u.Extra = extra
+	return err
 }
 
 // InputTokensDetails breaks down input tokens.
 type InputTokensDetails struct {
 	CachedTokens int `json:"cached_tokens"`
+
+	// Extra holds members not defined by the spec, such as
+	// [MemberCacheWriteTokens].
+	Extra map[string]any `json:"-"`
+}
+
+// MarshalJSON emits the details with their Extra members.
+func (d InputTokensDetails) MarshalJSON() ([]byte, error) {
+	type plain InputTokensDetails
+	return jsonx.MarshalWithExtra(plain(d), d.Extra, nil)
+}
+
+// UnmarshalJSON decodes the details and keeps unknown members in Extra.
+func (d *InputTokensDetails) UnmarshalJSON(data []byte) error {
+	type plain InputTokensDetails
+	extra, _, err := jsonx.UnmarshalExtra(data, (*plain)(d))
+	d.Extra = extra
+	return err
 }
 
 // OutputTokensDetails breaks down output tokens.
 type OutputTokensDetails struct {
 	ReasoningTokens int `json:"reasoning_tokens"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
+}
+
+// MarshalJSON emits the details with their Extra members.
+func (d OutputTokensDetails) MarshalJSON() ([]byte, error) {
+	type plain OutputTokensDetails
+	return jsonx.MarshalWithExtra(plain(d), d.Extra, nil)
+}
+
+// UnmarshalJSON decodes the details and keeps unknown members in Extra.
+func (d *OutputTokensDetails) UnmarshalJSON(data []byte) error {
+	type plain OutputTokensDetails
+	extra, _, err := jsonx.UnmarshalExtra(data, (*plain)(d))
+	d.Extra = extra
+	return err
 }
 
 // CompactResponse is the resource returned by POST /responses/compact.

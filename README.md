@@ -17,7 +17,8 @@ all three transports in both directions:
   wraps it and adds the WebSocket turn protocol.
 - **Lossless passthrough**: slug-prefixed items, content parts, tools,
   annotations and events that the spec does not define are kept verbatim,
-  unknown top-level keys survive in `Extra`, and a decoded response
+  unknown members of the request, the response and the objects inside
+  them survive in `Extra`, and a decoded response
   re-encodes without keys its source never sent, so a proxy built on
   this package never drops or invents data.
 
@@ -242,10 +243,14 @@ Unknown types decode to `UnknownItem`, `UnknownContent`, `UnknownTool`,
 bytes (an `UnknownEvent` takes the sequence number a sink assigns it, so
 a proxied extension event stays in order). Register your own decoders
 with `RegisterItem`, `RegisterContent`, `RegisterTool`,
-`RegisterAnnotation` and `RegisterEvent`. Unknown top-level request and
-response keys are preserved in `Extra`. That passthrough is a policy
-decision for a server: any key a client sends reaches the upstream
-provider unless the adapter clears or filters `Extra`.
+`RegisterAnnotation` and `RegisterEvent`. Members the spec does not
+define are preserved in an `Extra` field, on the request and response
+and on every item, content part, tool and nested object inside them, as
+[docs/extensions.md](docs/extensions.md) section 1.3 requires; streaming
+event envelopes and the error object do not keep them yet. That
+passthrough is a policy decision for a server: any key a client sends
+reaches the upstream provider unless the adapter clears or filters
+`Extra`.
 
 Where the specification has no member for something more than one
 provider needs, this library defines a shared extension under the

@@ -83,11 +83,14 @@ MUST keep every member it does not know, with its value unchanged. This
 applies to every object at every depth, not only the top-level request
 and response. Without this rule, a member below the top level is lost
 the first time a proxy, a store or a session recorder reads and writes
-the object. This library's root package keeps unknown members on
-`Request`, `Response`, `Usage`, `InputTokensDetails`,
-`OutputTokensDetails`, the request's `reasoning` object and
-`ReasoningItem`. Each object it does not yet cover is a defect against
-this rule.
+the object. This library's root package keeps unknown members in an
+`Extra` field on the request and response, every item, content part,
+annotation and function tool, the `usage` object and both its details
+objects, `reasoning`, `text` and its `format`, the object forms of
+`tool_choice`, `stream_options`, `incomplete_details` and log
+probabilities. It does not yet keep them on the streaming event
+envelopes or on the error object; each of those is a defect against this
+rule.
 
 ### 1.4 Readers
 

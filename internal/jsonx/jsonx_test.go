@@ -154,3 +154,32 @@ func TestAbsentAndZeroFields(t *testing.T) {
 		}
 	}
 }
+
+func TestTypedExtraRoundTrip(t *testing.T) {
+	type part struct {
+		Text string `json:"text"`
+	}
+	var v part
+	extra, err := UnmarshalTypedExtra([]byte(`{"type":"input_text","text":"x","acme:y":[1]}`), &v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Text != "x" || len(extra) != 1 || extra["acme:y"] == nil {
+		t.Fatalf("v = %+v, extra = %v", v, extra)
+	}
+	if none, err := UnmarshalTypedExtra([]byte(`{"type":"input_text","text":"x"}`), &v); err != nil || none != nil {
+		t.Fatalf("extra = %v, err = %v, want nil", none, err)
+	}
+	// A "type" key in extra never doubles the discriminator.
+	extra["type"] = "spoof"
+	out, err := MarshalTypedWithExtra("input_text", v, extra)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"type":"input_text","acme:y":[1],"text":"x"}`; string(out) != want {
+		t.Errorf("got %s, want %s", out, want)
+	}
+	if _, ok := extra["type"]; !ok {
+		t.Error("MarshalTypedWithExtra modified its argument")
+	}
+}

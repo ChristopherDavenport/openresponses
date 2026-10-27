@@ -75,6 +75,9 @@ type Message struct {
 	Role    Role     `json:"role"`
 	Content Contents `json:"content"`
 	Phase   Phase    `json:"phase,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ItemType returns "message".
@@ -88,21 +91,23 @@ func (m *Message) MarshalJSON() ([]byte, error) {
 	if cp.Content == nil {
 		cp.Content = Contents{}
 	}
-	return jsonx.MarshalTyped(ItemTypeMessage, cp)
+	return jsonx.MarshalTypedWithExtra(ItemTypeMessage, cp, m.Extra)
 }
 
 // UnmarshalJSON accepts content as either an array of parts or a bare
 // string. A string becomes one input_text part, or one output_text part
-// when the role is assistant.
+// when the role is assistant. Unknown members go to Extra.
 func (m *Message) UnmarshalJSON(data []byte) error {
 	type plain Message
 	aux := struct {
 		*plain
 		Content json.RawMessage `json:"content"`
 	}{plain: (*plain)(m)}
-	if err := json.Unmarshal(data, &aux); err != nil {
+	extra, err := jsonx.UnmarshalTypedExtra(data, &aux)
+	if err != nil {
 		return err
 	}
+	m.Extra = extra
 	return unmarshalStringOrParts(aux.Content, &m.Content, func(s string) Content {
 		if m.Role == RoleAssistant {
 			return &OutputText{Text: s}
@@ -147,6 +152,9 @@ type FunctionCall struct {
 	CallID    string `json:"call_id"`
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ItemType returns "function_call".
@@ -155,7 +163,15 @@ func (*FunctionCall) ItemType() string { return ItemTypeFunctionCall }
 // MarshalJSON emits the item with its type discriminator.
 func (f *FunctionCall) MarshalJSON() ([]byte, error) {
 	type plain FunctionCall
-	return jsonx.MarshalTyped(ItemTypeFunctionCall, (*plain)(f))
+	return jsonx.MarshalTypedWithExtra(ItemTypeFunctionCall, (*plain)(f), f.Extra)
+}
+
+// UnmarshalJSON decodes the item and keeps unknown members in Extra.
+func (f *FunctionCall) UnmarshalJSON(data []byte) error {
+	type plain FunctionCall
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(f))
+	f.Extra = extra
+	return err
 }
 
 // UnmarshalArguments decodes the JSON arguments into v.
@@ -170,6 +186,9 @@ type FunctionCallOutput struct {
 	Status Status                 `json:"status,omitempty"`
 	CallID string                 `json:"call_id"`
 	Output FunctionCallOutputData `json:"output"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ItemType returns "function_call_output".
@@ -178,7 +197,15 @@ func (*FunctionCallOutput) ItemType() string { return ItemTypeFunctionCallOutput
 // MarshalJSON emits the item with its type discriminator.
 func (f *FunctionCallOutput) MarshalJSON() ([]byte, error) {
 	type plain FunctionCallOutput
-	return jsonx.MarshalTyped(ItemTypeFunctionCallOutput, (*plain)(f))
+	return jsonx.MarshalTypedWithExtra(ItemTypeFunctionCallOutput, (*plain)(f), f.Extra)
+}
+
+// UnmarshalJSON decodes the item and keeps unknown members in Extra.
+func (f *FunctionCallOutput) UnmarshalJSON(data []byte) error {
+	type plain FunctionCallOutput
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(f))
+	f.Extra = extra
+	return err
 }
 
 // NewFunctionCallOutput builds a function_call_output with a string
@@ -228,6 +255,10 @@ type ReasoningItem struct {
 	Summary          Contents `json:"summary"`
 	Content          Contents `json:"content,omitempty"`
 	EncryptedContent string   `json:"encrypted_content,omitempty"`
+
+	// Extra holds members not defined by the spec, such as
+	// [MemberIssuer].
+	Extra map[string]any `json:"-"`
 }
 
 // ItemType returns "reasoning".
@@ -241,7 +272,15 @@ func (r *ReasoningItem) MarshalJSON() ([]byte, error) {
 	if cp.Summary == nil {
 		cp.Summary = Contents{}
 	}
-	return jsonx.MarshalTyped(ItemTypeReasoning, cp)
+	return jsonx.MarshalTypedWithExtra(ItemTypeReasoning, cp, r.Extra)
+}
+
+// UnmarshalJSON decodes the item and keeps unknown members in Extra.
+func (r *ReasoningItem) UnmarshalJSON(data []byte) error {
+	type plain ReasoningItem
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(r))
+	r.Extra = extra
+	return err
 }
 
 // Compaction is an opaque, provider-encrypted summary of earlier
@@ -251,6 +290,9 @@ type Compaction struct {
 	Status           Status `json:"status,omitempty"`
 	EncryptedContent string `json:"encrypted_content"`
 	CreatedBy        string `json:"created_by,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ItemType returns "compaction".
@@ -259,13 +301,24 @@ func (*Compaction) ItemType() string { return ItemTypeCompaction }
 // MarshalJSON emits the item with its type discriminator.
 func (c *Compaction) MarshalJSON() ([]byte, error) {
 	type plain Compaction
-	return jsonx.MarshalTyped(ItemTypeCompaction, (*plain)(c))
+	return jsonx.MarshalTypedWithExtra(ItemTypeCompaction, (*plain)(c), c.Extra)
+}
+
+// UnmarshalJSON decodes the item and keeps unknown members in Extra.
+func (c *Compaction) UnmarshalJSON(data []byte) error {
+	type plain Compaction
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(c))
+	c.Extra = extra
+	return err
 }
 
 // ItemReference references an item from a previous response by ID. It is
 // input-only.
 type ItemReference struct {
 	ID string `json:"id"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ItemType returns "item_reference".
@@ -274,7 +327,15 @@ func (*ItemReference) ItemType() string { return ItemTypeItemReference }
 // MarshalJSON emits the item with its type discriminator.
 func (r *ItemReference) MarshalJSON() ([]byte, error) {
 	type plain ItemReference
-	return jsonx.MarshalTyped(ItemTypeItemReference, (*plain)(r))
+	return jsonx.MarshalTypedWithExtra(ItemTypeItemReference, (*plain)(r), r.Extra)
+}
+
+// UnmarshalJSON decodes the item and keeps unknown members in Extra.
+func (r *ItemReference) UnmarshalJSON(data []byte) error {
+	type plain ItemReference
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(r))
+	r.Extra = extra
+	return err
 }
 
 // UnknownItem is an item whose type is not registered, typically a
