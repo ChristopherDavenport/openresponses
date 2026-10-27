@@ -300,7 +300,8 @@ func thinkingBudget(effort sdk.OutputConfigEffort, maxTokens int64) int64 {
 // [ThinkingAuto], by the README's table. The family is the first of
 // opus, sonnet, haiku, fable and mythos after "claude-"; the version is
 // the first number after "claude-" and the one after it when that is a
-// one- or two-digit minor version. So claude-opus-4-5,
+// one- or two-digit minor version, with - or . between them. So
+// claude-opus-4-5, claude-opus-4.5 (OpenRouter's form),
 // claude-3-7-sonnet-20250219, claude-sonnet-4@20250514 and
 // us.anthropic.claude-haiku-4-5-20251001-v1:0 all read. An ID that names
 // no version is taken to take adaptive thinking with none disabled,
@@ -316,7 +317,7 @@ func thinkingFor(model string) Thinking {
 	}
 	family := ""
 	major, minor := -1, 0
-	parts := strings.Split(name, "-")
+	parts := strings.FieldsFunc(name, func(r rune) bool { return r == '-' || r == '.' })
 	for k, part := range parts {
 		switch part {
 		case "opus", "sonnet", "haiku", "fable", "mythos":

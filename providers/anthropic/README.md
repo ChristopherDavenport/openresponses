@@ -193,7 +193,8 @@ The other efforts:
 - The model is read from the ID. The family is the first of `opus`,
   `sonnet`, `haiku`, `fable` and `mythos` after `claude-`; the version is
   the first number after `claude-`, and the one after it when that is a
-  one- or two-digit minor version. So `claude-opus-4-5`,
+  one- or two-digit minor version, with `-` or `.` between the parts.
+  So `claude-opus-4-5`, `anthropic/claude-opus-4.5` (OpenRouter),
   `claude-3-7-sonnet-20250219`, `claude-sonnet-4@20250514` (Vertex) and
   `us.anthropic.claude-haiku-4-5-20251001-v1:0` (Bedrock) all read. A
   Fable or Mythos ID is `ThinkingAlwaysOn` whatever its version. An ID

@@ -552,6 +552,9 @@ func TestThinkingFor(t *testing.T) {
 		"claude-fable-5-1":                        ThinkingAlwaysOn,
 		"claude-mythos-5-1":                       ThinkingAlwaysOn,
 		"claude-mythos-preview":                   ThinkingAlwaysOn,
+		"claude-opus-4.5":                         ThinkingBudget,
+		"anthropic/claude-sonnet-4.6":             ThinkingAdaptive,
+		"anthropic/claude-opus-5.5":               ThinkingAlwaysOn,
 		"arn:aws:bedrock:us-east-1:1:application-inference-profile/x": ThinkingAdaptive,
 		"": ThinkingAdaptive,
 	}
