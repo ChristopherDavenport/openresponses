@@ -447,6 +447,30 @@ func TestEncodeReasoning(t *testing.T) {
 	}
 }
 
+// TestEncodeReasoningEffortMax: Gemini has no setting above high, so
+// openresponses-experimental.effort is ignored and reasoning.effort is
+// mapped as if the member were absent (docs/extensions.md section 3).
+func TestEncodeReasoningEffortMax(t *testing.T) {
+	member := map[string]any{openresponses.MemberEffort: openresponses.EffortMax}
+
+	tc, err := encodeReasoning(openresponses.ReasoningConfig{Extra: member}, "gemini-3-pro-preview", ThinkingAuto)
+	if err != nil || tc != nil {
+		t.Fatalf("member alone = %+v, %v; want no thinking config", tc, err)
+	}
+
+	tc, err = encodeReasoning(openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh, Extra: member}, "gemini-3-pro-preview", ThinkingAuto)
+	if err != nil || tc.ThinkingLevel != genai.ThinkingLevelHigh {
+		t.Fatalf("high with member = %+v, %v", tc, err)
+	}
+
+	// A writer sets xhigh beside max; without the member xhigh is refused,
+	// and the member does not change that.
+	var r openresponses.ReasoningConfig
+	r.SetExtendedEffort(openresponses.EffortMax)
+	_, err = encodeReasoning(r, "gemini-3-pro-preview", ThinkingAuto)
+	wantErr(t, err, openresponses.CodeInvalidValue, "reasoning.effort")
+}
+
 // A summary of thinking that was switched off is contradictory, and
 // Gemini rejects the pair rather than picking one.
 func TestEncodeReasoningNoneWithSummary(t *testing.T) {

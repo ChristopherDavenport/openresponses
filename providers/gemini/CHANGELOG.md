@@ -36,6 +36,10 @@
   Whether the model can stop thinking is for Gemini to say (PLAN.md
   rule 1). The README gives the model ID table the encoding is chosen
   by.
+- `openresponses-experimental.effort` is ignored: Gemini has no setting
+  above `high`, so `reasoning.effort` is mapped as if the member were
+  absent. A `reasoning` object holding only unknown members no longer
+  sends an empty thinking config (#51).
 
 ## v0.0.16 - 2026-10-26
 

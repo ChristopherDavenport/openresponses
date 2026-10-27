@@ -187,7 +187,12 @@ var effortLevels = map[openresponses.ReasoningEffort]genai.ThinkingLevel{
 // below a model's floor is raised by Gemini, and some models cannot stop
 // thinking. Each is reported upstream rather than guessed at here.
 func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking) (*genai.ThinkingConfig, error) {
-	if r.IsZero() {
+	// Only effort and summary are read. Gemini has no setting above
+	// high, so openresponses-experimental.effort is ignored and
+	// reasoning.effort, which its writer sets to the nearest value, is
+	// mapped instead (docs/extensions.md section 3); any other member of
+	// reasoning is ignored too (PLAN.md rule 3).
+	if r.Effort == "" && r.Summary == "" {
 		return nil, nil
 	}
 	if thinking == ThinkingAuto {

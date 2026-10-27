@@ -69,6 +69,12 @@ widest values legal across the 2.5 family, which Google documents
 neither a mapping nor per-model ceilings for. `xhigh` is
 `invalid_request` in both: neither field has a value above `high`.
 
+`openresponses-experimental.effort` in `reasoning` (docs/extensions.md
+section 3) is ignored, as a shared member this adapter does not
+implement: Gemini has no setting above `high`. The adapter maps
+`reasoning.effort` as if the member were absent, so `max`, whose writer
+sets `reasoning.effort` to `xhigh` beside it, is refused as `xhigh` is.
+
 A model ID that does not name its generation, such as a tuned model or
 a private endpoint, is assumed to take levels. Override it when that is
 wrong; the option fixes the encoding and changes nothing else:
