@@ -220,9 +220,10 @@ cache is a resource created and billed outside any request.
 
 Upstream errors keep their HTTP status; the gRPC status in lower case
 is the code, and a `RetryInfo` detail on a 429 becomes `Retry-After`.
-The type follows the status: 400 and the other 4xx statuses are
-`invalid_request`, 404 is `not_found`, 429 is `too_many_requests` and
-5xx is `server_error`. A 401 `UNAUTHENTICATED` or 403
+The type follows the status: 404 is `not_found`, 408 is
+`server_error` (a timeout upstream, which a retry may fix), 429 is
+`too_many_requests`, the other 4xx statuses are `invalid_request`, and
+anything else is `server_error`. A 401 `UNAUTHENTICATED` or 403
 `PERMISSION_DENIED` refuses the adapter's own credentials. No retry
 can fix that, so it is `invalid_request` with the 401 or 403 and the
 code `unauthenticated` or `permission_denied`, never `server_error`.

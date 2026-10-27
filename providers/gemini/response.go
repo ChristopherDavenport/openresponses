@@ -404,6 +404,10 @@ func mapError(err error) error {
 		if delay, ok := retryDelay(apiErr.Details); ok {
 			out.WithHeader("Retry-After", strconv.Itoa(delay))
 		}
+	case apiErr.Code == http.StatusRequestTimeout:
+		// The upstream timed out, which a retry may fix. This matches the
+		// root's status table (PR #65) until that lands.
+		out = openresponses.ServerError(code, apiErr.Message)
 	case apiErr.Code >= 400 && apiErr.Code < 500:
 		// 401 UNAUTHENTICATED and 403 PERMISSION_DENIED land here too: they
 		// refuse the adapter's own credentials, which no retry can fix, so

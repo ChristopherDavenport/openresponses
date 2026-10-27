@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- An upstream 408 is `server_error`, which a retry may fix, rather than
+  `invalid_request`.
 - `prompt_cache_key` is accepted without effect instead of being
   refused. It is a caching hint, and Gemini caches implicitly (#57).
 - Behaviour change: an upstream 401 `UNAUTHENTICATED` or 403
