@@ -2,6 +2,7 @@ package jsonx
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -181,5 +182,75 @@ func TestTypedExtraRoundTrip(t *testing.T) {
 	}
 	if _, ok := extra["type"]; !ok {
 		t.Error("MarshalTypedWithExtra modified its argument")
+	}
+}
+
+func TestExtraValuesSurviveExactly(t *testing.T) {
+	type shape struct {
+		A int `json:"a"`
+	}
+	in := `{"a":1,"seq":9007199254740993,"price":1.50,"huge":1.0e400,"nested":{"n":[12345678901234567890]}}`
+	var v shape
+	extra, _, err := UnmarshalExtra([]byte(in), &v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := MarshalWithExtra(v, extra, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"seq":9007199254740993`, `"price":1.50`, `"huge":1.0e400`, `12345678901234567890`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("%s lost %s", out, want)
+		}
+	}
+	// An Extra written by Go code still encodes.
+	if _, err := MarshalWithExtra(v, map[string]any{"f": 0.25, "i": 3}, nil); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestOnlyExactCaseKeysFillFields(t *testing.T) {
+	type shape struct {
+		CallID string `json:"call_id"`
+		Name   string `json:"name,omitempty"`
+	}
+	var v shape
+	extra, _, err := UnmarshalExtra([]byte(`{"CALL_ID":"c","name":"n"}`), &v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.CallID != "" || extra["CALL_ID"] != "c" {
+		t.Errorf("v = %+v, extra = %v", v, extra)
+	}
+	out, err := MarshalWithExtra(v, extra, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"CALL_ID":"c","call_id":"","name":"n"}`; string(out) != want {
+		t.Errorf("got %s, want %s", out, want)
+	}
+
+	v = shape{}
+	extra, _, err = UnmarshalExtra([]byte(`{"call_id":"a","Call_Id":"b"}`), &v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.CallID != "a" || extra["Call_Id"] != "b" {
+		t.Errorf("v = %+v, extra = %v", v, extra)
+	}
+}
+
+func TestDeclaredKeysWinOverExtra(t *testing.T) {
+	type shape struct {
+		ID   string `json:"id,omitempty"`
+		Text string `json:"text"`
+	}
+	out, err := MarshalWithExtra(shape{Text: "x"}, map[string]any{"id": "fc_x", "text": "y", "other": 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"other":1,"text":"x"}`; string(out) != want {
+		t.Errorf("got %s, want %s", out, want)
 	}
 }

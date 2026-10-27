@@ -73,8 +73,9 @@ func InjectType(typ string, body []byte) ([]byte, error) {
 }
 
 // MarshalWithExtra marshals v (which must produce a JSON object), merges
-// extra into the result and removes the keys in omit. Keys already
-// present in v win over extra.
+// extra into the result and removes the keys in omit. A key v declares
+// is never taken from extra, even when v leaves it out as empty, so
+// extra cannot set or invent a declared member.
 func MarshalWithExtra(v any, extra map[string]any, omit map[string]bool) ([]byte, error) {
 	body, err := json.Marshal(v)
 	if err != nil {
@@ -87,8 +88,9 @@ func MarshalWithExtra(v any, extra map[string]any, omit map[string]bool) ([]byte
 	if err := json.Unmarshal(body, &merged); err != nil {
 		return nil, fmt.Errorf("jsonx: re-decode for extra merge: %w", err)
 	}
+	info := structInfoOf(reflect.TypeOf(v))
 	for k, val := range extra {
-		if _, exists := merged[k]; exists {
+		if _, exists := merged[k]; exists || info.keys[k] {
 			continue
 		}
 		raw, err := json.Marshal(val)
@@ -143,21 +145,45 @@ func UnmarshalTypedExtra(data []byte, v any) (map[string]any, error) {
 // declared keys that data did not carry (absent, nil when there are
 // none). absent lets a decoded value re-encode without inventing members
 // its source never sent.
+//
+// Only a key spelled exactly as declared fills a field; encoding/json
+// alone would also match "CALL_ID" or "Call_Id" to call_id, so such a
+// key goes to extra instead. Extra values are decoded with
+// json.Decoder.UseNumber, so a number is a json.Number holding its
+// literal text and re-encodes unchanged, at any precision or magnitude.
 func UnmarshalExtra(data []byte, v any) (extra map[string]any, absent map[string]bool, err error) {
-	if err := json.Unmarshal(data, v); err != nil {
-		return nil, nil, err
-	}
 	var all map[string]json.RawMessage
 	if err := json.Unmarshal(data, &all); err != nil {
+		// Not an object: let the struct decode report the error.
+		if err := json.Unmarshal(data, v); err != nil {
+			return nil, nil, err
+		}
 		return nil, nil, err
 	}
 	info := structInfoOf(reflect.TypeOf(v))
+	declared := make(map[string]json.RawMessage, len(all))
+	for k, raw := range all {
+		if info.keys[k] {
+			declared[k] = raw
+		}
+	}
+	if all != nil {
+		known, err := json.Marshal(declared)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := json.Unmarshal(known, v); err != nil {
+			return nil, nil, err
+		}
+	}
 	for k, raw := range all {
 		if info.keys[k] {
 			continue
 		}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
 		var val any
-		if err := json.Unmarshal(raw, &val); err != nil {
+		if err := dec.Decode(&val); err != nil {
 			return nil, nil, fmt.Errorf("jsonx: decode extra %q: %w", k, err)
 		}
 		if extra == nil {

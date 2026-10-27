@@ -22,6 +22,18 @@ versions may break the API.
   do not keep them yet. **Breaking:** these types contain a map, so they
   are no longer comparable with `==`; compare fields or use
   `reflect.DeepEqual`.
+- `Extra` keeps a member exactly as it arrived. Values are decoded with
+  `UseNumber`, so a number in `Extra` is a `json.Number` holding its
+  literal text: `9007199254740993` and `1.50` re-encode unchanged, and
+  `1.0e400` no longer fails the whole decode. **Breaking:** code that
+  read a number from `Request.Extra` or `Response.Extra` as `float64`
+  gets a `json.Number`; numbers Go code puts in `Extra` encode as
+  before. Only a key spelled exactly as the specification spells it
+  fills a field: encoding/json alone matched `CALL_ID` or `Call_Id` to
+  `call_id`, which invented a member on re-encode or lost one of two
+  values, and such a key now stays in `Extra`. A member the type
+  declares is never taken from `Extra` on encode, even when the field
+  is empty and omitted.
 - Go bindings for the shared extensions in
   [docs/extensions.md](docs/extensions.md), in `extensions.go`:
   `ExtensionSlug` and the member names `MemberEffort`, `MemberIssuer`,

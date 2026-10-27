@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -37,7 +38,7 @@ func TestRoundTripRequest(t *testing.T) {
 	want := []byte(string(data))
 	want = replaceJSON(t, want, `"content": "Be brief."`, `"content": [{"type":"input_text","text":"Be brief."}]`)
 
-	if got := req.Extra["acme:priority"]; got != float64(7) {
+	if got := req.Extra["acme:priority"]; got != json.Number("7") {
 		t.Errorf("extra acme:priority = %v", got)
 	}
 	if _, ok := req.Input[8].(*ItemReference); !ok {
@@ -66,7 +67,7 @@ func TestRoundTripRequest(t *testing.T) {
 	if req.Reasoning.Extra["openresponses-experimental.effort"] != "max" {
 		t.Errorf("reasoning = %#v", req.Reasoning)
 	}
-	if req.ToolChoice.Allowed.Extra["acme:sticky"] != true || req.ToolChoice.Allowed.Tools[0].Extra["acme:weight"] != float64(1) {
+	if req.ToolChoice.Allowed.Extra["acme:sticky"] != true || req.ToolChoice.Allowed.Tools[0].Extra["acme:weight"] != json.Number("1") {
 		t.Errorf("tool_choice = %#v", req.ToolChoice.Allowed)
 	}
 	out, err := json.Marshal(req)
@@ -111,7 +112,7 @@ func TestRoundTripResponse(t *testing.T) {
 	if resp.Reasoning.Effort != ReasoningEffortHigh || resp.Reasoning.Summary != "" {
 		t.Errorf("reasoning = %+v", resp.Reasoning)
 	}
-	if got := resp.Usage.InputTokensDetails.Extra["openresponses-experimental.cache_write_tokens"]; got != float64(2100) {
+	if got := resp.Usage.InputTokensDetails.Extra["openresponses-experimental.cache_write_tokens"]; got != json.Number("2100") {
 		t.Errorf("usage.input_tokens_details = %#v", resp.Usage.InputTokensDetails)
 	}
 	if r := resp.Output[0].(*ReasoningItem); r.Extra["openresponses-experimental.issuer"] != "anthropic" {
@@ -381,5 +382,35 @@ func TestValidateFunctionCallOutputs(t *testing.T) {
 	}
 	if err := (CompactRequest{Model: "m", Input: Items{output}}).Validate(); !IsInvalidRequest(err) {
 		t.Errorf("compact request with orphan output: %v", err)
+	}
+}
+
+// TestExtraIsExact checks the three ways Extra could change a document:
+// a number losing precision, a key in another case filling a field, and
+// Extra setting a member the type declares.
+func TestExtraIsExact(t *testing.T) {
+	raw := `{"type":"function_call","call_id":"a","Call_Id":"b","name":"f","arguments":"{}","acme.seq":9007199254740993,"acme.f":1.0e400}`
+	item, err := UnmarshalItem([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if CallID(item) != "a" {
+		t.Errorf("call_id = %q", CallID(item))
+	}
+	out, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"acme.seq":9007199254740993`, `"acme.f":1.0e400`, `"Call_Id":"b"`, `"call_id":"a"`} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("%s lost %s", out, want)
+		}
+	}
+	out, err = json.Marshal(&FunctionCall{CallID: "c", Name: "f", Extra: map[string]any{"id": "fc_x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "fc_x") {
+		t.Errorf("Extra set a declared member: %s", out)
 	}
 }
