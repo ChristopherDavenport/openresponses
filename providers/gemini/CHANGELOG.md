@@ -40,6 +40,11 @@
   above `high`, so `reasoning.effort` is mapped as if the member were
   absent. A `reasoning` object holding only unknown members no longer
   sends an empty thinking config (#51).
+- `Adapter` implements `openresponses.Describer`: `Describe` reads
+  Gemini's `models.get` into the model information of docs/extensions.md
+  section 7, the context window, output limit and whether the model
+  thinks. On Vertex AI it returns the source alone, since that model
+  resource publishes none of them (#51).
 
 ## v0.0.16 - 2026-10-26
 

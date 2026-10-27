@@ -201,6 +201,27 @@ number of tokens allowed (1048576)." Output cut short by
 `max_output_tokens` is not an overflow; it ends the response incomplete,
 as above.
 
+## Model information
+
+The adapter implements `openresponses.Describer`. `Describe` calls
+Gemini's `models.get` and returns the
+`openresponses-experimental.model_info` value (docs/extensions.md
+section 7), filled only from what that endpoint publishes:
+
+| Member | From `models.get` on the Gemini API |
+|---|---|
+| `source` | `gemini` |
+| `context_window` | `inputTokenLimit` |
+| `max_output_tokens` | `outputTokenLimit` |
+| `reasoning` | `thinking`, which the API leaves out when false |
+| `efforts` | `["none"]` when not thinking; otherwise not said |
+| `default_effort`, `input_modalities` | not said |
+
+On Vertex AI the model resource carries none of these and the SDK maps
+none of them, so `Describe` returns `source` alone: an absent `thinking`
+there must not read as false. A model Gemini does not know is a
+`not_found` error.
+
 ## Versioning
 
 The module is tagged `providers/gemini/vX.Y.Z`, independently of the
