@@ -41,6 +41,10 @@ func TestItemIDAndCallID(t *testing.T) {
 		{"unknown item without raw", &UnknownItem{Type: "acme:x", ID: "x_1"}, "x_1", ""},
 		{"registered extension type", &extensionCall{ID: "ext_1", CallID: "call_2"}, "ext_1", "call_2"},
 		{"nil", nil, "", ""},
+		{"typed nil message", (*Message)(nil), "", ""},
+		{"typed nil function_call", (*FunctionCall)(nil), "", ""},
+		{"typed nil unknown item", (*UnknownItem)(nil), "", ""},
+		{"typed nil extension type", (*extensionCall)(nil), "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

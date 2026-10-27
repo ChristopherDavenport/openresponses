@@ -3,6 +3,7 @@ package openresponses
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
@@ -177,8 +178,11 @@ func UnmarshalAnnotation(data []byte) (Annotation, error) {
 // member, reading extension items from their raw JSON; an
 // item_reference has no id of its own. ItemID returns "" for an
 // [ItemReference], whose id names another item, and for an item without
-// an id.
+// an id. Both return "" for a nil item, typed or not.
 func ItemID(item Item) string {
+	if isNil(item) {
+		return ""
+	}
 	switch v := item.(type) {
 	case nil, *ItemReference:
 		return ""
@@ -202,6 +206,9 @@ func ItemID(item Item) string {
 // its output, or "" when the item has none. An [UnknownItem]'s call_id
 // is read from Raw, and a registered extension type's from its encoding.
 func CallID(item Item) string {
+	if isNil(item) {
+		return ""
+	}
 	switch v := item.(type) {
 	case nil, *Message, *ReasoningItem, *Compaction, *ItemReference:
 		return ""
@@ -213,6 +220,16 @@ func CallID(item Item) string {
 		return stringMember(v.Raw, "call_id")
 	}
 	return encodedMember(item, "call_id")
+}
+
+// isNil reports whether item is nil or a nil pointer of any item type,
+// which has no members to read.
+func isNil(item Item) bool {
+	if item == nil {
+		return true
+	}
+	v := reflect.ValueOf(item)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 // encodedMember returns the string member key of item's wire form, or ""
