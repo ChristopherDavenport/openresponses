@@ -22,7 +22,8 @@ versions may break the API.
   and `Error` have the same `Extra`: an error forwarded from an upstream,
   as an HTTP envelope, an error event or a failed response, keeps the
   members it carried, while `headers` still passes only the failure
-  headers. **Breaking:** these types contain a map, so they
+  headers: a member named `headers` in any other case is dropped from
+  such an error's `Extra`, so it cannot carry headers past the filter. **Breaking:** these types contain a map, so they
   are no longer comparable with `==`; compare fields or use
   `reflect.DeepEqual`.
 - `Extra` keeps a member exactly as it arrived. Values are decoded with

@@ -274,7 +274,9 @@ information with the optional `Describer` an adapter implements beside
 Errors built from remote data (an HTTP error response, an error event or
 a WebSocket error frame) carry only the headers that describe a failure,
 such as `Retry-After` and the rate-limit family, so a peer cannot plant
-headers on a server that forwards its error.
+headers on a server that forwards its error. Such an error keeps the
+error object's other unknown members in `Extra`, except any spelling of
+`headers`, which only the filtered field carries.
 
 ## Compliance
 

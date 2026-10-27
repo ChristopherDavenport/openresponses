@@ -1,8 +1,12 @@
 package openresponses
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -77,4 +81,38 @@ func TestErrorKeepsUnknownMembers(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSameJSON(t, []byte(`{"type":"server_error","code":"","message":"","param":null}`), out)
+}
+
+// TestRemoteErrorDropsHeadersInAnyCase checks that a "headers" member
+// spelled in another case cannot carry headers past the failure-header
+// filter by riding in Extra.
+func TestRemoteErrorDropsHeadersInAnyCase(t *testing.T) {
+	raw := `{"type":"server_error","code":"c","message":"m","param":null,"Headers":{"set-cookie":"secret"},"HEADERS":{"x":"y"},"x:hint":"kept","headers":{"Retry-After":"1"}}`
+	var payload ErrorPayload
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"server_error","code":"c","message":"m","param":null,"x:hint":"kept","headers":{"Retry-After":"1"}}`
+	out, err := json.Marshal(payload.Err(500).Payload())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSameJSON(t, []byte(want), out)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":` + raw + `}`))
+	}))
+	defer srv.Close()
+	_, err = NewClient(srv.URL).Create(context.Background(), Request{Model: "m"})
+	e := AsError(err)
+	for k := range e.Extra {
+		if strings.EqualFold(k, "headers") {
+			t.Errorf("client error kept %q in Extra: %v", k, e.Extra)
+		}
+	}
+	if e.Extra["x:hint"] != "kept" {
+		t.Errorf("client error extra = %v", e.Extra)
+	}
 }

@@ -126,8 +126,10 @@ type Error struct {
 	// RateLimit-* and X-RateLimit-*, X-Request-Id and Request-Id.
 	// Forwarding an *Error therefore keeps Retry-After from an upstream
 	// 429 intact, while a peer cannot plant Set-Cookie or a CORS header
-	// on a server that forwards its error. Errors built locally carry
-	// whatever WithHeader adds.
+	// on a server that forwards its error. Such an error also drops
+	// every member of its Extra named "headers" in any case, so a
+	// "Headers" member cannot carry headers past the filter. Errors
+	// built locally carry whatever WithHeader adds.
 	Headers http.Header
 	// ResponseHeaders holds every header of the failing HTTP response
 	// when the error came from one. It is never forwarded.
@@ -202,13 +204,29 @@ func (e *Error) WithHeader(name, value string) *Error {
 // Err converts a wire payload into an *Error. Only the headers that
 // describe a failure are carried over; see [Error.Headers].
 func (p ErrorPayload) Err(status int) *Error {
-	e := &Error{StatusCode: status, Type: p.Type, Code: p.Code, Message: p.Message, Param: p.Param, Extra: cloneExtra(p.Extra)}
+	e := &Error{StatusCode: status, Type: p.Type, Code: p.Code, Message: p.Message, Param: p.Param, Extra: remoteErrorExtra(p.Extra)}
 	for k, v := range p.Headers {
 		if errorHeader(k) {
 			e.WithHeader(k, v)
 		}
 	}
 	return e
+}
+
+// remoteErrorExtra copies the Extra of an error object that came from a
+// peer, leaving out every member named "headers" in any case: Headers
+// alone carries headers, and only through the failure-header filter.
+func remoteErrorExtra(extra map[string]any) map[string]any {
+	out := cloneExtra(extra)
+	for k := range out {
+		if strings.EqualFold(k, "headers") {
+			delete(out, k)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Is reports whether target is an *Error with the same Type and, when

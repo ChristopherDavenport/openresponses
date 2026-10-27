@@ -190,7 +190,7 @@ func (s *EventStream) Wait() (*Response, error) {
 		return resp, err
 	}
 	if resp != nil && resp.Error != nil {
-		return resp, &Error{Type: resp.Error.Type, Code: resp.Error.Code, Message: resp.Error.Message, Param: resp.Error.Param, Extra: cloneExtra(resp.Error.Extra)}
+		return resp, &Error{Type: resp.Error.Type, Code: resp.Error.Code, Message: resp.Error.Message, Param: resp.Error.Param, Extra: remoteErrorExtra(resp.Error.Extra)}
 	}
 	return resp, nil
 }
