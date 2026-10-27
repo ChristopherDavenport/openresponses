@@ -9,6 +9,10 @@
   code `unauthenticated` or `permission_denied`. It was a 502
   `server_error`, which a client retries although no retry can fix it
   (#58).
+- A request whose input exceeds the model's context window is
+  `invalid_request` with the shared code `context_length_exceeded`,
+  recognised from Gemini's `INVALID_ARGUMENT` message "The input token
+  count … exceeds …". It was `invalid_argument` (#61).
 
 ## v0.0.16 - 2026-10-26
 

@@ -373,6 +373,9 @@ func TestMapError(t *testing.T) {
 	}{
 		{"rate limited", 429, `{"error":{"code":429,"message":"quota","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"6.2s"}]}}`, openresponses.ErrorTypeTooManyRequests, "resource_exhausted", "7", 0},
 		{"invalid", 400, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, "invalid_argument", "", 0},
+		// An overflow is INVALID_ARGUMENT like any bad request, recognised
+		// by its message, and carries the shared code a client compacts on.
+		{"context overflow", 400, `{"error":{"code":400,"message":"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", 0},
 		{"not found", 404, `{"error":{"code":404,"message":"no model","status":"NOT_FOUND"}}`, openresponses.ErrorTypeNotFound, "not_found", "", 0},
 		// 401 and 403 are the adapter's own credentials failing. No retry
 		// can fix that, so they are invalid_request with Gemini's status

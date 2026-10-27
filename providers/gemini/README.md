@@ -127,6 +127,15 @@ The type follows the status: 400 and the other 4xx statuses are
 `PERMISSION_DENIED` refuses the adapter's own credentials. No retry
 can fix that, so it is `invalid_request` with the 401 or 403 and the
 code `unauthenticated` or `permission_denied`, never `server_error`.
+A request whose input exceeds the model's context window is
+`invalid_request` with the code `context_length_exceeded`
+(docs/extensions.md section 6) and the 400. Gemini has no code of its
+own for it: the adapter recognises an `INVALID_ARGUMENT` (or any 400)
+whose message contains both "input token count" and "exceeds", case
+ignored, as in "The input token count (1200000) exceeds the maximum
+number of tokens allowed (1048576)." Output cut short by
+`max_output_tokens` is not an overflow; it ends the response incomplete,
+as above.
 
 ## Versioning
 

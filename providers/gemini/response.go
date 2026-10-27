@@ -387,6 +387,8 @@ func mapError(err error) error {
 	}
 	var out *openresponses.Error
 	switch {
+	case contextOverflow(apiErr):
+		out = openresponses.ContextLengthExceeded(apiErr.Message)
 	case apiErr.Code == http.StatusNotFound:
 		out = openresponses.NotFound(code, apiErr.Message, "")
 	case apiErr.Code == http.StatusTooManyRequests:
@@ -405,6 +407,19 @@ func mapError(err error) error {
 	}
 	out.StatusCode = apiErr.Code
 	return out
+}
+
+// contextOverflow reports whether Gemini refused the request because its
+// input exceeds the model's context window. Gemini has no code of its
+// own for that: it is INVALID_ARGUMENT, a 400, whose message says "The
+// input token count (N) exceeds the maximum number of tokens allowed
+// (M)", so the message is matched.
+func contextOverflow(e genai.APIError) bool {
+	if e.Code != http.StatusBadRequest && e.Status != "INVALID_ARGUMENT" {
+		return false
+	}
+	msg := strings.ToLower(e.Message)
+	return strings.Contains(msg, "input token count") && strings.Contains(msg, "exceeds")
 }
 
 // retryDelay finds a google.rpc.RetryInfo detail and returns its delay
