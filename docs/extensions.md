@@ -228,9 +228,16 @@ it as 1.3 requires.
    a tool-use turn, so leaving every such item out would break those
    sessions. The adapter MAY therefore send `encrypted_content` as its
    own. It SHOULD leave the item out when it can tell the content is not
-   its own: Gemini's `thoughtSignature` is base64 and Claude's
-   `signature` is not, and an empty `encrypted_content` is never a
-   signature.
+   its own. An empty `encrypted_content` is never a signature. Claude's
+   `signature` and the base64 of Gemini's `thoughtSignature` are both
+   base64 text, so the format cannot tell those two apart; it can only
+   rule out content that is not in the adapter's own format at all,
+   such as text that is not base64 reaching the Gemini adapter.
+
+The Claude adapter treats an item as foreign when it carries another
+issuer, any value other than exactly `anthropic`, or when its
+`encrypted_content` is empty, and leaves it out. Every other item with
+no member is sent as Claude's.
 
 **Replaces** the per-adapter stamps proposed in the review of #56
 (`anthropic.signature: true`, `gemini.signature: true`), which said the
