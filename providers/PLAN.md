@@ -376,13 +376,17 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   `PartialArgs` exist for streamed arguments and are out of scope for
   the first version. The last chunk carries `FinishReason` and
   `UsageMetadata`.
-- Errors: `genai.APIError{Code, Message, Status}` maps by `Code`, with
-  the lower-cased `Status` as the code. 401 `UNAUTHENTICATED` and 403
-  `PERMISSION_DENIED` are `invalid_request` with that status, never
-  `server_error`. A 400 or `INVALID_ARGUMENT` whose message has "input
-  token count" and "exceeds" is `context_length_exceeded`. An envelope
-  inside the stream maps as the same one on a non-2xx response; one
-  with no code or a 2xx code takes its status from its type. The SDK
+- Errors: `genai.APIError{Code, Message, Status}` takes its type from
+  `Code` by `ErrorTypeForStatus`, with the lower-cased `Status` as the
+  code, so 401 `UNAUTHENTICATED` and 403 `PERMISSION_DENIED` are
+  `invalid_request` with that status, never `server_error`. An
+  `INVALID_ARGUMENT` overflow message, the Gemini API's "The input token
+  count (N) exceeds …" or Vertex AI's "the input token count is N but
+  model only supports up to M" with N above M, is
+  `context_length_exceeded`. An envelope inside the stream maps as the
+  same one on a non-2xx response; one with no code or a 2xx code takes
+  the HTTP status its gRPC `Status` stands for, and one with neither
+  takes its status from its type. The SDK
   drops an envelope sent as an SSE `data:` event, which then surfaces
   as `truncated_stream`. `APIError` exposes no headers, so
   `Retry-After` is synthesized from a `google.rpc.RetryInfo` in

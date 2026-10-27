@@ -402,28 +402,22 @@ func mapError(err error) error {
 		status = grpcStatus[apiErr.Status]
 	}
 	var out *openresponses.Error
-	switch {
+	switch typ := openresponses.ErrorTypeForStatus(status); {
 	case contextOverflow(apiErr):
 		out = openresponses.ContextLengthExceeded(apiErr.Message)
-	case status == http.StatusNotFound:
-		out = openresponses.NotFound(code, apiErr.Message, "")
-	case status == http.StatusTooManyRequests:
-		out = openresponses.TooManyRequests(code, apiErr.Message)
-		if delay, ok := retryDelay(apiErr.Details); ok {
-			out.WithHeader("Retry-After", strconv.Itoa(delay))
-		}
-	case status == http.StatusRequestTimeout:
-		// The upstream timed out, which a retry may fix. This matches the
-		// root's status table (PR #65) until that lands.
-		out = openresponses.ServerError(code, apiErr.Message)
-	case status >= 400 && status < 500:
-		// 401 UNAUTHENTICATED and 403 PERMISSION_DENIED land here too: they
-		// refuse the adapter's own credentials, which no retry can fix, so
-		// they are invalid_request with Gemini's status and code like any
-		// other refusal, never server_error.
-		out = openresponses.InvalidRequest(code, apiErr.Message, "")
 	default:
-		out = openresponses.ServerError(code, apiErr.Message)
+		// The type follows the status by the root's table (PLAN.md,
+		// Errors); with no status at all it is server_error. 401 UNAUTHENTICATED and 403 PERMISSION_DENIED refuse the
+		// adapter's own credentials, which no retry can fix, so they are
+		// invalid_request with Gemini's status and code like any other
+		// refusal, never server_error; 408 is a timeout upstream, which a
+		// retry may fix.
+		out = &openresponses.Error{Type: typ, Code: code, Message: apiErr.Message}
+		if typ == openresponses.ErrorTypeTooManyRequests {
+			if delay, ok := retryDelay(apiErr.Details); ok {
+				out.WithHeader("Retry-After", strconv.Itoa(delay))
+			}
+		}
 	}
 	if status >= 400 {
 		// An error that arrives inside a 2xx stream carries the code its
