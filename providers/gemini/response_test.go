@@ -374,11 +374,11 @@ func TestMapError(t *testing.T) {
 		{"rate limited", 429, `{"error":{"code":429,"message":"quota","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"6.2s"}]}}`, openresponses.ErrorTypeTooManyRequests, "resource_exhausted", "7", 0},
 		{"invalid", 400, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, "invalid_argument", "", 0},
 		{"not found", 404, `{"error":{"code":404,"message":"no model","status":"NOT_FOUND"}}`, openresponses.ErrorTypeNotFound, "not_found", "", 0},
-		// 401 and 403 are the adapter's own credentials failing. The caller
-		// never supplied a Google credential, so it reads as a gateway
-		// failure rather than as something the caller got wrong.
-		{"unauthenticated", 401, `{"error":{"code":401,"message":"key","status":"UNAUTHENTICATED"}}`, openresponses.ErrorTypeServerError, "unauthenticated", "", http.StatusBadGateway},
-		{"permission denied", 403, `{"error":{"code":403,"message":"no access","status":"PERMISSION_DENIED"}}`, openresponses.ErrorTypeServerError, "permission_denied", "", http.StatusBadGateway},
+		// 401 and 403 are the adapter's own credentials failing. No retry
+		// can fix that, so they are invalid_request with Gemini's status
+		// and code, never a retryable server_error.
+		{"unauthenticated", 401, `{"error":{"code":401,"message":"key","status":"UNAUTHENTICATED"}}`, openresponses.ErrorTypeInvalidRequest, "unauthenticated", "", 0},
+		{"permission denied", 403, `{"error":{"code":403,"message":"no access","status":"PERMISSION_DENIED"}}`, openresponses.ErrorTypeInvalidRequest, "permission_denied", "", 0},
 		{"unavailable", 503, `{"error":{"code":503,"message":"down","status":"UNAVAILABLE"}}`, openresponses.ErrorTypeServerError, "unavailable", "", 0},
 	}
 	for _, tc := range cases {

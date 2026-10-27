@@ -387,14 +387,6 @@ func mapError(err error) error {
 	}
 	var out *openresponses.Error
 	switch {
-	case apiErr.Code == http.StatusUnauthorized, apiErr.Code == http.StatusForbidden:
-		// The adapter's own credentials failing, not the caller's request.
-		// Forwarding the status would send a caller that never supplied a
-		// Google credential off to rotate one it does not hold, so this
-		// reads as what it is: this server cannot reach its upstream.
-		out = openresponses.ServerError(code, apiErr.Message)
-		out.StatusCode = http.StatusBadGateway
-		return out
 	case apiErr.Code == http.StatusNotFound:
 		out = openresponses.NotFound(code, apiErr.Message, "")
 	case apiErr.Code == http.StatusTooManyRequests:
@@ -403,6 +395,10 @@ func mapError(err error) error {
 			out.WithHeader("Retry-After", strconv.Itoa(delay))
 		}
 	case apiErr.Code >= 400 && apiErr.Code < 500:
+		// 401 UNAUTHENTICATED and 403 PERMISSION_DENIED land here too: they
+		// refuse the adapter's own credentials, which no retry can fix, so
+		// they are invalid_request with Gemini's status and code like any
+		// other refusal, never server_error.
 		out = openresponses.InvalidRequest(code, apiErr.Message, "")
 	default:
 		out = openresponses.ServerError(code, apiErr.Message)

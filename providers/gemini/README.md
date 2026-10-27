@@ -121,10 +121,12 @@ served.
 
 Upstream errors keep their HTTP status; the gRPC status in lower case
 is the code, and a `RetryInfo` detail on a 429 becomes `Retry-After`.
-The exception is 401 and 403, which are the adapter's own credentials
-failing rather than anything the caller sent: those become a
-`server_error` with a 502, so a caller that never supplied a Google
-credential is not told to go and rotate one.
+The type follows the status: 400 and the other 4xx statuses are
+`invalid_request`, 404 is `not_found`, 429 is `too_many_requests` and
+5xx is `server_error`. A 401 `UNAUTHENTICATED` or 403
+`PERMISSION_DENIED` refuses the adapter's own credentials. No retry
+can fix that, so it is `invalid_request` with the 401 or 403 and the
+code `unauthenticated` or `permission_denied`, never `server_error`.
 
 ## Versioning
 

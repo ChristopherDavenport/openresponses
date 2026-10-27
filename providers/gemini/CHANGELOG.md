@@ -4,6 +4,11 @@
 
 - `prompt_cache_key` is accepted without effect instead of being
   refused. It is a caching hint, and Gemini caches implicitly (#57).
+- Behaviour change: an upstream 401 `UNAUTHENTICATED` or 403
+  `PERMISSION_DENIED` is `invalid_request` with that status and the
+  code `unauthenticated` or `permission_denied`. It was a 502
+  `server_error`, which a client retries although no retry can fix it
+  (#58).
 
 ## v0.0.16 - 2026-10-26
 
