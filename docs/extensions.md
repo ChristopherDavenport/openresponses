@@ -87,10 +87,9 @@ the object. This library's root package keeps unknown members in an
 `Extra` field on the request and response, every item, content part,
 annotation and function tool, the `usage` object and both its details
 objects, `reasoning`, `text` and its `format`, the object forms of
-`tool_choice`, `stream_options`, `incomplete_details` and log
-probabilities. It does not yet keep them on the streaming event
-envelopes or on the error object; each of those is a defect against this
-rule.
+`tool_choice`, `stream_options`, `incomplete_details`, log
+probabilities, every streaming event and the error object. An object it
+adds later without one is a defect against this rule.
 
 ### 1.4 Readers
 

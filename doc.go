@@ -46,8 +46,8 @@
 // any depth below the request or response, are kept in that object's
 // Extra field and written back on encode, and a decoded [Response]
 // re-encodes without the keys its source left out, so a proxy built on
-// this package neither drops nor invents data. Streaming event envelopes
-// and [ErrorPayload] do not keep unknown members yet. Packages may register their own types with
+// this package neither drops nor invents data. Every built-in streaming
+// event, [ErrorPayload] and [Error] keep them the same way. Packages may register their own types with
 // [RegisterItem], [RegisterContent], [RegisterTool], [RegisterAnnotation]
 // and [RegisterEvent].
 //

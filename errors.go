@@ -1,11 +1,12 @@
 package openresponses
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
 )
 
 // ErrorType classifies an error on the wire and maps to an HTTP status.
@@ -64,21 +65,26 @@ type ErrorPayload struct {
 	Message string            `json:"message"`
 	Param   string            `json:"param"`
 	Headers map[string]string `json:"headers,omitempty"`
+
+	// Extra holds members not defined by the spec. It never holds
+	// headers, which only Headers carries.
+	Extra map[string]any `json:"-"`
 }
 
 // MarshalJSON emits param as null when empty, as the spec requires the
-// key to be present but nullable.
+// key to be present but nullable, and the Extra members.
 func (p ErrorPayload) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
+	return jsonx.MarshalWithExtra(struct {
 		Type    ErrorType         `json:"type,omitempty"`
 		Code    string            `json:"code"`
 		Message string            `json:"message"`
 		Param   *string           `json:"param"`
 		Headers map[string]string `json:"headers,omitempty"`
-	}{p.Type, p.Code, p.Message, nilIfEmpty(p.Param), p.Headers})
+	}{p.Type, p.Code, p.Message, nilIfEmpty(p.Param), p.Headers}, p.Extra, nil)
 }
 
-// UnmarshalJSON accepts null for code and param.
+// UnmarshalJSON accepts null for code and param and keeps unknown
+// members in Extra.
 func (p *ErrorPayload) UnmarshalJSON(data []byte) error {
 	var aux struct {
 		Type    ErrorType         `json:"type"`
@@ -87,10 +93,11 @@ func (p *ErrorPayload) UnmarshalJSON(data []byte) error {
 		Param   *string           `json:"param"`
 		Headers map[string]string `json:"headers"`
 	}
-	if err := json.Unmarshal(data, &aux); err != nil {
+	extra, _, err := jsonx.UnmarshalExtra(data, &aux)
+	if err != nil {
 		return err
 	}
-	*p = ErrorPayload{Type: aux.Type, Message: aux.Message, Headers: aux.Headers}
+	*p = ErrorPayload{Type: aux.Type, Message: aux.Message, Headers: aux.Headers, Extra: extra}
 	if aux.Code != nil {
 		p.Code = *aux.Code
 	}
@@ -127,6 +134,10 @@ type Error struct {
 	ResponseHeaders http.Header
 	// Body holds the raw response body when it was not a spec envelope.
 	Body []byte
+	// Extra holds the members of the error object the specification does
+	// not define. [ErrorPayload.Err] fills it and [Error.Payload] writes
+	// it, so an error forwarded through this package keeps them.
+	Extra map[string]any
 }
 
 // errorHeader reports whether an HTTP response header describes an error
@@ -167,7 +178,7 @@ func (e *Error) Payload() ErrorPayload {
 	if typ == "" {
 		typ = ErrorTypeServerError
 	}
-	payload := ErrorPayload{Type: typ, Code: e.Code, Message: e.Message, Param: e.Param}
+	payload := ErrorPayload{Type: typ, Code: e.Code, Message: e.Message, Param: e.Param, Extra: cloneExtra(e.Extra)}
 	if len(e.Headers) > 0 {
 		payload.Headers = make(map[string]string, len(e.Headers))
 		for k, vs := range e.Headers {
@@ -191,7 +202,7 @@ func (e *Error) WithHeader(name, value string) *Error {
 // Err converts a wire payload into an *Error. Only the headers that
 // describe a failure are carried over; see [Error.Headers].
 func (p ErrorPayload) Err(status int) *Error {
-	e := &Error{StatusCode: status, Type: p.Type, Code: p.Code, Message: p.Message, Param: p.Param}
+	e := &Error{StatusCode: status, Type: p.Type, Code: p.Code, Message: p.Message, Param: p.Param, Extra: cloneExtra(p.Extra)}
 	for k, v := range p.Headers {
 		if errorHeader(k) {
 			e.WithHeader(k, v)

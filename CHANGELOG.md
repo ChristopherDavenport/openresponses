@@ -18,8 +18,11 @@ versions may break the API.
   did at the top level. A proxy, store or session recorder built on this
   package dropped them before, so a member such as a provider's cache
   write count in `usage.input_tokens_details` was lost the first time a
-  response was decoded. Streaming event envelopes and the error object
-  do not keep them yet. **Breaking:** these types contain a map, so they
+  response was decoded. Every built-in streaming event, `ErrorPayload`
+  and `Error` have the same `Extra`: an error forwarded from an upstream,
+  as an HTTP envelope, an error event or a failed response, keeps the
+  members it carried, while `headers` still passes only the failure
+  headers. **Breaking:** these types contain a map, so they
   are no longer comparable with `==`; compare fields or use
   `reflect.DeepEqual`.
 - `Extra` keeps a member exactly as it arrived. Values are decoded with

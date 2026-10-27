@@ -247,8 +247,8 @@ with `RegisterItem`, `RegisterContent`, `RegisterTool`,
 `RegisterAnnotation` and `RegisterEvent`. Members the spec does not
 define are preserved in an `Extra` field, on the request and response
 and on every item, content part, tool and nested object inside them, as
-[docs/extensions.md](docs/extensions.md) section 1.3 requires; streaming
-event envelopes and the error object do not keep them yet. That
+[docs/extensions.md](docs/extensions.md) section 1.3 requires, and on
+every streaming event and error. That
 passthrough is a policy decision for a server: any key a client sends
 reaches the upstream provider unless the adapter clears or filters
 `Extra`.

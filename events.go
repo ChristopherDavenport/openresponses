@@ -31,6 +31,9 @@ type SequenceSetter interface {
 type ResponseCreatedEvent struct {
 	SequenceNumber int64     `json:"sequence_number"`
 	Response       *Response `json:"response"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.created".
@@ -45,13 +48,24 @@ func (e *ResponseCreatedEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ResponseCreatedEvent) MarshalJSON() ([]byte, error) {
 	type plain ResponseCreatedEvent
-	return jsonx.MarshalTyped(EventResponseCreated, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventResponseCreated, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ResponseCreatedEvent) UnmarshalJSON(data []byte) error {
+	type plain ResponseCreatedEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // ResponseQueuedEvent reports that the response is queued.
 type ResponseQueuedEvent struct {
 	SequenceNumber int64     `json:"sequence_number"`
 	Response       *Response `json:"response"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.queued".
@@ -66,13 +80,24 @@ func (e *ResponseQueuedEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ResponseQueuedEvent) MarshalJSON() ([]byte, error) {
 	type plain ResponseQueuedEvent
-	return jsonx.MarshalTyped(EventResponseQueued, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventResponseQueued, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ResponseQueuedEvent) UnmarshalJSON(data []byte) error {
+	type plain ResponseQueuedEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // ResponseInProgressEvent reports that generation has started.
 type ResponseInProgressEvent struct {
 	SequenceNumber int64     `json:"sequence_number"`
 	Response       *Response `json:"response"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.in_progress".
@@ -87,13 +112,24 @@ func (e *ResponseInProgressEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ResponseInProgressEvent) MarshalJSON() ([]byte, error) {
 	type plain ResponseInProgressEvent
-	return jsonx.MarshalTyped(EventResponseInProgress, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventResponseInProgress, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ResponseInProgressEvent) UnmarshalJSON(data []byte) error {
+	type plain ResponseInProgressEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // ResponseCompletedEvent is terminal: the response completed.
 type ResponseCompletedEvent struct {
 	SequenceNumber int64     `json:"sequence_number"`
 	Response       *Response `json:"response"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.completed".
@@ -108,7 +144,15 @@ func (e *ResponseCompletedEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ResponseCompletedEvent) MarshalJSON() ([]byte, error) {
 	type plain ResponseCompletedEvent
-	return jsonx.MarshalTyped(EventResponseCompleted, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventResponseCompleted, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ResponseCompletedEvent) UnmarshalJSON(data []byte) error {
+	type plain ResponseCompletedEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // ResponseFailedEvent is terminal: the response failed. Response.Error
@@ -116,6 +160,9 @@ func (e *ResponseCompletedEvent) MarshalJSON() ([]byte, error) {
 type ResponseFailedEvent struct {
 	SequenceNumber int64     `json:"sequence_number"`
 	Response       *Response `json:"response"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.failed".
@@ -130,13 +177,24 @@ func (e *ResponseFailedEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ResponseFailedEvent) MarshalJSON() ([]byte, error) {
 	type plain ResponseFailedEvent
-	return jsonx.MarshalTyped(EventResponseFailed, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventResponseFailed, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ResponseFailedEvent) UnmarshalJSON(data []byte) error {
+	type plain ResponseFailedEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // ResponseIncompleteEvent is terminal: the response stopped early.
 type ResponseIncompleteEvent struct {
 	SequenceNumber int64     `json:"sequence_number"`
 	Response       *Response `json:"response"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.incomplete".
@@ -151,7 +209,15 @@ func (e *ResponseIncompleteEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ResponseIncompleteEvent) MarshalJSON() ([]byte, error) {
 	type plain ResponseIncompleteEvent
-	return jsonx.MarshalTyped(EventResponseIncomplete, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventResponseIncomplete, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ResponseIncompleteEvent) UnmarshalJSON(data []byte) error {
+	type plain ResponseIncompleteEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // OutputItemAddedEvent announces a new output item, usually in_progress
@@ -160,6 +226,9 @@ type OutputItemAddedEvent struct {
 	SequenceNumber int64 `json:"sequence_number"`
 	OutputIndex    int   `json:"output_index"`
 	Item           Item  `json:"item"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.output_item.added".
@@ -174,7 +243,7 @@ func (e *OutputItemAddedEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *OutputItemAddedEvent) MarshalJSON() ([]byte, error) {
 	type plain OutputItemAddedEvent
-	return jsonx.MarshalTyped(EventOutputItemAdded, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventOutputItemAdded, (*plain)(e), e.Extra)
 }
 
 // UnmarshalJSON decodes the item through the item registry.
@@ -184,14 +253,15 @@ func (e *OutputItemAddedEvent) UnmarshalJSON(data []byte) error {
 		OutputIndex    int             `json:"output_index"`
 		Item           json.RawMessage `json:"item"`
 	}
-	if err := json.Unmarshal(data, &aux); err != nil {
+	extra, err := jsonx.UnmarshalTypedExtra(data, &aux)
+	if err != nil {
 		return err
 	}
 	item, err := unmarshalItemField(aux.Item)
 	if err != nil {
 		return err
 	}
-	*e = OutputItemAddedEvent{SequenceNumber: aux.SequenceNumber, OutputIndex: aux.OutputIndex, Item: item}
+	*e = OutputItemAddedEvent{SequenceNumber: aux.SequenceNumber, OutputIndex: aux.OutputIndex, Item: item, Extra: extra}
 	return nil
 }
 
@@ -200,6 +270,9 @@ type OutputItemDoneEvent struct {
 	SequenceNumber int64 `json:"sequence_number"`
 	OutputIndex    int   `json:"output_index"`
 	Item           Item  `json:"item"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.output_item.done".
@@ -214,7 +287,7 @@ func (e *OutputItemDoneEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *OutputItemDoneEvent) MarshalJSON() ([]byte, error) {
 	type plain OutputItemDoneEvent
-	return jsonx.MarshalTyped(EventOutputItemDone, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventOutputItemDone, (*plain)(e), e.Extra)
 }
 
 // UnmarshalJSON decodes the item through the item registry.
@@ -224,14 +297,15 @@ func (e *OutputItemDoneEvent) UnmarshalJSON(data []byte) error {
 		OutputIndex    int             `json:"output_index"`
 		Item           json.RawMessage `json:"item"`
 	}
-	if err := json.Unmarshal(data, &aux); err != nil {
+	extra, err := jsonx.UnmarshalTypedExtra(data, &aux)
+	if err != nil {
 		return err
 	}
 	item, err := unmarshalItemField(aux.Item)
 	if err != nil {
 		return err
 	}
-	*e = OutputItemDoneEvent{SequenceNumber: aux.SequenceNumber, OutputIndex: aux.OutputIndex, Item: item}
+	*e = OutputItemDoneEvent{SequenceNumber: aux.SequenceNumber, OutputIndex: aux.OutputIndex, Item: item, Extra: extra}
 	return nil
 }
 
@@ -242,6 +316,9 @@ type ContentPartAddedEvent struct {
 	OutputIndex    int     `json:"output_index"`
 	ContentIndex   int     `json:"content_index"`
 	Part           Content `json:"part"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.content_part.added".
@@ -256,20 +333,21 @@ func (e *ContentPartAddedEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ContentPartAddedEvent) MarshalJSON() ([]byte, error) {
 	type plain ContentPartAddedEvent
-	return jsonx.MarshalTyped(EventContentPartAdded, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventContentPartAdded, (*plain)(e), e.Extra)
 }
 
 // UnmarshalJSON decodes the part through the content registry.
 func (e *ContentPartAddedEvent) UnmarshalJSON(data []byte) error {
 	var aux contentPartAux
-	if err := json.Unmarshal(data, &aux); err != nil {
+	extra, err := jsonx.UnmarshalTypedExtra(data, &aux)
+	if err != nil {
 		return err
 	}
 	part, err := unmarshalContentField(aux.Part)
 	if err != nil {
 		return err
 	}
-	*e = ContentPartAddedEvent{aux.SequenceNumber, aux.ItemID, aux.OutputIndex, aux.ContentIndex, part}
+	*e = ContentPartAddedEvent{aux.SequenceNumber, aux.ItemID, aux.OutputIndex, aux.ContentIndex, part, extra}
 	return nil
 }
 
@@ -280,6 +358,9 @@ type ContentPartDoneEvent struct {
 	OutputIndex    int     `json:"output_index"`
 	ContentIndex   int     `json:"content_index"`
 	Part           Content `json:"part"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.content_part.done".
@@ -294,20 +375,21 @@ func (e *ContentPartDoneEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ContentPartDoneEvent) MarshalJSON() ([]byte, error) {
 	type plain ContentPartDoneEvent
-	return jsonx.MarshalTyped(EventContentPartDone, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventContentPartDone, (*plain)(e), e.Extra)
 }
 
 // UnmarshalJSON decodes the part through the content registry.
 func (e *ContentPartDoneEvent) UnmarshalJSON(data []byte) error {
 	var aux contentPartAux
-	if err := json.Unmarshal(data, &aux); err != nil {
+	extra, err := jsonx.UnmarshalTypedExtra(data, &aux)
+	if err != nil {
 		return err
 	}
 	part, err := unmarshalContentField(aux.Part)
 	if err != nil {
 		return err
 	}
-	*e = ContentPartDoneEvent{aux.SequenceNumber, aux.ItemID, aux.OutputIndex, aux.ContentIndex, part}
+	*e = ContentPartDoneEvent{aux.SequenceNumber, aux.ItemID, aux.OutputIndex, aux.ContentIndex, part, extra}
 	return nil
 }
 
@@ -320,6 +402,9 @@ type OutputTextDeltaEvent struct {
 	Delta          string    `json:"delta"`
 	Logprobs       []LogProb `json:"logprobs,omitempty"`
 	Obfuscation    string    `json:"obfuscation,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.output_text.delta".
@@ -334,7 +419,15 @@ func (e *OutputTextDeltaEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *OutputTextDeltaEvent) MarshalJSON() ([]byte, error) {
 	type plain OutputTextDeltaEvent
-	return jsonx.MarshalTyped(EventOutputTextDelta, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventOutputTextDelta, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *OutputTextDeltaEvent) UnmarshalJSON(data []byte) error {
+	type plain OutputTextDeltaEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // OutputTextDoneEvent carries the complete text of a part.
@@ -345,6 +438,9 @@ type OutputTextDoneEvent struct {
 	ContentIndex   int       `json:"content_index"`
 	Text           string    `json:"text"`
 	Logprobs       []LogProb `json:"logprobs,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.output_text.done".
@@ -359,7 +455,15 @@ func (e *OutputTextDoneEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *OutputTextDoneEvent) MarshalJSON() ([]byte, error) {
 	type plain OutputTextDoneEvent
-	return jsonx.MarshalTyped(EventOutputTextDone, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventOutputTextDone, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *OutputTextDoneEvent) UnmarshalJSON(data []byte) error {
+	type plain OutputTextDoneEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // RefusalDeltaEvent carries a chunk of refusal text.
@@ -370,6 +474,9 @@ type RefusalDeltaEvent struct {
 	ContentIndex   int    `json:"content_index"`
 	Delta          string `json:"delta"`
 	Obfuscation    string `json:"obfuscation,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.refusal.delta".
@@ -384,7 +491,15 @@ func (e *RefusalDeltaEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *RefusalDeltaEvent) MarshalJSON() ([]byte, error) {
 	type plain RefusalDeltaEvent
-	return jsonx.MarshalTyped(EventRefusalDelta, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventRefusalDelta, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *RefusalDeltaEvent) UnmarshalJSON(data []byte) error {
+	type plain RefusalDeltaEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // RefusalDoneEvent carries the complete refusal text.
@@ -394,6 +509,9 @@ type RefusalDoneEvent struct {
 	OutputIndex    int    `json:"output_index"`
 	ContentIndex   int    `json:"content_index"`
 	Refusal        string `json:"refusal"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.refusal.done".
@@ -408,7 +526,15 @@ func (e *RefusalDoneEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *RefusalDoneEvent) MarshalJSON() ([]byte, error) {
 	type plain RefusalDoneEvent
-	return jsonx.MarshalTyped(EventRefusalDone, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventRefusalDone, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *RefusalDoneEvent) UnmarshalJSON(data []byte) error {
+	type plain RefusalDoneEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // FunctionCallArgumentsDeltaEvent carries a chunk of function call
@@ -419,6 +545,9 @@ type FunctionCallArgumentsDeltaEvent struct {
 	OutputIndex    int    `json:"output_index"`
 	Delta          string `json:"delta"`
 	Obfuscation    string `json:"obfuscation,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.function_call_arguments.delta".
@@ -435,7 +564,15 @@ func (e *FunctionCallArgumentsDeltaEvent) SetSequence(n int64) { e.SequenceNumbe
 // MarshalJSON emits the event with its type discriminator.
 func (e *FunctionCallArgumentsDeltaEvent) MarshalJSON() ([]byte, error) {
 	type plain FunctionCallArgumentsDeltaEvent
-	return jsonx.MarshalTyped(EventFunctionCallArgumentsDelta, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventFunctionCallArgumentsDelta, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *FunctionCallArgumentsDeltaEvent) UnmarshalJSON(data []byte) error {
+	type plain FunctionCallArgumentsDeltaEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // FunctionCallArgumentsDoneEvent carries the complete arguments.
@@ -444,6 +581,9 @@ type FunctionCallArgumentsDoneEvent struct {
 	ItemID         string `json:"item_id"`
 	OutputIndex    int    `json:"output_index"`
 	Arguments      string `json:"arguments"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.function_call_arguments.done".
@@ -460,7 +600,15 @@ func (e *FunctionCallArgumentsDoneEvent) SetSequence(n int64) { e.SequenceNumber
 // MarshalJSON emits the event with its type discriminator.
 func (e *FunctionCallArgumentsDoneEvent) MarshalJSON() ([]byte, error) {
 	type plain FunctionCallArgumentsDoneEvent
-	return jsonx.MarshalTyped(EventFunctionCallArgumentsDone, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventFunctionCallArgumentsDone, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *FunctionCallArgumentsDoneEvent) UnmarshalJSON(data []byte) error {
+	type plain FunctionCallArgumentsDoneEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // ReasoningSummaryPartAddedEvent announces a new reasoning summary part.
@@ -470,6 +618,9 @@ type ReasoningSummaryPartAddedEvent struct {
 	OutputIndex    int     `json:"output_index"`
 	SummaryIndex   int     `json:"summary_index"`
 	Part           Content `json:"part"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.reasoning_summary_part.added".
@@ -486,20 +637,21 @@ func (e *ReasoningSummaryPartAddedEvent) SetSequence(n int64) { e.SequenceNumber
 // MarshalJSON emits the event with its type discriminator.
 func (e *ReasoningSummaryPartAddedEvent) MarshalJSON() ([]byte, error) {
 	type plain ReasoningSummaryPartAddedEvent
-	return jsonx.MarshalTyped(EventReasoningSummaryPartAdded, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventReasoningSummaryPartAdded, (*plain)(e), e.Extra)
 }
 
 // UnmarshalJSON decodes the part through the content registry.
 func (e *ReasoningSummaryPartAddedEvent) UnmarshalJSON(data []byte) error {
 	var aux summaryPartAux
-	if err := json.Unmarshal(data, &aux); err != nil {
+	extra, err := jsonx.UnmarshalTypedExtra(data, &aux)
+	if err != nil {
 		return err
 	}
 	part, err := unmarshalContentField(aux.Part)
 	if err != nil {
 		return err
 	}
-	*e = ReasoningSummaryPartAddedEvent{aux.SequenceNumber, aux.ItemID, aux.OutputIndex, aux.SummaryIndex, part}
+	*e = ReasoningSummaryPartAddedEvent{aux.SequenceNumber, aux.ItemID, aux.OutputIndex, aux.SummaryIndex, part, extra}
 	return nil
 }
 
@@ -510,6 +662,9 @@ type ReasoningSummaryPartDoneEvent struct {
 	OutputIndex    int     `json:"output_index"`
 	SummaryIndex   int     `json:"summary_index"`
 	Part           Content `json:"part"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.reasoning_summary_part.done".
@@ -526,20 +681,21 @@ func (e *ReasoningSummaryPartDoneEvent) SetSequence(n int64) { e.SequenceNumber 
 // MarshalJSON emits the event with its type discriminator.
 func (e *ReasoningSummaryPartDoneEvent) MarshalJSON() ([]byte, error) {
 	type plain ReasoningSummaryPartDoneEvent
-	return jsonx.MarshalTyped(EventReasoningSummaryPartDone, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventReasoningSummaryPartDone, (*plain)(e), e.Extra)
 }
 
 // UnmarshalJSON decodes the part through the content registry.
 func (e *ReasoningSummaryPartDoneEvent) UnmarshalJSON(data []byte) error {
 	var aux summaryPartAux
-	if err := json.Unmarshal(data, &aux); err != nil {
+	extra, err := jsonx.UnmarshalTypedExtra(data, &aux)
+	if err != nil {
 		return err
 	}
 	part, err := unmarshalContentField(aux.Part)
 	if err != nil {
 		return err
 	}
-	*e = ReasoningSummaryPartDoneEvent{aux.SequenceNumber, aux.ItemID, aux.OutputIndex, aux.SummaryIndex, part}
+	*e = ReasoningSummaryPartDoneEvent{aux.SequenceNumber, aux.ItemID, aux.OutputIndex, aux.SummaryIndex, part, extra}
 	return nil
 }
 
@@ -552,6 +708,9 @@ type ReasoningSummaryTextDeltaEvent struct {
 	SummaryIndex   int    `json:"summary_index"`
 	Delta          string `json:"delta"`
 	Obfuscation    string `json:"obfuscation,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.reasoning_summary_text.delta".
@@ -568,7 +727,15 @@ func (e *ReasoningSummaryTextDeltaEvent) SetSequence(n int64) { e.SequenceNumber
 // MarshalJSON emits the event with its type discriminator.
 func (e *ReasoningSummaryTextDeltaEvent) MarshalJSON() ([]byte, error) {
 	type plain ReasoningSummaryTextDeltaEvent
-	return jsonx.MarshalTyped(EventReasoningSummaryTextDelta, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventReasoningSummaryTextDelta, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ReasoningSummaryTextDeltaEvent) UnmarshalJSON(data []byte) error {
+	type plain ReasoningSummaryTextDeltaEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // ReasoningSummaryTextDoneEvent carries the complete reasoning summary
@@ -579,6 +746,9 @@ type ReasoningSummaryTextDoneEvent struct {
 	OutputIndex    int    `json:"output_index"`
 	SummaryIndex   int    `json:"summary_index"`
 	Text           string `json:"text"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.reasoning_summary_text.done".
@@ -595,7 +765,15 @@ func (e *ReasoningSummaryTextDoneEvent) SetSequence(n int64) { e.SequenceNumber 
 // MarshalJSON emits the event with its type discriminator.
 func (e *ReasoningSummaryTextDoneEvent) MarshalJSON() ([]byte, error) {
 	type plain ReasoningSummaryTextDoneEvent
-	return jsonx.MarshalTyped(EventReasoningSummaryTextDone, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventReasoningSummaryTextDone, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ReasoningSummaryTextDoneEvent) UnmarshalJSON(data []byte) error {
+	type plain ReasoningSummaryTextDoneEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // ReasoningDeltaEvent carries a chunk of reasoning text. Servers that
@@ -608,6 +786,9 @@ type ReasoningDeltaEvent struct {
 	ContentIndex   int    `json:"content_index"`
 	Delta          string `json:"delta"`
 	Obfuscation    string `json:"obfuscation,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.reasoning.delta".
@@ -622,7 +803,15 @@ func (e *ReasoningDeltaEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ReasoningDeltaEvent) MarshalJSON() ([]byte, error) {
 	type plain ReasoningDeltaEvent
-	return jsonx.MarshalTyped(EventReasoningDelta, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventReasoningDelta, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ReasoningDeltaEvent) UnmarshalJSON(data []byte) error {
+	type plain ReasoningDeltaEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // ReasoningDoneEvent carries the complete reasoning text. Servers that
@@ -634,6 +823,9 @@ type ReasoningDoneEvent struct {
 	OutputIndex    int    `json:"output_index"`
 	ContentIndex   int    `json:"content_index"`
 	Text           string `json:"text"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.reasoning.done".
@@ -648,7 +840,15 @@ func (e *ReasoningDoneEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ReasoningDoneEvent) MarshalJSON() ([]byte, error) {
 	type plain ReasoningDoneEvent
-	return jsonx.MarshalTyped(EventReasoningDone, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventReasoningDone, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ReasoningDoneEvent) UnmarshalJSON(data []byte) error {
+	type plain ReasoningDoneEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // OutputTextAnnotationAddedEvent announces an annotation on an output
@@ -660,6 +860,9 @@ type OutputTextAnnotationAddedEvent struct {
 	ContentIndex    int        `json:"content_index"`
 	AnnotationIndex int        `json:"annotation_index"`
 	Annotation      Annotation `json:"annotation"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "response.output_text.annotation.added".
@@ -676,7 +879,7 @@ func (e *OutputTextAnnotationAddedEvent) SetSequence(n int64) { e.SequenceNumber
 // MarshalJSON emits the event with its type discriminator.
 func (e *OutputTextAnnotationAddedEvent) MarshalJSON() ([]byte, error) {
 	type plain OutputTextAnnotationAddedEvent
-	return jsonx.MarshalTyped(EventOutputTextAnnotationAdded, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventOutputTextAnnotationAdded, (*plain)(e), e.Extra)
 }
 
 // UnmarshalJSON decodes the annotation through the annotation registry.
@@ -689,7 +892,8 @@ func (e *OutputTextAnnotationAddedEvent) UnmarshalJSON(data []byte) error {
 		AnnotationIndex int             `json:"annotation_index"`
 		Annotation      json.RawMessage `json:"annotation"`
 	}
-	if err := json.Unmarshal(data, &aux); err != nil {
+	extra, err := jsonx.UnmarshalTypedExtra(data, &aux)
+	if err != nil {
 		return err
 	}
 	var ann Annotation
@@ -699,7 +903,7 @@ func (e *OutputTextAnnotationAddedEvent) UnmarshalJSON(data []byte) error {
 			return err
 		}
 	}
-	*e = OutputTextAnnotationAddedEvent{aux.SequenceNumber, aux.ItemID, aux.OutputIndex, aux.ContentIndex, aux.AnnotationIndex, ann}
+	*e = OutputTextAnnotationAddedEvent{aux.SequenceNumber, aux.ItemID, aux.OutputIndex, aux.ContentIndex, aux.AnnotationIndex, ann, extra}
 	return nil
 }
 
@@ -710,6 +914,9 @@ type ErrorEvent struct {
 	SequenceNumber int64        `json:"sequence_number"`
 	Status         int          `json:"status,omitempty"`
 	Error          ErrorPayload `json:"error"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // EventType returns "error".
@@ -724,7 +931,15 @@ func (e *ErrorEvent) SetSequence(n int64) { e.SequenceNumber = n }
 // MarshalJSON emits the event with its type discriminator.
 func (e *ErrorEvent) MarshalJSON() ([]byte, error) {
 	type plain ErrorEvent
-	return jsonx.MarshalTyped(EventError, (*plain)(e))
+	return jsonx.MarshalTypedWithExtra(EventError, (*plain)(e), e.Extra)
+}
+
+// UnmarshalJSON decodes the event and keeps unknown members in Extra.
+func (e *ErrorEvent) UnmarshalJSON(data []byte) error {
+	type plain ErrorEvent
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(e))
+	e.Extra = extra
+	return err
 }
 
 // Err converts the event into an *Error.

@@ -257,6 +257,7 @@ func errorFromHTTP(res *http.Response) *Error {
 		out.Code = env.Error.Code
 		out.Message = env.Error.Message
 		out.Param = env.Error.Param
+		out.Extra = env.Error.Extra
 	} else {
 		out.Body = body
 		out.Message = strings.TrimSpace(string(body))
