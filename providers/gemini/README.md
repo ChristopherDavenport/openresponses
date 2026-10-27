@@ -210,12 +210,14 @@ should be a last resort as it will negatively impact model
 performance"
 ([thought signatures](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures)).
 On a model the model ID table above puts in the levels generation,
-whatever `WithThinking` sets, each model step that has a function call and no signature on any of
-its parts gets that placeholder on its first function call, the only
-call Gemini signs in a parallel step. A step with a signature of its
-own is left as Gemini wrote it, and the generations the table puts on
-budgets do not validate signatures, so nothing is added there. The string is
-the field's JSON form, which is base64: the adapter sends the bytes it
+whatever `WithThinking` sets, the first function call of each model
+step gets that placeholder when it has no signature of its own: that is
+the call Gemini 3 checks, and the only one Gemini signs in a parallel
+step. A signature elsewhere in the step, such as on text a Gemini turn
+ended with, does not cover it. A first call Gemini signed is left as it
+is, and the generations the table puts on budgets do not validate
+signatures, so nothing is added there. The string is the field's JSON
+form, which is base64: the adapter sends the bytes it
 decodes to, in the URL alphabet its underscores belong to.
 
 `STOP` completes the response. `MAX_TOKENS` ends it incomplete with

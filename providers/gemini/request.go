@@ -675,29 +675,27 @@ func mustDecode(s string) []byte {
 	return b
 }
 
-// placeholderSignatures gives each model step that calls a function and
-// carries no thought signature anywhere the placeholder on its first
-// function call. Gemini 3 refuses such a step, and a transcript written
-// by another provider, or one whose reasoning items were left out
-// because another provider issued them, has nothing but such steps.
-// Gemini signs only the first call of a parallel step, so the other
-// calls stay unsigned, and a step that has any signature of its own is
-// left as Gemini wrote it.
+// placeholderSignatures gives the first function call of each model step
+// the placeholder when that call has no thought signature of its own.
+// Gemini 3 checks that call and refuses the step without one, and a
+// transcript written by another provider, or one whose reasoning items
+// were left out because another provider issued them, has such calls. A
+// signature elsewhere in the step, such as on text a Gemini turn ended
+// with, does not cover the call. Gemini signs only the first call of a
+// parallel step, so the other calls stay unsigned, and a first call
+// Gemini signed is left as it is.
 func placeholderSignatures(contents []*genai.Content) {
 	for _, c := range contents {
 		if c.Role != genai.RoleModel {
 			continue
 		}
-		var first *genai.Part
-		signed := false
 		for _, p := range c.Parts {
-			signed = signed || len(p.ThoughtSignature) > 0
-			if first == nil && p.FunctionCall != nil {
-				first = p
+			if p.FunctionCall != nil {
+				if len(p.ThoughtSignature) == 0 {
+					p.ThoughtSignature = placeholderSignature
+				}
+				break
 			}
-		}
-		if first != nil && !signed {
-			first.ThoughtSignature = placeholderSignature
 		}
 	}
 }

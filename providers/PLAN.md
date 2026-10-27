@@ -297,10 +297,10 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   only an item issued by `gemini` is sent. One another issuer wrote, or
   one with no issuer, is left out whole, summary included: Claude's
   signatures are base64 as Gemini's are, so an unattributed item's
-  origin cannot be told. On a Gemini 3 model, a model step that calls a function and has no
-  signature on any part gets Google's documented placeholder,
-  `skip_thought_signature_validator`, on its first call, so Gemini 3
-  accepts a transcript switched from another provider.
+  origin cannot be told. On a Gemini 3 model, the first function call
+  of each model step gets Google's documented placeholder,
+  `skip_thought_signature_validator`, when it has no signature of its
+  own, so Gemini 3 accepts a transcript switched from another provider.
 - `instructions` and the system and developer messages that precede
   every other input item form the system instruction. A system or
   developer message after any other item stays in place as text parts

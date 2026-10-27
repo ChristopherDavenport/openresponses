@@ -691,3 +691,25 @@ func TestPlaceholderFollowsModel(t *testing.T) {
 		t.Fatalf("signature = %q, want none on Gemini 2.5 whatever the encoding", contents[1].Parts[0].ThoughtSignature)
 	}
 }
+
+// TestPlaceholderOnUnsignedFirstCall: Gemini 3 checks the first function
+// call of a step for a signature, so a signature elsewhere in the step,
+// here on text a Gemini turn ended with, does not cover a call another
+// provider made after it.
+func TestPlaceholderOnUnsignedFirstCall(t *testing.T) {
+	items := openresponses.Items{
+		openresponses.UserText("go"),
+		geminiReasoning(base64.StdEncoding.EncodeToString([]byte("sig"))),
+		openresponses.AssistantText("Partial answer"),
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "f", Arguments: `{}`},
+		openresponses.NewFunctionCallOutput("toolu_1", "ok"),
+	}
+	contents, _ := encode(t, openresponses.Request{Model: "gemini-3-pro-preview", Input: items})
+	parts := contents[1].Parts
+	if len(parts) != 2 || string(parts[0].ThoughtSignature) != "sig" {
+		t.Fatalf("parts = %+v, want the text with Gemini's signature then the call", parts)
+	}
+	if string(parts[1].ThoughtSignature) != string(placeholderSignature) {
+		t.Fatalf("call signature = %q, want the placeholder", parts[1].ThoughtSignature)
+	}
+}
