@@ -107,6 +107,37 @@ func TestRequestWire(t *testing.T) {
 	}
 }
 
+// Cache writes become the shared member, and the members the mapping
+// does not read are kept at the depth they arrived at.
+func TestStreamUsageCacheAndExtra(t *testing.T) {
+	// OpenRouter.
+	sink := run(t, hello(), content("Hi"), finish("stop"),
+		`{"choices":[],"usage":{"prompt_tokens":12000,"completion_tokens":300,"total_tokens":12300,"cost":0.0123,"is_byok":false,"prompt_tokens_details":{"cached_tokens":9600,"cache_write_tokens":2100,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":5,"image_tokens":0}}}`)
+	u := sink.Response().Usage
+	if u.InputTokens != 12000 || u.InputTokensDetails.CachedTokens != 9600 || u.OutputTokensDetails.ReasoningTokens != 5 {
+		t.Fatalf("usage = %+v", u)
+	}
+	sameJSON(t, u, `{
+		"input_tokens":12000,"output_tokens":300,"total_tokens":12300,"cost":0.0123,"is_byok":false,
+		"input_tokens_details":{"cached_tokens":9600,"audio_tokens":0,"openresponses-experimental.cache_write_tokens":2100},
+		"output_tokens_details":{"reasoning_tokens":5,"image_tokens":0}
+	}`)
+	if n, ok := u.InputTokensDetails.CacheWriteTokens(); !ok || n != 2100 {
+		t.Fatalf("cache writes = %d %v", n, ok)
+	}
+
+	// DeepSeek reports cache reads only, outside prompt_tokens_details.
+	sink = run(t, hello(), content("Hi"), finish("stop"),
+		`{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_cache_hit_tokens":64,"prompt_cache_miss_tokens":36}}`)
+	u = sink.Response().Usage
+	if u.InputTokensDetails.CachedTokens != 64 || u.Extra["prompt_cache_miss_tokens"] == nil {
+		t.Fatalf("usage = %+v", u)
+	}
+	if _, ok := u.InputTokensDetails.CacheWriteTokens(); ok {
+		t.Fatalf("cache writes reported for DeepSeek: %+v", u.InputTokensDetails)
+	}
+}
+
 func TestStreamToolCalls(t *testing.T) {
 	sink := run(t, hello(), roleChunk,
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"weather","arguments":""}}]}}]}`,

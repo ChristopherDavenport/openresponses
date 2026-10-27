@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/ChristopherDavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
 	"github.com/ChristopherDavenport/openresponses/internal/sse"
 )
 
@@ -153,16 +154,62 @@ type topLogprob struct {
 	Bytes   []int   `json:"bytes"`
 }
 
+// usage and its details keep the members the mapping does not read, so
+// they reach the response's usage at the same depth.
 type usage struct {
-	PromptTokens        int `json:"prompt_tokens"`
-	CompletionTokens    int `json:"completion_tokens"`
-	TotalTokens         int `json:"total_tokens"`
-	PromptTokensDetails *struct {
-		CachedTokens int `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
-	CompletionTokensDetails *struct {
-		ReasoningTokens int `json:"reasoning_tokens"`
-	} `json:"completion_tokens_details"`
+	PromptTokens            int                `json:"prompt_tokens"`
+	CompletionTokens        int                `json:"completion_tokens"`
+	TotalTokens             int                `json:"total_tokens"`
+	PromptTokensDetails     *promptDetails     `json:"prompt_tokens_details"`
+	CompletionTokensDetails *completionDetails `json:"completion_tokens_details"`
+	extra                   map[string]any
+}
+
+type promptDetails struct {
+	CachedTokens     *int `json:"cached_tokens"`
+	CacheWriteTokens *int `json:"cache_write_tokens"` // OpenRouter
+	extra            map[string]any
+}
+
+type completionDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
+	extra           map[string]any
+}
+
+func (u *usage) UnmarshalJSON(data []byte) error {
+	type plain usage
+	var p plain
+	extra, _, err := jsonx.UnmarshalExtra(data, &p)
+	if err != nil {
+		return err
+	}
+	*u = usage(p)
+	u.extra = extra
+	return nil
+}
+
+func (d *promptDetails) UnmarshalJSON(data []byte) error {
+	type plain promptDetails
+	var p plain
+	extra, _, err := jsonx.UnmarshalExtra(data, &p)
+	if err != nil {
+		return err
+	}
+	*d = promptDetails(p)
+	d.extra = extra
+	return nil
+}
+
+func (d *completionDetails) UnmarshalJSON(data []byte) error {
+	type plain completionDetails
+	var p plain
+	extra, _, err := jsonx.UnmarshalExtra(data, &p)
+	if err != nil {
+		return err
+	}
+	*d = completionDetails(p)
+	d.extra = extra
+	return nil
 }
 
 // decoder folds chunks into Emitter calls. At most one writer is open at
@@ -420,13 +467,31 @@ func (d *decoder) finish() error {
 	return openresponses.ModelError(d.finished, "the model stopped generating: "+d.finished)
 }
 
+// mapUsage maps the counts, writes a cache-write count as the shared
+// member (docs/extensions.md section 5), and keeps every member it does
+// not read in Extra at the depth it arrived at. DeepSeek reports cache
+// reads as prompt_cache_hit_tokens, read when cached_tokens is absent.
 func mapUsage(u *usage) *openresponses.Usage {
-	out := &openresponses.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
-	if u.PromptTokensDetails != nil {
-		out.InputTokensDetails.CachedTokens = u.PromptTokensDetails.CachedTokens
+	out := &openresponses.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens, TotalTokens: u.TotalTokens, Extra: u.extra}
+	cached := false
+	if d := u.PromptTokensDetails; d != nil {
+		out.InputTokensDetails.Extra = d.extra
+		if d.CachedTokens != nil {
+			out.InputTokensDetails.CachedTokens = *d.CachedTokens
+			cached = true
+		}
+		if d.CacheWriteTokens != nil && *d.CacheWriteTokens >= 0 {
+			out.InputTokensDetails.SetCacheWriteTokens(*d.CacheWriteTokens)
+		}
 	}
-	if u.CompletionTokensDetails != nil {
-		out.OutputTokensDetails.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens
+	if n, ok := u.extra["prompt_cache_hit_tokens"].(json.Number); ok && !cached {
+		if hit, err := n.Int64(); err == nil && hit >= 0 {
+			out.InputTokensDetails.CachedTokens = int(hit)
+		}
+	}
+	if d := u.CompletionTokensDetails; d != nil {
+		out.OutputTokensDetails.ReasoningTokens = d.ReasoningTokens
+		out.OutputTokensDetails.Extra = d.extra
 	}
 	if out.TotalTokens == 0 {
 		out.TotalTokens = out.InputTokens + out.OutputTokens

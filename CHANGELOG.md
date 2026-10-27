@@ -117,6 +117,14 @@ versions may break the API.
   llama.cpp's `exceed_context_size_error` and the messages vLLM,
   DeepSeek, OpenRouter, Mistral and the Claude- and Gemini-compatible
   endpoints send; providers/PLAN.md lists them.
+- `chatcompletions` reports OpenRouter's cache writes
+  (`prompt_tokens_details.cache_write_tokens`) as
+  `openresponses-experimental.cache_write_tokens`, reads DeepSeek's
+  `prompt_cache_hit_tokens` as `cached_tokens`, and keeps the usage
+  members it does not map, such as OpenRouter's `cost` and OpenAI's
+  `audio_tokens`, in the `Extra` of the usage object or details object
+  they arrived in. They were dropped, so a cache write was priced as
+  plain input and DeepSeek's cache reads were not seen at all.
 
 ## v0.0.16 - 2026-10-26
 

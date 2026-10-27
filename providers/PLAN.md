@@ -405,6 +405,14 @@ Where it differs from the SDK-backed adapters:
   compatible endpoint) or "exceeds the maximum number of tokens allowed"
   (Gemini's). Errors keep the envelope's `code`, `type`,
   `param` and the failure headers.
+- Usage maps `prompt_tokens`, `completion_tokens`, `cached_tokens` and
+  `reasoning_tokens`. OpenRouter's `prompt_tokens_details.cache_write_tokens`
+  becomes `openresponses-experimental.cache_write_tokens`
+  (docs/extensions.md section 5), and DeepSeek's
+  `prompt_cache_hit_tokens` is `cached_tokens` when
+  `prompt_tokens_details` has none. Every other member of the usage
+  object and its two details objects is kept in `Extra` at the same
+  depth, such as OpenRouter's `cost`.
 - The SSE reader moved to `internal/sse` so the root package and this
   one share it.
 
