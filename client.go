@@ -14,6 +14,13 @@ import (
 
 // Client talks to an Open Responses server over HTTP, SSE and WebSocket.
 // Create one and share it; it is safe for concurrent use.
+//
+// Over HTTP the client sends a [Text] part of a function_call_output as
+// an [InputText] with the same text, since the specification allows only
+// input_text, input_image, input_file and input_video parts there. A
+// tool written to Text's earlier documentation keeps working against a
+// server that refuses the text part. The caller's request is not
+// changed.
 type Client struct {
 	baseURL    string
 	apiKey     string
@@ -125,8 +132,11 @@ func defaultTransport() http.RoundTripper {
 func (c *Client) BaseURL() string { return c.baseURL }
 
 // Create sends a non-streaming request and returns the final response.
+// It sends a text part of a function_call_output as input_text; see
+// [Client].
 func (c *Client) Create(ctx context.Context, req Request) (*Response, error) {
 	req.Stream = false
+	req.Input = textOutputPartsAsInput(req.Input)
 	res, err := c.post(ctx, "/responses", req, "application/json")
 	if err != nil {
 		return nil, err
@@ -143,6 +153,7 @@ func (c *Client) Create(ctx context.Context, req Request) (*Response, error) {
 // The caller must Close the stream.
 func (c *Client) CreateStream(ctx context.Context, req Request) (*EventStream, error) {
 	req.Stream = true
+	req.Input = textOutputPartsAsInput(req.Input)
 	res, err := c.post(ctx, "/responses", req, "text/event-stream")
 	if err != nil {
 		return nil, err
@@ -162,6 +173,7 @@ func (c *Client) CreateStream(ctx context.Context, req Request) (*EventStream, e
 
 // Compact sends a compaction request.
 func (c *Client) Compact(ctx context.Context, req CompactRequest) (*CompactResponse, error) {
+	req.Input = textOutputPartsAsInput(req.Input)
 	res, err := c.post(ctx, "/responses/compact", req, "application/json")
 	if err != nil {
 		return nil, err
@@ -172,6 +184,47 @@ func (c *Client) Compact(ctx context.Context, req CompactRequest) (*CompactRespo
 		return nil, err
 	}
 	return &out, nil
+}
+
+// textOutputPartsAsInput returns input with every text part of a
+// function_call_output replaced by an input_text part with the same text
+// and Extra. The specification allows only input_text, input_image,
+// input_file and input_video there, and a server may refuse a text part
+// (Ollama does). Items that need no change are shared; input itself is
+// never modified, and is returned as is when nothing changes.
+func textOutputPartsAsInput(input Items) Items {
+	var out Items
+	for i, item := range input {
+		fco, ok := item.(*FunctionCallOutput)
+		if !ok || !hasTextPart(fco.Output.Parts) {
+			continue
+		}
+		if out == nil {
+			out = append(Items(nil), input...)
+		}
+		cp := *fco
+		cp.Output.Parts = make(Contents, len(fco.Output.Parts))
+		for j, part := range fco.Output.Parts {
+			if t, ok := part.(*Text); ok {
+				part = &InputText{Text: t.Text, Extra: t.Extra}
+			}
+			cp.Output.Parts[j] = part
+		}
+		out[i] = &cp
+	}
+	if out == nil {
+		return input
+	}
+	return out
+}
+
+func hasTextPart(parts Contents) bool {
+	for _, part := range parts {
+		if _, ok := part.(*Text); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // post sends body as JSON and returns the response when its status is
