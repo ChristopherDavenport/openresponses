@@ -170,7 +170,7 @@ func encodeConfig(req openresponses.Request, cfg config) (sdk.MessageNewParams, 
 	if thinking == ThinkingAuto {
 		thinking = thinkingFor(req.Model)
 	}
-	if err := encodeReasoning(req.Reasoning, req.Model, thinking, &p); err != nil {
+	if err := encodeReasoning(req.Reasoning, req.Model, thinking, refusesThinking(req), &p); err != nil {
 		return p, err
 	}
 
@@ -208,7 +208,7 @@ func encodeConfig(req openresponses.Request, cfg config) (sdk.MessageNewParams, 
 // table). The shared openresponses-experimental.effort member, when it
 // asks for max, takes the place of reasoning.effort. Whether a model
 // takes the value is the model's business.
-func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking, p *sdk.MessageNewParams) error {
+func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking, noThinking bool, p *sdk.MessageNewParams) error {
 	effort := sdk.OutputConfigEffort("")
 	switch r.Effort {
 	case "":
@@ -245,6 +245,11 @@ func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thi
 			effort = sdk.OutputConfigEffortHigh
 		}
 		p.Thinking = sdk.ThinkingConfigParamUnion{OfEnabled: &sdk.ThinkingConfigEnabledParam{BudgetTokens: thinkingBudget(effort, p.MaxTokens)}}
+	case noThinking:
+		// Claude refuses thinking with a forced tool or modified
+		// sampling, so the effort goes alone and the summary has
+		// nothing to show.
+		p.OutputConfig.Effort = effort
 	default:
 		p.OutputConfig.Effort = effort
 		// Thinking is sent with every effort: Claude 4.6 to 4.8 do not
@@ -257,6 +262,16 @@ func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thi
 		p.Thinking = sdk.ThinkingConfigParamUnion{OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{Display: display}}
 	}
 	return nil
+}
+
+// refusesThinking reports whether the request has something Claude
+// refuses thinking with: a forced tool (tool_choice required or a named
+// function), a temperature other than 1, or top_k (anthropic.top_k).
+// Under the adaptive encodings the effort is then sent without thinking.
+func refusesThinking(req openresponses.Request) bool {
+	_, topK := req.Extra[slug+"top_k"]
+	return req.ToolChoice.Function != nil || req.ToolChoice.Mode == openresponses.ToolChoiceRequired ||
+		req.Temperature != nil && *req.Temperature != 1 || topK
 }
 
 // thinkingBudgets are the budget_tokens sent for each effort under

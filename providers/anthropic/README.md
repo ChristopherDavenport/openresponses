@@ -166,6 +166,14 @@ The other efforts:
   Opus 4.6 to 4.8 and Sonnet 4.6 do not think without it; with
   `omitted` the thinking text is empty and the signature still comes
   back, so the reasoning item round-trips.
+- Claude refuses thinking with a forced tool or modified sampling. When
+  the request has `tool_choice` `required` or a named function, a
+  `temperature` other than 1, or `anthropic.top_k`, the adaptive
+  encodings send `output_config.effort` alone, without `thinking`, and a
+  summary has nothing to show. On Opus 4.6 to 4.8 and Sonnet 4.6 the
+  model then does not think. `ThinkingBudget` has no effort without
+  thinking, so it still sends the budget, and the API refuses the
+  combination.
 - Under `ThinkingBudget`, `output_config.effort` is not sent, and any
   summary setting leaves the display to the model. The budget must be
   below `max_tokens`: when it is not, it is lowered to `max_tokens - 1`,

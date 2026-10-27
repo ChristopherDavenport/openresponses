@@ -15,6 +15,9 @@
   with `display: omitted` when no summary is requested. Before, an
   effort without `reasoning.summary` sent only `output_config.effort`,
   and Claude 4.6 to 4.8 did not think at all.
+  A request with a forced tool, a temperature other than 1 or
+  `anthropic.top_k` still sends the effort alone, since Claude refuses
+  thinking with those.
 - The shared member `openresponses-experimental.effort: max` on
   `reasoning` is sent as `output_config.effort: max` (#51). `xhigh`
   stays `xhigh`.

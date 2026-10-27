@@ -300,9 +300,8 @@ func TestEncodeConfig(t *testing.T) {
 	if oc["effort"] != "xhigh" || oc["format"].(map[string]any)["type"] != "json_schema" {
 		t.Fatalf("output_config = %v", oc)
 	}
-	th := body["thinking"].(map[string]any)
-	if th["type"] != "adaptive" || th["display"] != "summarized" {
-		t.Fatalf("thinking = %v", th)
+	if th, ok := body["thinking"]; ok {
+		t.Fatalf("thinking with temperature 0.5 = %v, want the effort alone", th)
 	}
 	if _, ok := body["labels"]; ok {
 		t.Fatalf("metadata must not be sent upstream: %v", body)
@@ -672,5 +671,39 @@ func TestEncodeExtra(t *testing.T) {
 			_, err := encodeRequest(openresponses.Request{Extra: tc.extra}, defaults)
 			wantErr(t, err, tc.code, tc.param)
 		})
+	}
+}
+
+// TestEncodeEffortWithoutThinking covers the requests Claude refuses
+// thinking on, a forced tool or modified sampling: the effort goes alone.
+func TestEncodeEffortWithoutThinking(t *testing.T) {
+	tool := openresponses.Tools{&openresponses.FunctionTool{Name: "f"}}
+	cases := []struct {
+		name string
+		req  openresponses.Request
+	}{
+		{"required", openresponses.Request{Tools: tool, ToolChoice: openresponses.ToolChoice{Mode: openresponses.ToolChoiceRequired}}},
+		{"function", openresponses.Request{Tools: tool, ToolChoice: openresponses.ToolChoiceFunction("f")}},
+		{"temperature", openresponses.Request{Temperature: ptr(0.2)}},
+		{"top_k", openresponses.Request{Extra: map[string]any{"anthropic.top_k": 5}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := tc.req
+			req.Model = "claude-opus-4-8"
+			req.Reasoning = openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow, Summary: openresponses.ReasoningSummaryAuto}
+			body := wire(t, encode(t, req))
+			if _, ok := body["thinking"]; ok {
+				t.Fatalf("thinking sent: %v", body["thinking"])
+			}
+			if body["output_config"].(map[string]any)["effort"] != "low" {
+				t.Fatalf("output_config = %v", body["output_config"])
+			}
+		})
+	}
+	// Temperature 1 is the default, which thinking takes.
+	body := wire(t, encode(t, openresponses.Request{Model: "claude-opus-4-8", Temperature: ptr(1.0), Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}}))
+	if _, ok := body["thinking"]; !ok {
+		t.Fatalf("temperature 1: no thinking: %v", body)
 	}
 }
