@@ -324,9 +324,10 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   or `gemini-2.` take budgets, everything else takes levels, and
   `WithThinking` fixes the encoding. minimal / low / medium / high map
   to the levels one to one and to budgets 512 / 4096 / 8192 / 24576.
-  `xhigh` is Gemini's highest setting: `HIGH`, or a budget of 32768,
-  the largest the 2.5 family takes, which a model with a lower ceiling
-  refuses upstream. `none` is `thinkingBudget: 0` in both encodings,
+  `xhigh` is the highest setting the model takes: `HIGH`, or the
+  model's maximum budget by the README's table from Google's thinking
+  docs (2.5 Pro 32768, 2.5 Flash and Flash-Lite 24576, 24576 for a
+  model it does not know). `none` is `thinkingBudget: 0` in both encodings,
   since the level field has no value for it; a model that cannot stop
   thinking refuses it upstream. `openresponses-experimental.effort` is
   ignored, since its fallback `xhigh` is already the highest setting. Any

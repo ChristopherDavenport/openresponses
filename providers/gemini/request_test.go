@@ -423,6 +423,13 @@ func TestEncodeReasoning(t *testing.T) {
 		// largest 2.5 budget, which a model with a lower ceiling refuses.
 		{name: "xhigh", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortXHigh, level: genai.ThinkingLevelHigh},
 		{name: "xhigh on 2.5", model: "gemini-2.5-pro", effort: openresponses.ReasoningEffortXHigh, budget: genai.Ptr(int32(32768))},
+		// xhigh is the model's own maximum budget, so 2.5 Flash gets the
+		// most it takes rather than one it refuses.
+		{name: "xhigh on 2.5 flash", model: "gemini-2.5-flash", effort: openresponses.ReasoningEffortXHigh, budget: genai.Ptr(int32(24576))},
+		{name: "xhigh on 2.5 flash-lite", model: "publishers/google/models/gemini-2.5-flash-lite", effort: openresponses.ReasoningEffortXHigh, budget: genai.Ptr(int32(24576))},
+		// A budget model the table does not know gets the lowest known
+		// maximum.
+		{name: "xhigh on unknown budget model", model: "projects/p/locations/l/endpoints/123", opt: ThinkingBudget, effort: openresponses.ReasoningEffortXHigh, budget: genai.Ptr(int32(24576))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

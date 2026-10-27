@@ -249,16 +249,47 @@ func f32(p *float64) *float32 {
 // effortBudgets is the thinking-token ladder for the generations that take
 // a budget rather than a level. Gemini documents no mapping, so minimal
 // to high are the widest values legal across the 2.5 family: flash-lite's
-// floor is 512 and flash and flash-lite cap at 24576. xhigh is the most
-// a model offers, the largest budget the family takes, pro's 32768; a
-// model with a lower ceiling refuses it, as rule 1 leaves to Gemini.
+// floor is 512 and flash and flash-lite cap at 24576. xhigh is not here:
+// it is the model's own maximum, from maxBudget.
 var effortBudgets = map[openresponses.ReasoningEffort]int32{
 	openresponses.ReasoningEffortNone:    0,
 	openresponses.ReasoningEffortMinimal: 512,
 	openresponses.ReasoningEffortLow:     4096,
 	openresponses.ReasoningEffortMedium:  8192,
 	openresponses.ReasoningEffortHigh:    24576,
-	openresponses.ReasoningEffortXHigh:   32768,
+}
+
+// maxBudgets is each budget-encoded model's maximum thinking budget, from
+// Google's "Supported thinking budgets by model" table:
+// https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thinking
+// It is matched by prefix on the ID after its last "/", longest first,
+// so gemini-2.5-flash-lite is not read as gemini-2.5-flash.
+var maxBudgets = []struct {
+	prefix string
+	budget int32
+}{
+	{"gemini-2.5-flash-lite", 24576},
+	{"gemini-2.5-flash", 24576},
+	{"gemini-2.5-pro", 32768},
+}
+
+// lowestMaxBudget is what a budget-encoded model maxBudgets does not know
+// gets for xhigh: the lowest known maximum, which every model in the
+// table takes.
+const lowestMaxBudget = 24576
+
+// maxBudget is the budget xhigh sends: the most the model takes.
+func maxBudget(model string) int32 {
+	name := model
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	for _, m := range maxBudgets {
+		if strings.HasPrefix(name, m.prefix) {
+			return m.budget
+		}
+	}
+	return lowestMaxBudget
 }
 
 var effortLevels = map[openresponses.ReasoningEffort]genai.ThinkingLevel{
@@ -302,6 +333,9 @@ func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thi
 	}
 	if thinking == ThinkingBudget {
 		budget, ok := effortBudgets[r.Effort]
+		if r.Effort == openresponses.ReasoningEffortXHigh {
+			budget, ok = maxBudget(model), true
+		}
 		if !ok {
 			return nil, invalid("reasoning.effort", fmt.Sprintf("reasoning effort %q has no Gemini thinking budget", r.Effort))
 		}

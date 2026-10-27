@@ -59,20 +59,30 @@ Each effort maps as follows:
 | `low` | `LOW` | 4096 |
 | `medium` | `MEDIUM` | 8192 |
 | `high` | `HIGH` | 24576 |
-| `xhigh` | `HIGH` | 32768 |
+| `xhigh` | `HIGH` | the model's maximum, below |
 
 `thinkingLevel` has no value for `none`, and the generations that take
 levels still accept a budget, so `none` is a zero budget in both
 encodings. A model that cannot stop thinking refuses it upstream, and
 the request fails with Gemini's message as `invalid_request`; the
 adapter does not decide that on the model's behalf. Google documents
-neither a mapping nor per-model ceilings for budgets, so `minimal` to
-`high` are the widest values legal across the 2.5 family. `xhigh`,
-which the specification calls the maximum available, is Gemini's
-highest setting: the top level, `HIGH`, and the largest budget the 2.5
-family takes, 2.5 Pro's 32768. A model with a lower ceiling, such as
-2.5 Flash at 24576, refuses that budget upstream, and the request fails
-with Gemini's message.
+no mapping for budgets, so `minimal` to `high` are the widest values
+legal across the 2.5 family. `xhigh`, which the specification calls the
+maximum available, is the highest setting the model takes: the top
+level, `HIGH`, or the model's own maximum budget, from Google's
+"Supported thinking budgets by model" table
+([thinking](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thinking)):
+
+| model ID (after the last `/`) starts with | maximum budget |
+|---|---|
+| `gemini-2.5-pro` | 32768 |
+| `gemini-2.5-flash`, `gemini-2.5-flash-lite` | 24576 |
+| anything else on budgets | 24576, the lowest known maximum |
+
+A budget-encoded model the table does not know, such as a tuned model
+or a private endpoint under `WithThinking(ThinkingBudget)`, gets 24576
+for `xhigh`: every model in the table takes it, though a model whose
+maximum is higher gets less than its most.
 
 `openresponses-experimental.effort` in `reasoning` (docs/extensions.md
 section 3) is ignored, as a shared member this adapter does not

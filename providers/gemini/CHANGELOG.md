@@ -42,10 +42,11 @@
   Whether the model can stop thinking is for Gemini to say (PLAN.md
   rule 1). The README gives the model ID table the encoding is chosen
   by.
-- `reasoning.effort: xhigh` is Gemini's highest setting: `HIGH` on a
-  level-encoded model and a 32768-token budget, the largest the 2.5
-  family takes, on a budget-encoded one. It was `invalid_request`. A
-  model with a lower budget ceiling refuses it upstream.
+- `reasoning.effort: xhigh` is the highest setting the model takes:
+  `HIGH` on a level-encoded model, and on a budget-encoded one that
+  model's maximum budget from Google's table in the README (2.5 Pro
+  32768, 2.5 Flash and Flash-Lite 24576; 24576 for a model the table
+  does not know). It was `invalid_request`.
 - `openresponses-experimental.effort` is ignored: `xhigh` already maps
   to Gemini's highest setting, so `reasoning.effort` is mapped as if
   the member were absent, and `max` gets that setting. A `reasoning` object holding only unknown members no longer
