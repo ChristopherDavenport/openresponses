@@ -383,6 +383,10 @@ func TestMapError(t *testing.T) {
 		// An overflow is INVALID_ARGUMENT like any bad request, recognised
 		// by its message, and carries the shared code a client compacts on.
 		{"context overflow", 400, `{"error":{"code":400,"message":"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", 0},
+		// Vertex AI words the overflow differently.
+		{"vertex context overflow", 400, `{"error":{"code":400,"message":"Unable to submit request because the input token count is 1200000 but model only supports up to 1048575. Reduce the input token count and try again.","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", 0},
+		// Numbers that do not exceed are not an overflow.
+		{"not an overflow", 400, `{"error":{"code":400,"message":"the input token count is 10 but model only supports up to 100","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, "invalid_argument", "", 0},
 		// 408 is a timeout upstream, which a retry may fix.
 		{"request timeout", 408, `{"error":{"code":408,"message":"timeout","status":"DEADLINE_EXCEEDED"}}`, openresponses.ErrorTypeServerError, "deadline_exceeded", "", 0},
 		{"not found", 404, `{"error":{"code":404,"message":"no model","status":"NOT_FOUND"}}`, openresponses.ErrorTypeNotFound, "not_found", "", 0},

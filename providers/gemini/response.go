@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -426,16 +427,36 @@ func mapError(err error) error {
 	return out
 }
 
+// overflowMessages are Gemini's wordings of a context overflow, each
+// with the input token count and the limit:
+//
+//	The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).
+//	Unable to submit request because the input token count is 1200000 but model only supports up to 1048575.
+//
+// The first is the Gemini API's, the second Vertex AI's.
+var overflowMessages = []*regexp.Regexp{
+	regexp.MustCompile(`input token count \((\d+)\) exceeds the maximum number of tokens allowed \((\d+)\)`),
+	regexp.MustCompile(`input token count is (\d+) but model only supports up to (\d+)`),
+}
+
 // contextOverflow reports whether Gemini refused the request because its
 // input exceeds the model's context window. Gemini has no code of its
-// own for that: it is INVALID_ARGUMENT, a 400, whose message says "The
-// input token count (N) exceeds the maximum number of tokens allowed
-// (M)", so the message is matched.
+// own for that: it is INVALID_ARGUMENT, a 400, and the message is
+// matched. A message in one of overflowMessages' forms is an overflow
+// when its count exceeds its limit. Failing those, a message that says
+// "input token count" and "exceeds" is taken as one.
 func contextOverflow(e genai.APIError) bool {
 	if e.Code != http.StatusBadRequest && e.Status != "INVALID_ARGUMENT" {
 		return false
 	}
 	msg := strings.ToLower(e.Message)
+	for _, re := range overflowMessages {
+		if m := re.FindStringSubmatch(msg); m != nil {
+			n, err1 := strconv.Atoi(m[1])
+			limit, err2 := strconv.Atoi(m[2])
+			return err1 == nil && err2 == nil && n > limit
+		}
+	}
 	return strings.Contains(msg, "input token count") && strings.Contains(msg, "exceeds")
 }
 

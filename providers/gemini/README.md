@@ -241,9 +241,12 @@ A request whose input exceeds the model's context window is
 `invalid_request` with the code `context_length_exceeded`
 (docs/extensions.md section 6) and the 400. Gemini has no code of its
 own for it: the adapter recognises an `INVALID_ARGUMENT` (or any 400)
-whose message contains both "input token count" and "exceeds", case
-ignored, as in "The input token count (1200000) exceeds the maximum
-number of tokens allowed (1048576)." Output cut short by
+by its message, case ignored. The Gemini API says "The input token
+count (N) exceeds the maximum number of tokens allowed (M)" and Vertex
+AI says "the input token count is N but model only supports up to M";
+either is an overflow when N is greater than M. A message in neither
+form that contains both "input token count" and "exceeds" is taken as
+one too. Output cut short by
 `max_output_tokens` is not an overflow; it ends the response incomplete,
 as above.
 

@@ -13,8 +13,10 @@
   (#58).
 - A request whose input exceeds the model's context window is
   `invalid_request` with the shared code `context_length_exceeded`,
-  recognised from Gemini's `INVALID_ARGUMENT` message "The input token
-  count … exceeds …". It was `invalid_argument` (#61).
+  recognised from the `INVALID_ARGUMENT` message: the Gemini API's "The
+  input token count (N) exceeds …" or Vertex AI's "the input token count
+  is N but model only supports up to M", with N greater than M. It was
+  `invalid_argument` (#61).
 - An error envelope inside a stream whose `code` is missing or a 2xx
   takes its status from its type, so an error never carries a 2xx
   status. One with a 4xx or 5xx `code` maps as the same envelope on a
