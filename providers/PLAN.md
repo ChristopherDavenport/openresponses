@@ -49,7 +49,13 @@ Each module has the same shape:
    adapter picks the encoding from the model ID by a table in its
    README, assumes the newest encoding for an ID it does not recognise,
    and offers an option to fix the encoding. It still never refuses a
-   value on a model's behalf.
+   value on a model's behalf, with one exception: a value the
+   provider's own documentation says a model rejects, with no encoding
+   that model accepts, is refused as rule 3 refuses a field with no
+   equivalent, with `invalid_request`, `param` set and a message naming
+   the model, rather than sent to fail. The README cites the document
+   (the Anthropic adapter refuses effort `none` for models that cannot
+   turn thinking off).
 2. Endpoints and credentials belong to the client. Vertex, Bedrock and
    API keys are lines in the README that construct the SDK client; the
    adapter has no Vertex code.
