@@ -553,3 +553,24 @@ func TestEncodeReasoningIssuer(t *testing.T) {
 		})
 	}
 }
+
+// TestEncodeCallIDRewrite covers a call_id outside Claude's tool_use id
+// pattern: the call and its output are sent under the same rewritten id.
+func TestEncodeCallIDRewrite(t *testing.T) {
+	p := encode(t, openresponses.Request{Input: openresponses.Items{
+		openresponses.UserText("Read it"),
+		&openresponses.FunctionCall{CallID: "functions.read:0", Name: "read", Arguments: `{}`},
+		&openresponses.FunctionCall{CallID: "toolu_01A-b", Name: "read", Arguments: `{}`},
+		openresponses.NewFunctionCallOutput("functions.read:0", "a"),
+		openresponses.NewFunctionCallOutput("toolu_01A-b", "b"),
+	}})
+	// call_ and the first 24 hex digits of sha256("functions.read:0").
+	const want = "call_c216cab2de2e56d547b4e634"
+	calls, results := p.Messages[1].Content, p.Messages[2].Content
+	if got := calls[0].OfToolUse.ID; got != want || results[0].OfToolResult.ToolUseID != want {
+		t.Fatalf("rewritten call %q, result %q, want %q", got, results[0].OfToolResult.ToolUseID, want)
+	}
+	if calls[1].OfToolUse.ID != "toolu_01A-b" || results[1].OfToolResult.ToolUseID != "toolu_01A-b" {
+		t.Fatalf("an id the pattern takes should pass unchanged: %+v", calls[1])
+	}
+}

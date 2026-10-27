@@ -35,6 +35,10 @@
   for a host that appends a standing instruction at the end of the
   input: it is now read as part of the turn, not as system prompt; put
   it in `instructions` or at the front.
+- A `call_id` outside Claude's `tool_use` id pattern, such as
+  `functions.read:0` from an OpenAI-compatible server, is sent as `call_`
+  and the first 24 hex digits of its SHA-256, the same on the call and
+  its output (#60). Claude refused it with a 400.
 
 ## v0.0.16 - 2026-10-26
 

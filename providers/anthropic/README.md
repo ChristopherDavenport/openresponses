@@ -64,7 +64,16 @@ turn with its text unchanged, joining the user message around it: a
 note after tool results follows them in the same user message. A later
 system message is therefore never moved into `system`, which is the
 front of the prefix the prompt cache matches. Claude's mid-conversation
-system message is not used. The other items fold into alternating
+system message is not used.
+
+Claude holds a `tool_use` id to `^[a-zA-Z0-9_-]+$`, and a `call_id`
+from another server may fall outside it (`functions.read:0`). Such a
+`call_id` is sent as `call_` followed by the first 24 hex digits of the
+SHA-256 of the `call_id`'s UTF-8 bytes, on the `tool_use` and on the
+`tool_result` that answers it, so the two still pair; `functions.read:0`
+becomes `call_c216cab2de2e56d547b4e634`. A `call_id` the pattern accepts
+is sent unchanged. The rewrite holds within the request only: response
+items carry the ids Claude issued. The other items fold into alternating
 messages: every user-side item (user messages, function outputs) joins
 one user message and every assistant-side item (assistant messages,
 function calls, reasoning, `anthropic.` items) one assistant message.

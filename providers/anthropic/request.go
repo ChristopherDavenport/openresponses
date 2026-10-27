@@ -1,7 +1,9 @@
 package anthropic
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"mime"
@@ -415,7 +417,7 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			if err != nil {
 				return nil, nil, invalid(p+".arguments", "arguments is not a JSON object: "+err.Error())
 			}
-			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{sdk.NewToolUseBlock(it.CallID, input, it.Name)})
+			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{sdk.NewToolUseBlock(toolUseID(it.CallID), input, it.Name)})
 		case *openresponses.FunctionCallOutput:
 			block, err := encodeFunctionOutput(it, p+".output")
 			if err != nil {
@@ -472,6 +474,23 @@ func replayable(it *openresponses.ReasoningItem) bool {
 	return false
 }
 
+// toolUseID returns the id a call_id is sent as. Claude holds tool_use
+// ids to ^[a-zA-Z0-9_-]+$, and other servers mint call_ids outside it
+// (functions.read:0), so such an id is rewritten to call_ followed by
+// the first 24 hex digits of its SHA-256. The function is the same for
+// the call and its output, so they still pair; an id the pattern accepts
+// passes unchanged. Responses carry Claude's own ids, so a rewritten id
+// never appears in one.
+func toolUseID(callID string) string {
+	if callID != "" && strings.IndexFunc(callID, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-')
+	}) < 0 {
+		return callID
+	}
+	sum := sha256.Sum256([]byte(callID))
+	return "call_" + hex.EncodeToString(sum[:])[:24]
+}
+
 func decodeArguments(s string) (map[string]any, error) {
 	args := map[string]any{}
 	if strings.TrimSpace(s) == "" {
@@ -485,9 +504,10 @@ func decodeArguments(s string) (map[string]any, error) {
 
 // encodeFunctionOutput builds the tool_result block. Text and media parts
 // are carried as content; the tool_use_id is the call_id, which is the
-// id Claude issued when the call came from this adapter.
+// id Claude issued when the call came from this adapter, rewritten as
+// [toolUseID] says when it is not.
 func encodeFunctionOutput(out *openresponses.FunctionCallOutput, p string) (sdk.ContentBlockParamUnion, error) {
-	result := sdk.ToolResultBlockParam{ToolUseID: out.CallID}
+	result := sdk.ToolResultBlockParam{ToolUseID: toolUseID(out.CallID)}
 	if out.Output.Parts == nil {
 		if out.Output.Text != "" {
 			result.Content = []sdk.ToolResultBlockParamContentUnion{{OfText: &sdk.TextBlockParam{Text: out.Output.Text}}}
