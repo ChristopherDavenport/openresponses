@@ -306,6 +306,7 @@ func TestMapError(t *testing.T) {
 		{"invalid with param", 400, `{"error":{"message":"bad","type":"invalid_request_error","param":"messages","code":null}}`, nil, openresponses.ErrorTypeInvalidRequest, "invalid_request_error", "bad", "messages", ""},
 		{"numeric code", 400, `{"error":{"message":"bad","code":20015}}`, nil, openresponses.ErrorTypeInvalidRequest, "20015", "bad", "", ""},
 		{"unauthorized", 401, `{"error":{"message":"key","type":"authentication_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, "authentication_error", "key", "", ""},
+		{"forbidden", 403, `{"error":{"message":"model not allowed","type":"permission_error","code":"model_not_allowed"}}`, nil, openresponses.ErrorTypeInvalidRequest, "model_not_allowed", "model not allowed", "", ""},
 		{"not found", 404, `{"error":{"message":"no model","code":"model_not_found"}}`, nil, openresponses.ErrorTypeNotFound, "model_not_found", "no model", "", ""},
 		{"plain text", 503, `upstream unavailable`, nil, openresponses.ErrorTypeServerError, "http_503", "upstream unavailable", "", ""},
 	}
