@@ -53,6 +53,11 @@ versions may break the API.
   its own, so `ItemID` returns "" for it. A consumer that pairs calls
   with outputs or tracks items by id no longer needs a type switch that
   misses extension calls.
+- `Text`'s documentation no longer recommends it for function call
+  outputs. A `function_call_output` takes `input_text`, `input_image`,
+  `input_file` and `input_video` parts, so a tool result's text is an
+  `InputText`; a `text` part there is off-spec, and Ollama refuses the
+  request (ChristopherDavenport/agenttool#100).
 - `NewResponse` echoes the request's reasoning effort and summary
   without its `Extra` members. A response carries an extension member of
   `reasoning` only when the adapter honoured it, which the adapter

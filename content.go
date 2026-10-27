@@ -228,7 +228,11 @@ func (p *Refusal) UnmarshalJSON(data []byte) error {
 	return err
 }
 
-// Text is a plain text part, used inside function call outputs.
+// Text is a plain text part. The specification allows it in message
+// content and in a reasoning item's summary and content. It is not one
+// of the parts a function_call_output takes, which are input_text,
+// input_image, input_file and input_video, so a tool result's text is an
+// [InputText].
 type Text struct {
 	Text string `json:"text"`
 

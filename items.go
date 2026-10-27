@@ -216,7 +216,9 @@ func NewFunctionCallOutput(callID, output string) *FunctionCallOutput {
 
 // FunctionCallOutputData is the output of a function call: either a
 // string or a list of content parts. When Parts is non-nil it is emitted;
-// otherwise Text is emitted as a JSON string.
+// otherwise Text is emitted as a JSON string. The parts the specification
+// allows here are [InputText], [InputImage], [InputFile] and
+// [InputVideo].
 type FunctionCallOutputData struct {
 	Text  string
 	Parts Contents
