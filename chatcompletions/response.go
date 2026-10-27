@@ -596,6 +596,13 @@ func inputExceeds(msg string) (exceeds, known bool) {
 	if !ok {
 		return false, false
 	}
+	// A total with the output's share counts every part of the input,
+	// functions included, where "N in the messages" counts one part.
+	if total, ok := firstCount(totalCount, msg); ok {
+		if output, ok := firstCount(outputCount, msg); ok {
+			return total-output > window, true
+		}
+	}
 	if input, ok := firstCount(inputCount, msg); ok {
 		return input > window, true
 	}
@@ -603,8 +610,7 @@ func inputExceeds(msg string) (exceeds, known bool) {
 	if !ok {
 		return false, false
 	}
-	output, _ := firstCount(outputCount, msg)
-	return total-output > window, true
+	return total > window, true
 }
 
 // firstCount returns the first group re matched in msg as a number.
