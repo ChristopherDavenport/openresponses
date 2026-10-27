@@ -21,15 +21,15 @@ const slug = "anthropic."
 // encodeRequest translates a request into the parameters of one Messages
 // call. Fields the Messages API has no equivalent for are rejected with
 // invalid_request naming the field; nothing is dropped silently.
-// maxTokens and cacheTTL are the adapter's settings; see [WithMaxTokens]
-// and [WithCacheTTL].
-func encodeRequest(req openresponses.Request, maxTokens int64, cacheTTL sdk.CacheControlEphemeralTTL) (sdk.MessageNewParams, error) {
+// cfg holds the adapter's settings; see [WithMaxTokens], [WithCacheTTL]
+// and [WithThinking].
+func encodeRequest(req openresponses.Request, cfg config) (sdk.MessageNewParams, error) {
 	if req.PreviousResponseID != "" {
 		// The handler resolves continuation when it has a store. Reaching
 		// here means it has none, and the Messages API keeps no state.
 		return sdk.MessageNewParams{}, openresponses.PreviousResponseNotFound(req.PreviousResponseID)
 	}
-	p, err := encodeConfig(req, maxTokens, cacheTTL)
+	p, err := encodeConfig(req, cfg)
 	if err != nil {
 		return sdk.MessageNewParams{}, err
 	}
@@ -55,8 +55,8 @@ func invalid(param, message string) *openresponses.Error {
 }
 
 // encodeConfig maps the request's settings.
-func encodeConfig(req openresponses.Request, maxTokens int64, cacheTTL sdk.CacheControlEphemeralTTL) (sdk.MessageNewParams, error) {
-	p := sdk.MessageNewParams{Model: sdk.Model(req.Model), MaxTokens: maxTokens}
+func encodeConfig(req openresponses.Request, cfg config) (sdk.MessageNewParams, error) {
+	p := sdk.MessageNewParams{Model: sdk.Model(req.Model), MaxTokens: cfg.maxTokens}
 	if req.MaxOutputTokens != nil {
 		p.MaxTokens = int64(*req.MaxOutputTokens)
 	}
@@ -88,7 +88,7 @@ func encodeConfig(req openresponses.Request, maxTokens int64, cacheTTL sdk.Cache
 		// so the request opts in; the key itself has nothing to name. An
 		// unset TTL is left off, and the API applies its five minutes.
 		p.CacheControl = sdk.NewCacheControlEphemeralParam()
-		p.CacheControl.TTL = cacheTTL
+		p.CacheControl.TTL = cfg.cacheTTL
 	}
 	// metadata is the client's own bookkeeping; the response echoes it and
 	// nothing upstream wants it.
@@ -103,7 +103,11 @@ func encodeConfig(req openresponses.Request, maxTokens int64, cacheTTL sdk.Cache
 		return p, unsupported("service_tier")
 	}
 
-	if err := encodeReasoning(req.Reasoning, &p); err != nil {
+	thinking := cfg.thinking
+	if thinking == ThinkingAuto {
+		thinking = thinkingFor(req.Model)
+	}
+	if err := encodeReasoning(req.Reasoning, thinking, &p); err != nil {
 		return p, err
 	}
 
@@ -136,30 +140,133 @@ func encodeConfig(req openresponses.Request, maxTokens int64, cacheTTL sdk.Cache
 	return p, nil
 }
 
-// encodeReasoning maps effort onto output_config.effort and the summary
-// setting onto thinking display. "none" disables thinking; whether a
-// model allows that is the model's business.
-func encodeReasoning(r openresponses.ReasoningConfig, p *sdk.MessageNewParams) error {
+// encodeReasoning maps the effort and the summary setting onto the
+// encoding the model's generation takes (see [Thinking] and the README's
+// table). The shared openresponses-experimental.effort member, when it
+// asks for max, takes the place of reasoning.effort. Whether a model
+// takes the value is the model's business.
+func encodeReasoning(r openresponses.ReasoningConfig, thinking Thinking, p *sdk.MessageNewParams) error {
+	effort := sdk.OutputConfigEffort("")
 	switch r.Effort {
 	case "":
 	case openresponses.ReasoningEffortNone:
-		p.Thinking = sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
-		return nil
+		effort = "none"
 	case openresponses.ReasoningEffortMinimal, openresponses.ReasoningEffortLow:
-		p.OutputConfig.Effort = sdk.OutputConfigEffortLow
+		effort = sdk.OutputConfigEffortLow
 	case openresponses.ReasoningEffortMedium:
-		p.OutputConfig.Effort = sdk.OutputConfigEffortMedium
+		effort = sdk.OutputConfigEffortMedium
 	case openresponses.ReasoningEffortHigh:
-		p.OutputConfig.Effort = sdk.OutputConfigEffortHigh
+		effort = sdk.OutputConfigEffortHigh
 	case openresponses.ReasoningEffortXHigh:
-		p.OutputConfig.Effort = sdk.OutputConfigEffortXhigh
+		effort = sdk.OutputConfigEffortXhigh
 	default:
 		return invalid("reasoning.effort", fmt.Sprintf("unknown reasoning effort %q", r.Effort))
 	}
-	if r.Summary != "" {
-		p.Thinking = sdk.ThinkingConfigParamUnion{OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{Display: sdk.ThinkingConfigAdaptiveDisplaySummarized}}
+	if r.ExtendedEffort() == openresponses.EffortMax {
+		effort = sdk.OutputConfigEffortMax
+	}
+	switch {
+	case effort == "none" && thinking == ThinkingBetweenTools:
+		p.Thinking = sdk.ThinkingConfigParamUnion{OfBetweenTools: &sdk.ThinkingConfigBetweenToolsParam{}}
+	case effort == "none":
+		p.Thinking = sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
+	case effort == "" && r.Summary == "":
+	case thinking == ThinkingBudget:
+		if effort == "" {
+			// A summary alone asks for thinking at the API's default
+			// effort, which is high.
+			effort = sdk.OutputConfigEffortHigh
+		}
+		p.Thinking = sdk.ThinkingConfigParamUnion{OfEnabled: &sdk.ThinkingConfigEnabledParam{BudgetTokens: thinkingBudget(effort, p.MaxTokens)}}
+	default:
+		p.OutputConfig.Effort = effort
+		// Thinking is sent with every effort: Claude 4.6 to 4.8 do not
+		// think without it. Without a summary the thinking text is
+		// omitted, and the signature still comes back.
+		display := sdk.ThinkingConfigAdaptiveDisplayOmitted
+		if r.Summary != "" {
+			display = sdk.ThinkingConfigAdaptiveDisplaySummarized
+		}
+		p.Thinking = sdk.ThinkingConfigParamUnion{OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{Display: display}}
 	}
 	return nil
+}
+
+// thinkingBudgets are the budget_tokens sent for each effort under
+// [ThinkingBudget]. Each is below [DefaultMaxTokens], and 1024 is the
+// API's minimum.
+var thinkingBudgets = map[sdk.OutputConfigEffort]int64{
+	sdk.OutputConfigEffortLow:    1024,
+	sdk.OutputConfigEffortMedium: 4096,
+	sdk.OutputConfigEffortHigh:   16384,
+	sdk.OutputConfigEffortXhigh:  24576,
+	sdk.OutputConfigEffortMax:    32000,
+}
+
+// thinkingBudget returns the budget for effort, lowered below maxTokens
+// as the API requires, but never below the API's minimum of 1024: a
+// max_tokens that leaves no room for that is the API's to refuse.
+func thinkingBudget(effort sdk.OutputConfigEffort, maxTokens int64) int64 {
+	b := thinkingBudgets[effort]
+	if b >= maxTokens {
+		b = max(maxTokens-1, 1024)
+	}
+	return b
+}
+
+// thinkingFor derives the effort encoding from a model ID, for
+// [ThinkingAuto]. The generation is the first number after "claude-"
+// and the one after it when that is a one- or two-digit minor version,
+// so claude-opus-4-5, claude-3-7-sonnet-20250219,
+// claude-sonnet-4@20250514 and us.anthropic.claude-haiku-4-5-20251001-v1:0
+// all read. An ID with no generation is assumed to be the newest.
+func thinkingFor(model string) Thinking {
+	i := strings.Index(model, "claude-")
+	if i < 0 {
+		return ThinkingBetweenTools
+	}
+	name := model[i+len("claude-"):]
+	if j := strings.IndexAny(name, "@[:"); j >= 0 {
+		name = name[:j]
+	}
+	major, minor := -1, 0
+	parts := strings.Split(name, "-")
+	for k, part := range parts {
+		if n, ok := version(part); ok {
+			major = n
+			if k+1 < len(parts) {
+				if m, ok := version(parts[k+1]); ok {
+					minor = m
+				}
+			}
+			break
+		}
+	}
+	switch {
+	case major < 0:
+		return ThinkingBetweenTools
+	case major < 4 || major == 4 && minor < 6:
+		return ThinkingBudget
+	case major < 5 || major == 5 && minor < 5:
+		return ThinkingAdaptive
+	}
+	return ThinkingBetweenTools
+}
+
+// version reads a one- or two-digit version number; a date such as
+// 20250514 is not one.
+func version(s string) (int, bool) {
+	if len(s) == 0 || len(s) > 2 {
+		return 0, false
+	}
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, true
 }
 
 // encodeTools maps function tools and passes anthropic.* tools through:

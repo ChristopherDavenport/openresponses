@@ -12,6 +12,9 @@ import (
 
 func ptr[T any](v T) *T { return &v }
 
+// defaults are the settings New gives an adapter.
+var defaults = config{maxTokens: DefaultMaxTokens}
+
 func errorsAs(err error, target **openresponses.Error) bool { return errors.As(err, target) }
 
 // wantErr asserts err is an *openresponses.Error with the given code and
@@ -29,7 +32,7 @@ func wantErr(t *testing.T, err error, code, param string) {
 
 func encode(t *testing.T, req openresponses.Request) sdk.MessageNewParams {
 	t.Helper()
-	p, err := encodeRequest(req, DefaultMaxTokens, "")
+	p, err := encodeRequest(req, defaults)
 	if err != nil {
 		t.Fatalf("encodeRequest: %v", err)
 	}
@@ -194,11 +197,11 @@ func TestEncodeInputErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := encodeRequest(openresponses.Request{Input: tc.input}, DefaultMaxTokens, "")
+			_, err := encodeRequest(openresponses.Request{Input: tc.input}, defaults)
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
-	_, err := encodeRequest(openresponses.Request{PreviousResponseID: "resp_1"}, DefaultMaxTokens, "")
+	_, err := encodeRequest(openresponses.Request{PreviousResponseID: "resp_1"}, defaults)
 	wantErr(t, err, openresponses.CodePreviousResponseNotFound, "previous_response_id")
 }
 
@@ -253,15 +256,6 @@ func TestEncodeConfig(t *testing.T) {
 		t.Fatalf("metadata must not be sent upstream: %v", body)
 	}
 
-	p = encode(t, openresponses.Request{Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}})
-	if body := wire(t, p); body["thinking"].(map[string]any)["type"] != "disabled" {
-		t.Fatalf("effort none = %v", body["thinking"])
-	}
-	p = encode(t, openresponses.Request{Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortMinimal}})
-	if body := wire(t, p); body["output_config"].(map[string]any)["effort"] != "low" {
-		t.Fatalf("effort minimal = %v", body["output_config"])
-	}
-
 	p = encode(t, openresponses.Request{})
 	body = wire(t, p)
 	for _, key := range []string{"thinking", "output_config", "tools", "tool_choice", "system", "metadata", "cache_control", "temperature"} {
@@ -289,7 +283,7 @@ func TestEncodeCacheTTL(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p, err := encodeRequest(openresponses.Request{PromptCacheKey: tc.key}, DefaultMaxTokens, tc.ttl)
+			p, err := encodeRequest(openresponses.Request{PromptCacheKey: tc.key}, config{maxTokens: DefaultMaxTokens, cacheTTL: tc.ttl})
 			if err != nil {
 				t.Fatalf("encodeRequest: %v", err)
 			}
@@ -332,7 +326,7 @@ func TestEncodeConfigErrors(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := encodeRequest(tc.req, DefaultMaxTokens, "")
+			_, err := encodeRequest(tc.req, defaults)
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
@@ -374,7 +368,7 @@ func TestEncodeTools(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := encodeRequest(openresponses.Request{Tools: openresponses.Tools{tc.tool}}, DefaultMaxTokens, "")
+			_, err := encodeRequest(openresponses.Request{Tools: openresponses.Tools{tc.tool}}, defaults)
 			wantErr(t, err, tc.code, tc.param)
 		})
 	}
@@ -410,5 +404,86 @@ func TestEncodeToolChoice(t *testing.T) {
 	}
 	if _, ok := wire(t, encode(t, openresponses.Request{ParallelToolCalls: ptr(true)}))["tool_choice"]; ok {
 		t.Fatal("parallel_tool_calls: true should not add a tool_choice")
+	}
+}
+
+// TestEncodeReasoning covers the effort table in the README: one row per
+// encoding, picked from the model ID or fixed by WithThinking.
+func TestEncodeReasoning(t *testing.T) {
+	maxEffort := openresponses.ReasoningConfig{}
+	maxEffort.SetExtendedEffort(openresponses.EffortMax)
+	cases := []struct {
+		name      string
+		model     string
+		thinking  Thinking
+		maxTokens *int
+		reasoning openresponses.ReasoningConfig
+		want      map[string]any // thinking, or nil for none sent
+		effort    string         // output_config.effort, or "" for none sent
+	}{
+		{"none on 5.5", "claude-sonnet-5-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "between_tools"}, ""},
+		{"none on an unknown id", "my-tuned-model", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "between_tools"}, ""},
+		{"none on 5", "claude-opus-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
+		{"none on 4.5", "claude-haiku-4-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone, Summary: openresponses.ReasoningSummaryAuto}, map[string]any{"type": "disabled"}, ""},
+		{"effort without summary thinks", "claude-opus-4-8", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "adaptive", "display": "omitted"}, "high"},
+		{"effort with summary", "claude-opus-4-6", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortMinimal, Summary: openresponses.ReasoningSummaryDetailed}, map[string]any{"type": "adaptive", "display": "summarized"}, "low"},
+		{"summary alone", "claude-opus-5-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Summary: openresponses.ReasoningSummaryAuto}, map[string]any{"type": "adaptive", "display": "summarized"}, ""},
+		{"xhigh is not max", "claude-opus-5-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh}, map[string]any{"type": "adaptive", "display": "omitted"}, "xhigh"},
+		{"extended max", "claude-opus-5-5", ThinkingAuto, nil, maxEffort, map[string]any{"type": "adaptive", "display": "omitted"}, "max"},
+		{"budget before 4.6", "claude-haiku-4-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortMedium}, map[string]any{"type": "enabled", "budget_tokens": float64(4096)}, ""},
+		{"budget on vertex", "claude-opus-4-5@20251101", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}, map[string]any{"type": "enabled", "budget_tokens": float64(1024)}, ""},
+		{"budget on bedrock", "us.anthropic.claude-sonnet-4-20250514-v1:0", ThinkingAuto, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(24576)}, ""},
+		{"budget on 3.7", "claude-3-7-sonnet-20250219", ThinkingAuto, nil, maxEffort, map[string]any{"type": "enabled", "budget_tokens": float64(32000)}, ""},
+		{"budget for a summary alone", "claude-haiku-4-5", ThinkingAuto, nil, openresponses.ReasoningConfig{Summary: openresponses.ReasoningSummaryAuto}, map[string]any{"type": "enabled", "budget_tokens": float64(16384)}, ""},
+		{"budget below max_output_tokens", "claude-haiku-4-5", ThinkingAuto, ptr(8000), openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(7999)}, ""},
+		{"budget never below the minimum", "claude-haiku-4-5", ThinkingAuto, ptr(512), openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(1024)}, ""},
+		{"fixed budget", "my-tuned-model", ThinkingBudget, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh}, map[string]any{"type": "enabled", "budget_tokens": float64(16384)}, ""},
+		{"fixed adaptive", "claude-sonnet-5-5", ThinkingAdaptive, nil, openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}, map[string]any{"type": "disabled"}, ""},
+		{"nothing asked", "claude-opus-4-5", ThinkingAuto, nil, openresponses.ReasoningConfig{}, nil, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := encodeRequest(openresponses.Request{Model: tc.model, MaxOutputTokens: tc.maxTokens, Reasoning: tc.reasoning}, config{maxTokens: DefaultMaxTokens, thinking: tc.thinking})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := wire(t, p)
+			got, _ := body["thinking"].(map[string]any)
+			if len(got) != len(tc.want) {
+				t.Fatalf("thinking = %v, want %v", body["thinking"], tc.want)
+			}
+			for k, v := range tc.want {
+				if got[k] != v {
+					t.Fatalf("thinking = %v, want %v", got, tc.want)
+				}
+			}
+			oc, _ := body["output_config"].(map[string]any)
+			if effort, _ := oc["effort"].(string); effort != tc.effort {
+				t.Fatalf("output_config.effort = %q, want %q", effort, tc.effort)
+			}
+		})
+	}
+}
+
+func TestThinkingFor(t *testing.T) {
+	cases := map[string]Thinking{
+		"claude-opus-4":                           ThinkingBudget,
+		"claude-opus-4-1-20250805":                ThinkingBudget,
+		"claude-3-5-haiku-latest":                 ThinkingBudget,
+		"claude-opus-4-6":                         ThinkingAdaptive,
+		"claude-sonnet-4-6[1m]":                   ThinkingAdaptive,
+		"claude-opus-4-8":                         ThinkingAdaptive,
+		"claude-fable-5-1":                        ThinkingAdaptive,
+		"claude-opus-5-5":                         ThinkingBetweenTools,
+		"claude-haiku-5-5":                        ThinkingBetweenTools,
+		"claude-opus-6":                           ThinkingBetweenTools,
+		"anthropic.claude-opus-4-5-20251101-v1:0": ThinkingBudget,
+		"arn:aws:bedrock:us-east-1:1:application-inference-profile/x": ThinkingBetweenTools,
+		"": ThinkingBetweenTools,
+	}
+	for model, want := range cases {
+		if got := thinkingFor(model); got != want {
+			t.Errorf("thinkingFor(%q) = %d, want %d", model, got, want)
+		}
 	}
 }

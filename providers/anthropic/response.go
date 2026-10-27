@@ -20,7 +20,7 @@ import (
 // (pause_turn) is resumed with its own output replayed, up to the
 // configured number of continuations.
 func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, sink openresponses.EventSink) error {
-	params, err := encodeRequest(req, a.maxTokens, a.cacheTTL)
+	params, err := encodeRequest(req, a.config)
 	if err != nil {
 		return err
 	}

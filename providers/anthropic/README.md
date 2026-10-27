@@ -74,9 +74,52 @@ upstream), `input_image.detail`, `include`, `stream_options` and
 `metadata.user_id`. `prompt_cache_key` turns on prompt caching for the
 request: Claude caches on request, and the key itself has nothing to
 name; `WithCacheTTL` sets how long the cache keeps it.
-`reasoning.effort` maps onto `output_config.effort`, with `minimal`
-sent as `low` and `none` disabling thinking; any
-`reasoning.summary` asks for summarized thinking.
+`reasoning.effort` and `reasoning.summary` map as the next section
+says.
+
+## Reasoning effort
+
+Claude has taken three encodings of a reasoning effort, one per model
+generation, and each generation refuses the others. The adapter picks
+the encoding from the model ID and never refuses an effort on a model's
+behalf: a value the model does not take comes back as the API's
+`invalid_request`.
+
+| Effort | Claude before 4.6 (`ThinkingBudget`) | 4.6 up to 5.5 (`ThinkingAdaptive`) | 5.5 and later (`ThinkingBetweenTools`) |
+|---|---|---|---|
+| `none` | `thinking: disabled` | `thinking: disabled` | `thinking: between_tools` |
+| `minimal`, `low` | `thinking: enabled`, `budget_tokens: 1024` | `output_config.effort: low` | as 4.6 |
+| `medium` | `budget_tokens: 4096` | `output_config.effort: medium` | as 4.6 |
+| `high` | `budget_tokens: 16384` | `output_config.effort: high` | as 4.6 |
+| `xhigh` | `budget_tokens: 24576` | `output_config.effort: xhigh` | as 4.6 |
+| `openresponses-experimental.effort: max` | `budget_tokens: 32000` | `output_config.effort: max` | as 4.6 |
+| no effort, a summary | `budget_tokens: 16384` (the API's default effort, `high`) | `thinking: adaptive`, no `output_config.effort` | as 4.6 |
+
+- Under the adaptive encodings, every effort except `none` also sends
+  `thinking: adaptive`, with `display: summarized` when
+  `reasoning.summary` is set and `display: omitted` when it is not.
+  Claude 4.6 to 4.8 do not think without it; with `omitted` the thinking
+  text is empty and the signature still comes back, so the reasoning
+  item round-trips.
+- Under `ThinkingBudget`, `output_config.effort` is not sent, and any
+  summary setting leaves the display to the model. The budget must be
+  below `max_tokens`: when it is not, it is lowered to `max_tokens - 1`,
+  but never below the API's minimum of 1024, so a `max_output_tokens`
+  of 1024 or less with an effort is the API's to refuse.
+- `none` turns thinking off and ignores `reasoning.summary`.
+- The shared member `openresponses-experimental.effort: max` on
+  `reasoning` (docs/extensions.md, section 3) takes the place of
+  `reasoning.effort`. The specification's `xhigh` is never sent as
+  `max`, because Claude has both. The response does not echo the
+  member.
+- The generation is read from the model ID: the first number after
+  `claude-`, and the one after it when that is a one- or two-digit minor
+  version, so `claude-opus-4-5`, `claude-3-7-sonnet-20250219`,
+  `claude-sonnet-4@20250514` (Vertex) and
+  `us.anthropic.claude-haiku-4-5-20251001-v1:0` (Bedrock) all read. An
+  ID with no `claude-` and a number after it, such as an inference
+  profile ARN, is taken to be the newest generation. `WithThinking`
+  fixes the encoding for such an ID.
 
 Extension types use the `anthropic.` slug. A tool `{"type":
 "anthropic.web_search_20260209", "name": "web_search"}` is that server

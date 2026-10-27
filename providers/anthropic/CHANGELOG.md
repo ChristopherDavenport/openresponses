@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- `reasoning.effort` is encoded the way the model's generation takes it,
+  picked from the model ID by the table in the README, and
+  `WithThinking` fixes the encoding for an ID that does not name its
+  generation (#32, #33). Claude before 4.6 is sent `thinking: enabled`
+  with a `budget_tokens` per effort instead of adaptive thinking, which
+  it refused at every effort. Claude 5.5 and later are sent `thinking:
+  between_tools` for `none` instead of `disabled`, which they refuse.
+- An effort now also sends `thinking: adaptive` on Claude 4.6 and later,
+  with `display: omitted` when no summary is requested. Before, an
+  effort without `reasoning.summary` sent only `output_config.effort`,
+  and Claude 4.6 to 4.8 did not think at all.
+- The shared member `openresponses-experimental.effort: max` on
+  `reasoning` is sent as `output_config.effort: max` (#51). `xhigh`
+  stays `xhigh`.
+
 ## v0.0.16 - 2026-10-26
 
 - `WithCacheTTL` sets the time-to-live of the prompt cache for requests

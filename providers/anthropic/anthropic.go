@@ -42,9 +42,15 @@ type Adapter struct {
 	openresponses.UnsupportedCompaction
 
 	messages      sdk.MessageService
-	maxTokens     int64
 	continuations int
-	cacheTTL      sdk.CacheControlEphemeralTTL
+	config
+}
+
+// config holds the settings the request encoder reads.
+type config struct {
+	maxTokens int64
+	cacheTTL  sdk.CacheControlEphemeralTTL
+	thinking  Thinking
 }
 
 var _ openresponses.Adapter = (*Adapter)(nil)
@@ -75,10 +81,40 @@ func WithCacheTTL(ttl sdk.CacheControlEphemeralTTL) Option {
 	return func(a *Adapter) { a.cacheTTL = ttl }
 }
 
+// Thinking selects how reasoning.effort is encoded. Claude has taken
+// three encodings, one per model generation, and each generation refuses
+// the others; the README has the table.
+type Thinking int
+
+const (
+	// ThinkingAuto derives the encoding from the model ID: ThinkingBudget
+	// for Claude before 4.6, ThinkingAdaptive from 4.6 up to 5.5, and
+	// ThinkingBetweenTools for 5.5, later models and any ID that does not
+	// name a generation.
+	ThinkingAuto Thinking = iota
+	// ThinkingBudget sends an effort as thinking enabled with a
+	// budget_tokens from the README's table, and none as thinking
+	// disabled. output_config.effort is not sent.
+	ThinkingBudget
+	// ThinkingAdaptive sends an effort as output_config.effort with
+	// adaptive thinking, and none as thinking disabled.
+	ThinkingAdaptive
+	// ThinkingBetweenTools is ThinkingAdaptive with none sent as thinking
+	// between_tools, which Claude 5.5 takes in place of disabled.
+	ThinkingBetweenTools
+)
+
+// WithThinking fixes the reasoning.effort encoding rather than deriving
+// it from the model ID. Set it for an ID that does not say which
+// generation it serves, such as a Bedrock inference profile ARN.
+func WithThinking(t Thinking) Option {
+	return func(a *Adapter) { a.thinking = t }
+}
+
 // New returns an adapter over messages, the Messages field of any client
 // the SDK builds.
 func New(messages sdk.MessageService, opts ...Option) *Adapter {
-	a := &Adapter{messages: messages, maxTokens: DefaultMaxTokens, continuations: DefaultContinuations}
+	a := &Adapter{messages: messages, continuations: DefaultContinuations, config: config{maxTokens: DefaultMaxTokens}}
 	for _, opt := range opts {
 		opt(a)
 	}
