@@ -191,15 +191,16 @@ func (c *Client) Compact(ctx context.Context, req CompactRequest) (*CompactRespo
 // function_call_output replaced by an [InputText] with the same text and
 // Extra. The specification allows only input_text, input_image,
 // input_file and input_video there, and a server may refuse a text part
-// (Ollama does). Items that need no change are shared; input itself is
-// never modified, and is returned as is when nothing changes. [Client]
+// (Ollama does). Items that need no change, nil ones included, are
+// shared; input itself is never modified, and is returned as is when
+// nothing changes. [Client]
 // and websocket.Conn apply it to every request they send; a transport
 // outside this package that sends requests itself should too.
 func NormalizeOutputParts(input Items) Items {
 	var out Items
 	for i, item := range input {
 		fco, ok := item.(*FunctionCallOutput)
-		if !ok || !hasTextPart(fco.Output.Parts) {
+		if !ok || fco == nil || !hasTextPart(fco.Output.Parts) {
 			continue
 		}
 		if out == nil {

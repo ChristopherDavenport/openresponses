@@ -369,3 +369,11 @@ func TestClientSendsTextOutputPartsAsInputText(t *testing.T) {
 		t.Error("the caller's request was changed")
 	}
 }
+
+func TestNormalizeOutputPartsTypedNil(t *testing.T) {
+	input := Items{(*FunctionCallOutput)(nil), nil}
+	got := NormalizeOutputParts(input)
+	if len(got) != 2 || got[0] != input[0] || got[1] != nil {
+		t.Errorf("got %#v", got)
+	}
+}
