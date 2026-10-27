@@ -432,6 +432,36 @@ func streamError(body string) http.Handler {
 	})
 }
 
+// TestStreamErrorStatusOnly: an envelope inside a stream that names its
+// gRPC status but no code maps as the HTTP status that status stands for
+// would.
+func TestStreamErrorStatusOnly(t *testing.T) {
+	cases := []struct {
+		body   string
+		typ    openresponses.ErrorType
+		status int
+	}{
+		{`{"error":{"message":"API key not valid","status":"PERMISSION_DENIED"}}`, openresponses.ErrorTypeInvalidRequest, 403},
+		{`{"error":{"message":"no key","status":"UNAUTHENTICATED"}}`, openresponses.ErrorTypeInvalidRequest, 401},
+		{`{"error":{"message":"bad field","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, 400},
+		{`{"error":{"message":"quota","status":"RESOURCE_EXHAUSTED"}}`, openresponses.ErrorTypeTooManyRequests, 429},
+		{`{"error":{"message":"gone","status":"NOT_FOUND"}}`, openresponses.ErrorTypeNotFound, 404},
+		{`{"error":{"message":"down","status":"UNAVAILABLE"}}`, openresponses.ErrorTypeServerError, 503},
+		{`{"error":{"message":"slow","status":"DEADLINE_EXCEEDED"}}`, openresponses.ErrorTypeServerError, 504},
+		{`{"error":{"message":"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, 400},
+	}
+	for _, tc := range cases {
+		_, err := streamtest.Run(context.Background(), newAdapter(t, streamError(tc.body)), hello())
+		var oerr *openresponses.Error
+		if !errorsAs(err, &oerr) {
+			t.Fatalf("err = %v", err)
+		}
+		if oerr.Type != tc.typ || oerr.HTTPStatus() != tc.status {
+			t.Errorf("%s: %s %d, want %s %d", tc.body, oerr.Type, oerr.HTTPStatus(), tc.typ, tc.status)
+		}
+	}
+}
+
 // TestStreamErrorNever2xx: an error envelope inside a stream whose code
 // is missing or a success takes its status from its type, so it never
 // reads as a 2xx.

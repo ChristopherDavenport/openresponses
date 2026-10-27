@@ -17,10 +17,11 @@
   input token count (N) exceeds …" or Vertex AI's "the input token count
   is N but model only supports up to M", with N greater than M. It was
   `invalid_argument` (#61).
-- An error envelope inside a stream whose `code` is missing or a 2xx
-  takes its status from its type, so an error never carries a 2xx
-  status. One with a 4xx or 5xx `code` maps as the same envelope on a
-  non-2xx response does (#54).
+- An error envelope inside a stream maps as the same envelope on a
+  non-2xx response does. One whose `code` is missing or a 2xx maps as
+  the HTTP status its gRPC `status` stands for (`PERMISSION_DENIED`
+  403, `RESOURCE_EXHAUSTED` 429, …), and one with neither takes its
+  status from its type, so an error never carries a 2xx status (#54).
 - Reasoning items carry `"openresponses-experimental.issuer":
   "gemini"`. On input only those go back to Gemini. A reasoning item
   another issuer wrote, or one with no issuer, is left out whole,

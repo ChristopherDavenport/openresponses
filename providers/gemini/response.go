@@ -394,22 +394,29 @@ func mapError(err error) error {
 	if code == "" {
 		code = "gemini_error"
 	}
+	status := apiErr.Code
+	if status < 400 {
+		// An envelope inside a stream may name its gRPC status and no
+		// code. It is the same failure as the HTTP status that gRPC
+		// status stands for, so it maps as that status would.
+		status = grpcStatus[apiErr.Status]
+	}
 	var out *openresponses.Error
 	switch {
 	case contextOverflow(apiErr):
 		out = openresponses.ContextLengthExceeded(apiErr.Message)
-	case apiErr.Code == http.StatusNotFound:
+	case status == http.StatusNotFound:
 		out = openresponses.NotFound(code, apiErr.Message, "")
-	case apiErr.Code == http.StatusTooManyRequests:
+	case status == http.StatusTooManyRequests:
 		out = openresponses.TooManyRequests(code, apiErr.Message)
 		if delay, ok := retryDelay(apiErr.Details); ok {
 			out.WithHeader("Retry-After", strconv.Itoa(delay))
 		}
-	case apiErr.Code == http.StatusRequestTimeout:
+	case status == http.StatusRequestTimeout:
 		// The upstream timed out, which a retry may fix. This matches the
 		// root's status table (PR #65) until that lands.
 		out = openresponses.ServerError(code, apiErr.Message)
-	case apiErr.Code >= 400 && apiErr.Code < 500:
+	case status >= 400 && status < 500:
 		// 401 UNAUTHENTICATED and 403 PERMISSION_DENIED land here too: they
 		// refuse the adapter's own credentials, which no retry can fix, so
 		// they are invalid_request with Gemini's status and code like any
@@ -418,13 +425,35 @@ func mapError(err error) error {
 	default:
 		out = openresponses.ServerError(code, apiErr.Message)
 	}
-	if apiErr.Code >= 400 {
+	if status >= 400 {
 		// An error that arrives inside a 2xx stream carries the code its
-		// envelope names, and one with no code, or a 2xx code, leaves the
-		// status to the type: an error never reads as a success.
-		out.StatusCode = apiErr.Code
+		// envelope names, or the one its gRPC status stands for. One with
+		// neither leaves the status to the type: an error never reads as
+		// a success.
+		out.StatusCode = status
 	}
 	return out
+}
+
+// grpcStatus is the HTTP status each google.rpc.Code name stands for, as
+// Google's API design guide maps them. OK maps to nothing.
+var grpcStatus = map[string]int{
+	"CANCELLED":           499,
+	"UNKNOWN":             http.StatusInternalServerError,
+	"INVALID_ARGUMENT":    http.StatusBadRequest,
+	"DEADLINE_EXCEEDED":   http.StatusGatewayTimeout,
+	"NOT_FOUND":           http.StatusNotFound,
+	"ALREADY_EXISTS":      http.StatusConflict,
+	"PERMISSION_DENIED":   http.StatusForbidden,
+	"RESOURCE_EXHAUSTED":  http.StatusTooManyRequests,
+	"FAILED_PRECONDITION": http.StatusBadRequest,
+	"ABORTED":             http.StatusConflict,
+	"OUT_OF_RANGE":        http.StatusBadRequest,
+	"UNIMPLEMENTED":       http.StatusNotImplemented,
+	"INTERNAL":            http.StatusInternalServerError,
+	"UNAVAILABLE":         http.StatusServiceUnavailable,
+	"DATA_LOSS":           http.StatusInternalServerError,
+	"UNAUTHENTICATED":     http.StatusUnauthorized,
 }
 
 // overflowMessages are Gemini's wordings of a context overflow, each

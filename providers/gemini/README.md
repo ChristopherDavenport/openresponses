@@ -231,8 +231,12 @@ code `unauthenticated` or `permission_denied`, never `server_error`.
 An error envelope that arrives inside the stream, after the 200 has
 gone out, is the same failure and maps exactly as the same envelope on
 a non-2xx response: its `code` is the status. One with no `code`, or a
-2xx `code`, takes its status from its type, so an error never carries
-a 2xx. The SDK (v1.72.0) reads an envelope that arrives as a line of
+2xx `code`, takes the HTTP status its gRPC `status` stands for in
+Google's mapping (`INVALID_ARGUMENT` 400, `UNAUTHENTICATED` 401,
+`PERMISSION_DENIED` 403, `NOT_FOUND` 404, `RESOURCE_EXHAUSTED` 429,
+`UNAVAILABLE` 503, `DEADLINE_EXCEEDED` 504, and so on) and maps as that
+status would. One with neither takes its status from its type, so an
+error never carries a 2xx. The SDK (v1.72.0) reads an envelope that arrives as a line of
 its own; one sent as an SSE `data:` event is dropped by the SDK's
 response converter before the adapter sees it. A stream that ends
 without a finish reason, that case included, fails with a 500
