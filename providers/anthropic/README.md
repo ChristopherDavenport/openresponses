@@ -154,9 +154,38 @@ cache-creation tokens in `input_tokens`, reports cache reads in
 `cached_tokens` and thinking in `reasoning_tokens`, and sums across
 resumed turns; `model` on the response is the version Claude served.
 
-Upstream errors keep their HTTP status and the API's error type as the
-code; `Retry-After`, the rate-limit headers and the request id travel
-with them.
+## Errors
+
+An upstream failure keeps the API's error type as the code, and the
+type decides the Open Responses type and status, whether the failure
+came as an HTTP status or as an `error` event inside a 200 stream:
+
+| Claude error type | Type | Status |
+|---|---|---|
+| `invalid_request_error`, `billing_error`, `request_too_large` | `invalid_request` | 400, 402, 413 |
+| `authentication_error`, `permission_error` | `invalid_request` | 401, 403 |
+| `not_found_error` | `not_found` | 404 |
+| `rate_limit_error` | `too_many_requests` | 429 |
+| `api_error`, `timeout_error` | `server_error` | 500, 504 |
+| `overloaded_error` | `server_error` | 529 |
+
+A refusal of the adapter's own key or permissions is `invalid_request`,
+since a retry cannot fix it. An error type not in the table takes its
+type from the HTTP status (404, 429, other 4xx, and `server_error` for
+the rest), and inside a stream, whose status is 200, it is
+`server_error` with no status of its own, so it reads as 500. A 2xx
+status is never put on an error.
+
+A context overflow is `invalid_request` with code
+`context_length_exceeded` (docs/extensions.md, section 6). Claude has no
+code of its own for it: the adapter recognises an
+`invalid_request_error` whose message contains `prompt is too long`,
+ignoring case, and keeps Claude's message. Output cut short by
+`max_tokens` or `model_context_window_exceeded` is not an overflow; that
+response ends incomplete, as above.
+
+`Retry-After`, the rate-limit headers and the request id travel with
+every error.
 
 ## Versioning
 

@@ -16,6 +16,13 @@
 - The shared member `openresponses-experimental.effort: max` on
   `reasoning` is sent as `output_config.effort: max` (#51). `xhigh`
   stays `xhigh`.
+- An `error` event inside a stream maps as the same error type does as
+  an HTTP status, by the table in the README, and never keeps the
+  stream's 200 (#54). An `overloaded_error` mid-stream was a
+  `server_error` with status 200, which a retry policy deciding by
+  status gave up on; it is now 529, as on a non-streamed response.
+- A context overflow, Claude's `invalid_request_error` saying "prompt is
+  too long", carries the code `context_length_exceeded` (#61).
 
 ## v0.0.16 - 2026-10-26
 

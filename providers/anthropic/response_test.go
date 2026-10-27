@@ -445,6 +445,9 @@ func TestMapError(t *testing.T) {
 		{"authentication", 401, `{"type":"error","error":{"type":"authentication_error","message":"key"}}`, nil, openresponses.ErrorTypeInvalidRequest, "authentication_error", "key", ""},
 		{"not found", 404, `{"type":"error","error":{"type":"not_found_error","message":"no model"}}`, nil, openresponses.ErrorTypeNotFound, "not_found_error", "no model", ""},
 		{"overloaded", 529, `{"type":"error","error":{"type":"overloaded_error","message":"busy"}}`, nil, openresponses.ErrorTypeServerError, "overloaded_error", "busy", ""},
+		{"permission", 403, `{"type":"error","error":{"type":"permission_error","message":"no access"}}`, nil, openresponses.ErrorTypeInvalidRequest, "permission_error", "no access", ""},
+		{"unknown type", 503, `{"type":"error","error":{"type":"new_error","message":"down"}}`, nil, openresponses.ErrorTypeServerError, "new_error", "down", ""},
+		{"context overflow", 400, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215000 tokens > 200000 maximum"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "prompt is too long: 215000 tokens > 200000 maximum", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -461,6 +464,36 @@ func TestMapError(t *testing.T) {
 			}
 			if tc.headers != nil && (oerr.Headers.Get("Anthropic-Ratelimit-Requests-Remaining") != "0" || oerr.Headers.Get("Request-Id") != "req_1") {
 				t.Fatalf("headers = %v", oerr.Headers)
+			}
+		})
+	}
+}
+
+// TestStreamErrorEvent covers an error event inside a 200 stream: it maps
+// as the same error type does as an HTTP status, and never keeps the
+// stream's 200.
+func TestStreamErrorEvent(t *testing.T) {
+	cases := []struct {
+		name   string
+		body   string
+		typ    openresponses.ErrorType
+		code   string
+		status int
+	}{
+		{"overloaded", `{"type":"overloaded_error","message":"Overloaded"}`, openresponses.ErrorTypeServerError, "overloaded_error", 529},
+		{"rate limited", `{"type":"rate_limit_error","message":"slow down"}`, openresponses.ErrorTypeTooManyRequests, "rate_limit_error", 429},
+		{"api error", `{"type":"api_error","message":"oops"}`, openresponses.ErrorTypeServerError, "api_error", 500},
+		{"unknown type", `{"type":"new_error","message":"?"}`, openresponses.ErrorTypeServerError, "new_error", 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := streamtest.Run(context.Background(), newAdapter(t, sse(msgStart, `{"type":"error","error":`+tc.body+`}`)), hello())
+			var oerr *openresponses.Error
+			if !errorsAs(err, &oerr) {
+				t.Fatalf("err = %v", err)
+			}
+			if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != tc.status {
+				t.Fatalf("err = %s/%s/%d, want %s/%s/%d", oerr.Type, oerr.Code, oerr.HTTPStatus(), tc.typ, tc.code, tc.status)
 			}
 		})
 	}

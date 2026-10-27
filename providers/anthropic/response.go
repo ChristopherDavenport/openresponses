@@ -428,8 +428,11 @@ func addUsage(a, b openresponses.Usage) openresponses.Usage {
 }
 
 // mapError converts an SDK error into the matching *openresponses.Error.
-// The HTTP status decides the type, the API's error type is the code,
-// and the headers that describe the failure (Retry-After, the rate-limit
+// The API's error type is the code and decides the type and status, so
+// a failure reads the same whether it came as an HTTP status or as an
+// error event inside a 200 stream; an error type the table does not
+// know falls back to the HTTP status, and a 2xx status never stands.
+// The headers that describe the failure (Retry-After, the rate-limit
 // family, the request id) travel with it.
 func mapError(err error) error {
 	if err == nil {
@@ -451,18 +454,27 @@ func mapError(err error) error {
 		code = "api_error"
 	}
 	message := apiMessage(apiErr)
+	status, known := errorStatus[code]
+	if !known && apiErr.StatusCode >= 300 {
+		status = apiErr.StatusCode
+	}
 	var out *openresponses.Error
 	switch {
-	case apiErr.StatusCode == http.StatusNotFound:
+	case code == "invalid_request_error" && strings.Contains(strings.ToLower(message), "prompt is too long"):
+		out = openresponses.ContextLengthExceeded(message)
+	case status == http.StatusNotFound:
 		out = openresponses.NotFound(code, message, "")
-	case apiErr.StatusCode == http.StatusTooManyRequests:
+	case status == http.StatusTooManyRequests:
 		out = openresponses.TooManyRequests(code, message)
-	case apiErr.StatusCode >= 400 && apiErr.StatusCode < 500:
+	case status >= 400 && status < 500:
+		// Credential and permission refusals land here too: a retry
+		// cannot fix them, so they are never server_error.
 		out = openresponses.InvalidRequest(code, message, "")
 	default:
 		out = openresponses.ServerError(code, message)
 	}
-	out.StatusCode = apiErr.StatusCode
+	// Zero leaves the status to the type.
+	out.StatusCode = status
 	if apiErr.Response != nil {
 		for name, values := range apiErr.Response.Header {
 			if !failureHeader(name) {
@@ -474,6 +486,21 @@ func mapError(err error) error {
 		}
 	}
 	return out
+}
+
+// errorStatus is the HTTP status the Messages API gives each error type
+// on a non-streamed response.
+var errorStatus = map[string]int{
+	"invalid_request_error": http.StatusBadRequest,
+	"authentication_error":  http.StatusUnauthorized,
+	"billing_error":         http.StatusPaymentRequired,
+	"permission_error":      http.StatusForbidden,
+	"not_found_error":       http.StatusNotFound,
+	"request_too_large":     http.StatusRequestEntityTooLarge,
+	"rate_limit_error":      http.StatusTooManyRequests,
+	"api_error":             http.StatusInternalServerError,
+	"timeout_error":         http.StatusGatewayTimeout,
+	"overloaded_error":      529,
 }
 
 // failureHeader reports whether a response header describes the failure
