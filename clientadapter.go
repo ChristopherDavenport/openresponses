@@ -49,7 +49,9 @@ func (a *ClientAdapter) Compact(ctx context.Context, req CompactRequest) (*Compa
 }
 
 // CreateStream forwards the request and pumps the upstream events into
-// sink.
+// sink. An error event is forwarded with the header filter every error
+// from a peer gets (see [Error.Headers]): its payload keeps only the
+// headers that describe a failure, and no other spelling of headers.
 func (a *ClientAdapter) CreateStream(ctx context.Context, req Request, sink EventSink) error {
 	stream, err := a.Client.CreateStream(ctx, req)
 	if err != nil {
@@ -59,7 +61,11 @@ func (a *ClientAdapter) CreateStream(ctx context.Context, req Request, sink Even
 	var lastError *ErrorEvent
 	for ev := range stream.Events() {
 		if e, ok := ev.(*ErrorEvent); ok {
-			lastError = e
+			cp := *e
+			cp.Error = e.Error.forwardable()
+			cp.Extra = cloneExtra(e.Extra)
+			lastError = &cp
+			ev = &cp
 		}
 		if err := sink.Send(ev); err != nil {
 			return err

@@ -277,7 +277,9 @@ a WebSocket error frame) carry only the headers that describe a failure,
 such as `Retry-After` and the rate-limit family, so a peer cannot plant
 headers on a server that forwards its error. Such an error keeps the
 error object's other unknown members in `Extra`, except any spelling of
-`headers`, which only the filtered field carries.
+`headers`, which only the filtered field carries. `client.AsAdapter()`
+applies the same filter to an upstream error event before it forwards
+the event.
 
 ## Compliance
 

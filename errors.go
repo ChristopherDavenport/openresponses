@@ -128,8 +128,10 @@ type Error struct {
 	// 429 intact, while a peer cannot plant Set-Cookie or a CORS header
 	// on a server that forwards its error. Such an error also drops
 	// every member of its Extra named "headers" in any case, so a
-	// "Headers" member cannot carry headers past the filter. Errors
-	// built locally carry whatever WithHeader adds.
+	// "Headers" member cannot carry headers past the filter.
+	// [ClientAdapter] applies the same filter to an upstream error event
+	// before it forwards it. Errors built locally carry whatever
+	// WithHeader adds.
 	Headers http.Header
 	// ResponseHeaders holds every header of the failing HTTP response
 	// when the error came from one. It is never forwarded.
@@ -211,6 +213,25 @@ func (p ErrorPayload) Err(status int) *Error {
 		}
 	}
 	return e
+}
+
+// forwardable returns the payload as it may be forwarded from a peer:
+// with only the headers that describe a failure (see [Error.Headers])
+// and none of its Extra members named "headers" in any case. Everything
+// else is kept as it is, the type included.
+func (p ErrorPayload) forwardable() ErrorPayload {
+	out := p
+	out.Headers = nil
+	for k, v := range p.Headers {
+		if errorHeader(k) {
+			if out.Headers == nil {
+				out.Headers = map[string]string{}
+			}
+			out.Headers[http.CanonicalHeaderKey(k)] = v
+		}
+	}
+	out.Extra = remoteErrorExtra(p.Extra)
+	return out
 }
 
 // remoteErrorExtra copies the Extra of an error object that came from a

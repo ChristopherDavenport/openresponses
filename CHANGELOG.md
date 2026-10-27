@@ -23,7 +23,12 @@ versions may break the API.
   as an HTTP envelope, an error event or a failed response, keeps the
   members it carried, while `headers` still passes only the failure
   headers: a member named `headers` in any other case is dropped from
-  such an error's `Extra`, so it cannot carry headers past the filter. **Breaking:** these types contain a map, so they
+  such an error's `Extra`, so it cannot carry headers past the filter.
+- `ClientAdapter` forwards an upstream error event with that same
+  filter applied: only failure headers in its payload's `headers`, and
+  no other spelling of `headers`. It forwarded the event unchanged, so a
+  proxy passed an upstream's `Set-Cookie` in the error payload to its
+  own clients. **Breaking:** these types contain a map, so they
   are no longer comparable with `==`; compare fields or use
   `reflect.DeepEqual`.
 - `Extra` keeps a member exactly as it arrived. Values are decoded with
