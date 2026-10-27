@@ -45,6 +45,12 @@ func encodeRequest(req openresponses.Request, thinking Thinking) ([]*genai.Conte
 	if err != nil {
 		return nil, nil, err
 	}
+	if thinking == ThinkingAuto {
+		thinking = thinkingFor(req.Model)
+	}
+	if thinking == ThinkingLevel {
+		placeholderSignatures(contents)
+	}
 	if req.Instructions != "" {
 		system = append([]*genai.Part{genai.NewPartFromText(req.Instructions)}, system...)
 	}
@@ -596,6 +602,56 @@ func signature(it *openresponses.ReasoningItem, param string) (sig []byte, keep 
 		return nil, false, invalid(param+".encrypted_content", "encrypted_content is not base64: "+err.Error())
 	}
 	return nil, false, nil
+}
+
+// placeholderSignature is the value Google documents for a function
+// call the API did not generate, such as one in history from a model
+// that writes no thought signatures:
+//
+//	"You can set thought_signature to skip_thought_signature_validator,
+//	but, this should be a last resort as it will negatively impact model
+//	performance."
+//	https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+//
+// The documented value is the field's JSON form, which is base64, so the
+// bytes are what that string decodes to; the underscores make it the URL
+// alphabet, which Google's JSON parser accepts as it does the standard
+// one the SDK writes.
+var placeholderSignature = mustDecode("skip_thought_signature_validator")
+
+func mustDecode(s string) []byte {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// placeholderSignatures gives each model step that calls a function and
+// carries no thought signature anywhere the placeholder on its first
+// function call. Gemini 3 refuses such a step, and a transcript written
+// by another provider, or one whose reasoning items were left out
+// because another provider issued them, has nothing but such steps.
+// Gemini signs only the first call of a parallel step, so the other
+// calls stay unsigned, and a step that has any signature of its own is
+// left as Gemini wrote it.
+func placeholderSignatures(contents []*genai.Content) {
+	for _, c := range contents {
+		if c.Role != genai.RoleModel {
+			continue
+		}
+		var first *genai.Part
+		signed := false
+		for _, p := range c.Parts {
+			signed = signed || len(p.ThoughtSignature) > 0
+			if first == nil && p.FunctionCall != nil {
+				first = p
+			}
+		}
+		if first != nil && !signed {
+			first.ThoughtSignature = placeholderSignature
+		}
+	}
 }
 
 // reasoningText is the summary when there is one, else the content.

@@ -174,6 +174,23 @@ treated by its issuer, compared as a whole string:
 | absent, `encrypted_content` not base64 | nothing: the content is another provider's signature, so the item is left out |
 | any other value, `gemini/<variant>` included | nothing: the item is left out whole, summary included, since its summary is another model's reasoning rather than thoughts Gemini had |
 
+Gemini 3 refuses a model step that calls a function without a thought
+signature, and a transcript another provider wrote, or one whose
+reasoning items were left out above, has only such steps. Google
+documents a placeholder for this case: "You can set
+`thought_signature` to `skip_thought_signature_validator`, but, this
+should be a last resort as it will negatively impact model
+performance"
+([thought signatures](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures)).
+On a model that takes thinking levels (see the model ID table above),
+each model step that has a function call and no signature on any of
+its parts gets that placeholder on its first function call, the only
+call Gemini signs in a parallel step. A step with a signature of its
+own is left as Gemini wrote it, and the generations that take budgets
+do not validate signatures, so nothing is added there. The string is
+the field's JSON form, which is base64: the adapter sends the bytes it
+decodes to, in the URL alphabet its underscores belong to.
+
 `STOP` completes the response. `MAX_TOKENS` ends it incomplete with
 `max_output_tokens`; the safety, recitation, blocklist, prohibited
 content, SPII, language and image reasons, and a blocked prompt, end

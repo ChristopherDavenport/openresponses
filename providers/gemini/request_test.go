@@ -578,3 +578,56 @@ func TestEncodeToolChoice(t *testing.T) {
 	}}}, ThinkingAuto)
 	wantErr(t, err, openresponses.CodeUnsupportedParameter, "tool_choice.tools[0].type")
 }
+
+// TestEncodePlaceholderSignature: Gemini 3 refuses a model step whose
+// function call carries no thought signature, which is every step of a
+// transcript another provider wrote. Such a step gets Google's
+// placeholder on its first function call; a step that has a signature,
+// and every step on a generation that does not validate, is left alone.
+func TestEncodePlaceholderSignature(t *testing.T) {
+	foreign := openresponses.Items{
+		openresponses.UserText("weather in Oslo and Bergen?"),
+		&openresponses.FunctionCall{CallID: "c1", Name: "weather", Arguments: `{"city":"Oslo"}`},
+		&openresponses.FunctionCall{CallID: "c2", Name: "weather", Arguments: `{"city":"Bergen"}`},
+		openresponses.NewFunctionCallOutput("c1", "rain"),
+		openresponses.NewFunctionCallOutput("c2", "sun"),
+	}
+	contents, _ := encode(t, openresponses.Request{Model: "gemini-3-pro-preview", Input: foreign})
+	model := contents[1]
+	if got := string(model.Parts[0].ThoughtSignature); got != string(placeholderSignature) {
+		t.Fatalf("first call signature = %q, want the placeholder", got)
+	}
+	if model.Parts[1].ThoughtSignature != nil {
+		t.Fatalf("second call signature = %q, want none: only the first call of a step carries one", model.Parts[1].ThoughtSignature)
+	}
+	// On the wire it is the string Google documents.
+	wire, err := json.Marshal(model.Parts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		ThoughtSignature []byte `json:"thoughtSignature"`
+	}
+	if err := json.Unmarshal(wire, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := base64.RawURLEncoding.DecodeString("skip_thought_signature_validator")
+	if string(decoded.ThoughtSignature) != string(want) {
+		t.Fatalf("wire signature decodes to %q, want the bytes of skip_thought_signature_validator", decoded.ThoughtSignature)
+	}
+
+	contents, _ = encode(t, openresponses.Request{Model: "gemini-2.5-pro", Input: foreign})
+	if contents[1].Parts[0].ThoughtSignature != nil {
+		t.Fatalf("2.5 signature = %q, want none", contents[1].Parts[0].ThoughtSignature)
+	}
+
+	own := openresponses.Items{
+		openresponses.UserText("weather?"),
+		geminiReasoning(base64.StdEncoding.EncodeToString([]byte("sig"))),
+		&openresponses.FunctionCall{CallID: "c1", Name: "weather", Arguments: `{}`},
+	}
+	contents, _ = encode(t, openresponses.Request{Model: "gemini-3-pro-preview", Input: own})
+	if got := string(contents[1].Parts[0].ThoughtSignature); got != "sig" {
+		t.Fatalf("own signature = %q, want sig", got)
+	}
+}
