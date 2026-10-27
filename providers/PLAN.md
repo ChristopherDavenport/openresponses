@@ -17,10 +17,13 @@ providers/
 
 Each module has the same shape:
 
-- `go.mod` requires a released root version and has no `replace`
-  directive. `conformance/` requires `v0.0.0` and replaces it with `../`
-  because nothing imports it; a published module cannot, since
-  consumers ignore `replace`.
+- `go.mod` requires the root at the version the whole repository is
+  released at and replaces it with the tree (`../..`), so one pull
+  request can change the root and the adapters it affects. `make
+  replaces` refuses a first-party require without that `replace`.
+  Consumers ignore a dependency's `replace` and get the require, which
+  names the commit the provider was tagged from. `conformance/` is
+  unpublished and does the same with a root require of `v0.0.0`.
 - `New` takes the provider SDK's own client, already constructed. The
   adapter never sees a URL, a key or a credential.
 - `Create` is `openresponses.CollectStream` over `CreateStream`, so
@@ -33,7 +36,8 @@ Each module has the same shape:
   provider serves. Examples live in an `examples/` directory inside the
   module, because the root module cannot import a provider without
   pulling the provider's SDK into the root graph. Each module keeps its
-  own `CHANGELOG.md`, since it is versioned on its own.
+  own `CHANGELOG.md` for its own notes, though every module is released
+  at the same version.
 
 ## Rules every adapter follows
 
@@ -127,26 +131,28 @@ specification says which types a retry can help: `server_error` and
 ## Build and release
 
 A committed `go.work` at the repository root lists `.`, `conformance`
-and each provider module as it is created. In workspace mode the
-provider modules build against the local root, so an adapter can use
-root API that has not been tagged yet and CI sees the combination on
-the pull request. `./...` does not cross module boundaries in workspace
-mode, so the Makefile loops stay; `PROVIDERS` lists the provider
-modules and `SUBMODULES` includes them. `go mod tidy` runs per module
-as before.
+and each provider module, so editors and `go build ./...` in any
+directory see the tree. It is not what makes a release work: the
+`replace` directives are, because `go mod tidy` ignores the workspace.
+`./...` does not cross module boundaries, so the Makefile loops over
+the modules; `PROVIDERS` lists the provider modules and `SUBMODULES`
+includes them. `go mod tidy` runs per module.
 
-A `release-check` target runs `go vet` and `go test` in each provider
-module with `GOWORK=off`, which builds what consumers get. It runs
-before every provider tag.
+Every published module is released at one version, from one commit,
+and each provider requires the root at exactly that version. Tags are
+`vX.Y.Z`, `providers/anthropic/vX.Y.Z` and `providers/gemini/vX.Y.Z`,
+and a provider that did not change still gets its tag. `make release
+VERSION=vX.Y.Z` points every provider's root require at the version,
+dates the changelogs, tidies, runs `make check`, commits, guards and
+tags the root and then each provider with `make release-guard`, and
+pushes the branch and every tag in one `git push --atomic`, so no tag is
+visible without the others. `make extracted` builds, vets and tests
+each provider with its `replace` dropped, as a consumer gets it.
+CLAUDE.md holds the whole procedure and the reason for each guard.
 
 Workspace mode rejects `-mod=mod`, so a `GOFLAGS=-mod=mod` in the
 environment fails as soon as `go.work` exists. The default
 `-mod=readonly` works.
-
-Tags are `providers/anthropic/vX.Y.Z` and `providers/gemini/vX.Y.Z`,
-versioned independently of the root. When a root change breaks an
-adapter: tag the root, bump the adapter's `require`, run
-`release-check`, tag the adapter.
 
 CI caches each module's `go.sum`. Live tests against a real provider
 are a manual target that reads a key from the environment; they never
@@ -407,7 +413,7 @@ own terms. The rest is too small to export.
 
 ## Order of work
 
-1. Wiring: `go.work`, `SUBMODULES`, `release-check`, CI cache entries,
+1. Wiring: `go.work`, `SUBMODULES`, the release targets, CI cache entries,
    and a sentence in CONTRIBUTING that provider knowledge lives here and
    never in the root.
 2. `providers/gemini`: module, request encoder with its
