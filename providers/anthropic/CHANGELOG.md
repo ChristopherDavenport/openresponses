@@ -15,9 +15,12 @@
   with `display: omitted` when no summary is requested. Before, an
   effort without `reasoning.summary` sent only `output_config.effort`,
   and Claude 4.6 to 4.8 did not think at all.
-  A request with a forced tool, a temperature other than 1 or
-  `anthropic.top_k` still sends the effort alone, since Claude refuses
-  thinking with those.
+  Claude refuses thinking with a forced tool, a temperature other than
+  1, a `top_p` below 0.95 or `anthropic.top_k`. With one of those, an
+  effort is sent alone on Claude 4.6 and later, and is `invalid_request`
+  naming the parameter before 4.6, where an effort is only a thinking
+  budget; a `reasoning.summary` is `invalid_request`, since there is no
+  thinking to summarise. The README has the table.
 - The shared member `openresponses-experimental.effort: max` on
   `reasoning` is sent as `output_config.effort: max` (#51). `xhigh`
   stays `xhigh`.

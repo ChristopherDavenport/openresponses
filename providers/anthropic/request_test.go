@@ -280,7 +280,7 @@ func TestEncodeConfig(t *testing.T) {
 		PromptCacheKey:   "k",
 		ServiceTier:      openresponses.ServiceTierDefault,
 		Metadata:         map[string]string{"team": "a"},
-		Reasoning:        openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh, Summary: openresponses.ReasoningSummaryAuto},
+		Reasoning:        openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh},
 		Text:             openresponses.TextConfig{Format: openresponses.JSONSchemaFormat("out", json.RawMessage(`{"type":"object"}`), true)},
 	})
 	body := wire(t, p)
@@ -678,23 +678,27 @@ func TestEncodeExtra(t *testing.T) {
 }
 
 // TestEncodeEffortWithoutThinking covers the requests Claude refuses
-// thinking on, a forced tool or modified sampling: the effort goes alone.
+// thinking on: a forced tool, a temperature other than 1, top_k, or a
+// top_p below 0.95. An adaptive model gets the effort alone; a summary,
+// or an effort on a budget model, cannot be honoured and is refused.
 func TestEncodeEffortWithoutThinking(t *testing.T) {
 	tool := openresponses.Tools{&openresponses.FunctionTool{Name: "f"}}
 	cases := []struct {
-		name string
-		req  openresponses.Request
+		name  string
+		req   openresponses.Request
+		param string // the conflicting parameter
 	}{
-		{"required", openresponses.Request{Tools: tool, ToolChoice: openresponses.ToolChoice{Mode: openresponses.ToolChoiceRequired}}},
-		{"function", openresponses.Request{Tools: tool, ToolChoice: openresponses.ToolChoiceFunction("f")}},
-		{"temperature", openresponses.Request{Temperature: ptr(0.2)}},
-		{"top_k", openresponses.Request{Extra: map[string]any{"anthropic.top_k": 5}}},
+		{"required", openresponses.Request{Tools: tool, ToolChoice: openresponses.ToolChoice{Mode: openresponses.ToolChoiceRequired}}, "tool_choice"},
+		{"function", openresponses.Request{Tools: tool, ToolChoice: openresponses.ToolChoiceFunction("f")}, "tool_choice"},
+		{"temperature", openresponses.Request{Temperature: ptr(0.2)}, "temperature"},
+		{"top_k", openresponses.Request{Extra: map[string]any{"anthropic.top_k": 5}}, "anthropic.top_k"},
+		{"top_p", openresponses.Request{TopP: ptr(0.9)}, "top_p"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := tc.req
 			req.Model = "claude-opus-4-8"
-			req.Reasoning = openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow, Summary: openresponses.ReasoningSummaryAuto}
+			req.Reasoning = openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}
 			body := wire(t, encode(t, req))
 			if _, ok := body["thinking"]; ok {
 				t.Fatalf("thinking sent: %v", body["thinking"])
@@ -702,12 +706,32 @@ func TestEncodeEffortWithoutThinking(t *testing.T) {
 			if body["output_config"].(map[string]any)["effort"] != "low" {
 				t.Fatalf("output_config = %v", body["output_config"])
 			}
+
+			// A summary has nothing to show.
+			req.Reasoning.Summary = openresponses.ReasoningSummaryAuto
+			_, err := encodeRequest(req, defaults)
+			wantErr(t, err, openresponses.CodeUnsupportedParameter, "reasoning.summary")
+			req.Reasoning = openresponses.ReasoningConfig{Summary: openresponses.ReasoningSummaryAuto}
+			_, err = encodeRequest(req, defaults)
+			wantErr(t, err, openresponses.CodeUnsupportedParameter, "reasoning.summary")
+
+			// A budget model has no effort without thinking.
+			req.Model = "claude-haiku-4-5"
+			req.Reasoning = openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}
+			_, err = encodeRequest(req, defaults)
+			wantErr(t, err, openresponses.CodeUnsupportedParameter, tc.param)
+
+			// none needs no thinking, so nothing conflicts.
+			req.Reasoning = openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortNone}
+			if body := wire(t, encode(t, req)); body["thinking"].(map[string]any)["type"] != "disabled" {
+				t.Fatalf("none = %v", body["thinking"])
+			}
 		})
 	}
-	// Temperature 1 is the default, which thinking takes.
-	body := wire(t, encode(t, openresponses.Request{Model: "claude-opus-4-8", Temperature: ptr(1.0), Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}}))
+	// Temperature 1 and top_p from 0.95 are what thinking takes.
+	body := wire(t, encode(t, openresponses.Request{Model: "claude-opus-4-8", Temperature: ptr(1.0), TopP: ptr(0.95), Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}}))
 	if _, ok := body["thinking"]; !ok {
-		t.Fatalf("temperature 1: no thinking: %v", body)
+		t.Fatalf("temperature 1, top_p 0.95: no thinking: %v", body)
 	}
 }
 

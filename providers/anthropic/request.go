@@ -170,7 +170,7 @@ func encodeConfig(req openresponses.Request, cfg config) (sdk.MessageNewParams, 
 	if thinking == ThinkingAuto {
 		thinking = thinkingFor(req.Model)
 	}
-	if err := encodeReasoning(req.Reasoning, req.Model, thinking, refusesThinking(req), &p); err != nil {
+	if err := encodeReasoning(req.Reasoning, req.Model, thinking, thinkingConflict(req), &p); err != nil {
 		return p, err
 	}
 
@@ -208,7 +208,7 @@ func encodeConfig(req openresponses.Request, cfg config) (sdk.MessageNewParams, 
 // table). The shared openresponses-experimental.effort member, when it
 // asks for max, takes the place of reasoning.effort. Whether a model
 // takes the value is the model's business.
-func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking, noThinking bool, p *sdk.MessageNewParams) error {
+func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking, conflict string, p *sdk.MessageNewParams) error {
 	effort := sdk.OutputConfigEffort("")
 	switch r.Effort {
 	case "":
@@ -238,6 +238,14 @@ func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thi
 	case effort == "none":
 		p.Thinking = sdk.ThinkingConfigParamUnion{OfDisabled: &sdk.ThinkingConfigDisabledParam{}}
 	case effort == "" && r.Summary == "":
+	case conflict != "" && r.Summary != "":
+		// No thinking, so no summary to show.
+		return openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
+			fmt.Sprintf("reasoning.summary needs thinking, which Claude refuses with %s", conflict), "reasoning.summary")
+	case conflict != "" && thinking == ThinkingBudget:
+		// Before 4.6 an effort is only a thinking budget.
+		return openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
+			fmt.Sprintf("%s rules out thinking, the only way model %s takes reasoning.effort", conflict, model), conflict)
 	case thinking == ThinkingBudget:
 		if effort == "" {
 			// A summary alone asks for thinking at the API's default
@@ -245,10 +253,9 @@ func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thi
 			effort = sdk.OutputConfigEffortHigh
 		}
 		p.Thinking = sdk.ThinkingConfigParamUnion{OfEnabled: &sdk.ThinkingConfigEnabledParam{BudgetTokens: thinkingBudget(effort, p.MaxTokens)}}
-	case noThinking:
+	case conflict != "":
 		// Claude refuses thinking with a forced tool or modified
-		// sampling, so the effort goes alone and the summary has
-		// nothing to show.
+		// sampling, so the effort goes alone.
 		p.OutputConfig.Effort = effort
 	default:
 		p.OutputConfig.Effort = effort
@@ -264,14 +271,24 @@ func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thi
 	return nil
 }
 
-// refusesThinking reports whether the request has something Claude
-// refuses thinking with: a forced tool (tool_choice required or a named
-// function), a temperature other than 1, or top_k (anthropic.top_k).
-// Under the adaptive encodings the effort is then sent without thinking.
-func refusesThinking(req openresponses.Request) bool {
-	_, topK := req.Extra[slug+"top_k"]
-	return req.ToolChoice.Function != nil || req.ToolChoice.Mode == openresponses.ToolChoiceRequired ||
-		req.Temperature != nil && *req.Temperature != 1 || topK
+// thinkingConflict returns the request parameter Claude refuses
+// thinking with, or "": a forced tool (tool_choice required or a named
+// function), a temperature other than 1, a top_p below 0.95, or top_k
+// (anthropic.top_k). The README's table says what each encoding does
+// then.
+func thinkingConflict(req openresponses.Request) string {
+	switch {
+	case req.ToolChoice.Function != nil || req.ToolChoice.Mode == openresponses.ToolChoiceRequired:
+		return "tool_choice"
+	case req.Temperature != nil && *req.Temperature != 1:
+		return "temperature"
+	case req.TopP != nil && *req.TopP < 0.95:
+		return "top_p"
+	}
+	if _, ok := req.Extra[slug+"top_k"]; ok {
+		return slug + "top_k"
+	}
+	return ""
 }
 
 // thinkingBudgets are the budget_tokens sent for each effort under

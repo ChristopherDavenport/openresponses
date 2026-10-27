@@ -169,20 +169,14 @@ The other efforts:
   Opus 4.6 to 4.8 and Sonnet 4.6 do not think without it; with
   `omitted` the thinking text is empty and the signature still comes
   back, so the reasoning item round-trips.
-- Claude refuses thinking with a forced tool or modified sampling. When
-  the request has `tool_choice` `required` or a named function, a
-  `temperature` other than 1, or `anthropic.top_k`, the adaptive
-  encodings send `output_config.effort` alone, without `thinking`, and a
-  summary has nothing to show. On Opus 4.6 to 4.8 and Sonnet 4.6 the
-  model then does not think. `ThinkingBudget` has no effort without
-  thinking, so it still sends the budget, and the API refuses the
-  combination.
 - Under `ThinkingBudget`, `output_config.effort` is not sent, and any
   summary setting leaves the display to the model. The budget must be
   below `max_tokens`: when it is not, it is lowered to `max_tokens - 1`,
   but never below the API's minimum of 1024, so a `max_output_tokens`
   of 1024 or less with an effort is the API's to refuse.
-- `none` turns thinking off and ignores `reasoning.summary`. It sends no
+- `none` turns thinking off and ignores `reasoning.summary`.
+- Claude refuses thinking with a forced tool or modified sampling; the
+  table below says what each encoding does then. It sends no
   `output_config.effort`, so the API's limits on `disabled` and
   `between_tools` at `xhigh` and `max` do not arise.
 - The shared member `openresponses-experimental.effort: max` on
@@ -200,6 +194,27 @@ The other efforts:
   Fable or Mythos ID is `ThinkingAlwaysOn` whatever its version. An ID
   with no version after `claude-`, such as an inference profile ARN, is
   `ThinkingAdaptive`, the encoding most current models take.
+
+### Requests Claude refuses thinking with
+
+Claude refuses `thinking` together with any of these:
+
+| Parameter | Condition |
+|---|---|
+| `tool_choice` | `required` (`any`) or a named function (`tool`) |
+| `temperature` | other than 1 |
+| `top_p` | below 0.95 |
+| `anthropic.top_k` | present |
+
+When the request has one:
+
+| Reasoning asked for | Adaptive encodings | `ThinkingBudget` |
+|---|---|---|
+| `none`, or nothing | as without the parameter | as without the parameter |
+| an effort, no summary | `output_config.effort` alone, no `thinking`; Opus 4.6 to 4.8 and Sonnet 4.6 then do not think | `invalid_request`, `code: unsupported_parameter`, `param` the parameter: an effort is only a budget there |
+| `reasoning.summary`, with or without an effort | `invalid_request`, `code: unsupported_parameter`, `param: reasoning.summary`: there is no thinking to summarise | the same |
+
+The first parameter in the order of the first table is the one named.
 
 Extension types use the `anthropic.` slug. A tool `{"type":
 "anthropic.web_search_20260209", "name": "web_search"}` is that server
