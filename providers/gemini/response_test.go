@@ -156,6 +156,9 @@ func TestSignatureRoundTrip(t *testing.T) {
 	if !ok || rs.Summary.Text() != "Need the weather." || rs.EncryptedContent != "c2ln" {
 		t.Fatalf("reasoning = %+v", out[0])
 	}
+	if rs.Issuer() != "gemini" {
+		t.Fatalf("issuer = %q, want gemini", rs.Issuer())
+	}
 	if _, ok := out[1].(*openresponses.FunctionCall); !ok {
 		t.Fatalf("second item = %T", out[1])
 	}
@@ -200,7 +203,7 @@ func TestSignatureAtEndOfTurn(t *testing.T) {
 	// A signature with nothing after it in the model turn gets a thought
 	// part of its own, ahead of the next user turn.
 	contents, _, err := encodeInput(openresponses.Items{
-		&openresponses.ReasoningItem{EncryptedContent: "c2ln"},
+		geminiReasoning("c2ln"),
 		openresponses.UserText("next"),
 	})
 	if err != nil {
@@ -347,7 +350,7 @@ func TestStreamThoughtsWithSummary(t *testing.T) {
 		`{"candidates":[{"content":{"parts":[{"text":"Answer."}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":7,"cachedContentTokenCount":1,"totalTokenCount":12}}`)
 	resp := sink.Response()
 	rs := resp.Output[0].(*openresponses.ReasoningItem)
-	if rs.Summary.Text() != "First, consider." || rs.EncryptedContent != "" {
+	if rs.Summary.Text() != "First, consider." || rs.EncryptedContent != "" || rs.Issuer() != "gemini" {
 		t.Fatalf("reasoning = %+v", rs)
 	}
 	if resp.OutputText() != "Answer." {
@@ -356,6 +359,10 @@ func TestStreamThoughtsWithSummary(t *testing.T) {
 	u := resp.Usage
 	if u.InputTokens != 3 || u.OutputTokens != 9 || u.OutputTokensDetails.ReasoningTokens != 7 || u.InputTokensDetails.CachedTokens != 1 || u.TotalTokens != 12 {
 		t.Fatalf("usage = %+v", u)
+	}
+	// Gemini reports no cache writes, so none is claimed.
+	if n, ok := u.InputTokensDetails.CacheWriteTokens(); ok {
+		t.Fatalf("cache writes = %d, want none reported", n)
 	}
 }
 
@@ -373,32 +380,104 @@ func TestMapError(t *testing.T) {
 	}{
 		{"rate limited", 429, `{"error":{"code":429,"message":"quota","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"6.2s"}]}}`, openresponses.ErrorTypeTooManyRequests, "resource_exhausted", "7", 0},
 		{"invalid", 400, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, "invalid_argument", "", 0},
+		// An overflow is INVALID_ARGUMENT like any bad request, recognised
+		// by its message, and carries the shared code a client compacts on.
+		{"context overflow", 400, `{"error":{"code":400,"message":"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", 0},
+		// Vertex AI words the overflow differently.
+		{"vertex context overflow", 400, `{"error":{"code":400,"message":"Unable to submit request because the input token count is 1200000 but model only supports up to 1048575. Reduce the input token count and try again.","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", 0},
+		// Numbers that do not exceed are not an overflow.
+		{"not an overflow", 400, `{"error":{"code":400,"message":"the input token count is 10 but model only supports up to 100","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, "invalid_argument", "", 0},
+		// 408 is a timeout upstream, which a retry may fix.
+		{"request timeout", 408, `{"error":{"code":408,"message":"timeout","status":"DEADLINE_EXCEEDED"}}`, openresponses.ErrorTypeServerError, "deadline_exceeded", "", 0},
 		{"not found", 404, `{"error":{"code":404,"message":"no model","status":"NOT_FOUND"}}`, openresponses.ErrorTypeNotFound, "not_found", "", 0},
-		// 401 and 403 are the adapter's own credentials failing. The caller
-		// never supplied a Google credential, so it reads as a gateway
-		// failure rather than as something the caller got wrong.
-		{"unauthenticated", 401, `{"error":{"code":401,"message":"key","status":"UNAUTHENTICATED"}}`, openresponses.ErrorTypeServerError, "unauthenticated", "", http.StatusBadGateway},
-		{"permission denied", 403, `{"error":{"code":403,"message":"no access","status":"PERMISSION_DENIED"}}`, openresponses.ErrorTypeServerError, "permission_denied", "", http.StatusBadGateway},
+		// 401 and 403 are the adapter's own credentials failing. No retry
+		// can fix that, so they are invalid_request with Gemini's status
+		// and code, never a retryable server_error.
+		{"unauthenticated", 401, `{"error":{"code":401,"message":"key","status":"UNAUTHENTICATED"}}`, openresponses.ErrorTypeInvalidRequest, "unauthenticated", "", 0},
+		{"permission denied", 403, `{"error":{"code":403,"message":"no access","status":"PERMISSION_DENIED"}}`, openresponses.ErrorTypeInvalidRequest, "permission_denied", "", 0},
 		{"unavailable", 503, `{"error":{"code":503,"message":"down","status":"UNAVAILABLE"}}`, openresponses.ErrorTypeServerError, "unavailable", "", 0},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			want := tc.want
-			if want == 0 {
-				want = tc.status
-			}
-			_, err := streamtest.Run(context.Background(), newAdapter(t, apiError(tc.status, tc.body)), hello())
-			var oerr *openresponses.Error
-			if !errorsAs(err, &oerr) {
-				t.Fatalf("err = %v", err)
-			}
-			if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != want {
-				t.Fatalf("err = %+v (status %d, want %d)", oerr, oerr.HTTPStatus(), want)
-			}
-			if got := oerr.Headers.Get("Retry-After"); got != tc.retry {
-				t.Fatalf("Retry-After = %q, want %q", got, tc.retry)
-			}
-		})
+		// The same envelope inside a 2xx stream is the same failure, and
+		// maps to the same error.
+		for via, h := range map[string]http.Handler{"status": apiError(tc.status, tc.body), "in stream": streamError(tc.body)} {
+			t.Run(tc.name+" "+via, func(t *testing.T) {
+				want := tc.want
+				if want == 0 {
+					want = tc.status
+				}
+				_, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+				var oerr *openresponses.Error
+				if !errorsAs(err, &oerr) {
+					t.Fatalf("err = %v", err)
+				}
+				if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != want {
+					t.Fatalf("err = %+v (status %d, want %d)", oerr, oerr.HTTPStatus(), want)
+				}
+				if got := oerr.Headers.Get("Retry-After"); got != tc.retry {
+					t.Fatalf("Retry-After = %q, want %q", got, tc.retry)
+				}
+			})
+		}
+	}
+}
+
+// streamError starts a 200 stream with a text chunk and then sends body,
+// a Gemini error envelope on one line, as an error that arrives after
+// the status has gone out does.
+func streamError(body string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: %s\n\n%s\n\n", textChunk, body)
+	})
+}
+
+// TestStreamErrorStatusOnly: an envelope inside a stream that names its
+// gRPC status but no code maps as the HTTP status that status stands for
+// would.
+func TestStreamErrorStatusOnly(t *testing.T) {
+	cases := []struct {
+		body   string
+		typ    openresponses.ErrorType
+		status int
+	}{
+		{`{"error":{"message":"API key not valid","status":"PERMISSION_DENIED"}}`, openresponses.ErrorTypeInvalidRequest, 403},
+		{`{"error":{"message":"no key","status":"UNAUTHENTICATED"}}`, openresponses.ErrorTypeInvalidRequest, 401},
+		{`{"error":{"message":"bad field","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, 400},
+		{`{"error":{"message":"quota","status":"RESOURCE_EXHAUSTED"}}`, openresponses.ErrorTypeTooManyRequests, 429},
+		{`{"error":{"message":"gone","status":"NOT_FOUND"}}`, openresponses.ErrorTypeNotFound, 404},
+		{`{"error":{"message":"down","status":"UNAVAILABLE"}}`, openresponses.ErrorTypeServerError, 503},
+		{`{"error":{"message":"slow","status":"DEADLINE_EXCEEDED"}}`, openresponses.ErrorTypeServerError, 504},
+		{`{"error":{"message":"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}`, openresponses.ErrorTypeInvalidRequest, 400},
+	}
+	for _, tc := range cases {
+		_, err := streamtest.Run(context.Background(), newAdapter(t, streamError(tc.body)), hello())
+		var oerr *openresponses.Error
+		if !errorsAs(err, &oerr) {
+			t.Fatalf("err = %v", err)
+		}
+		if oerr.Type != tc.typ || oerr.HTTPStatus() != tc.status {
+			t.Errorf("%s: %s %d, want %s %d", tc.body, oerr.Type, oerr.HTTPStatus(), tc.typ, tc.status)
+		}
+	}
+}
+
+// TestStreamErrorNever2xx: an error envelope inside a stream whose code
+// is missing or a success takes its status from its type, so it never
+// reads as a 2xx.
+func TestStreamErrorNever2xx(t *testing.T) {
+	for _, body := range []string{
+		`{"error":{"code":200,"message":"odd","status":"OK"}}`,
+		`{"error":{"message":"no code"}}`,
+	} {
+		_, err := streamtest.Run(context.Background(), newAdapter(t, streamError(body)), hello())
+		var oerr *openresponses.Error
+		if !errorsAs(err, &oerr) {
+			t.Fatalf("err = %v", err)
+		}
+		if oerr.Type != openresponses.ErrorTypeServerError || oerr.HTTPStatus() != http.StatusInternalServerError {
+			t.Fatalf("%s: err = %+v (status %d)", body, oerr, oerr.HTTPStatus())
+		}
 	}
 }
 

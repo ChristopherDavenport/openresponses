@@ -51,12 +51,30 @@ func TestEncodeSystemInstruction(t *testing.T) {
 	for _, p := range cfg.SystemInstruction.Parts {
 		got = append(got, p.Text)
 	}
-	want := []string{"Be brief.", "You are a pirate.", "Answer in French."}
+	want := []string{"Be brief.", "You are a pirate."}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("system parts = %q, want %q", got, want)
 	}
-	if len(contents) != 1 || contents[0].Role != genai.RoleUser || contents[0].Parts[0].Text != "Hello" {
-		t.Fatalf("contents = %+v, want one user turn", contents)
+	// A developer message after the conversation has started stays where
+	// it was put, as user text, rather than moving into the system
+	// instruction.
+	if len(contents) != 1 || contents[0].Role != genai.RoleUser || len(contents[0].Parts) != 2 ||
+		contents[0].Parts[0].Text != "Hello" || contents[0].Parts[1].Text != "Answer in French." {
+		t.Fatalf("contents = %+v, want one user turn of Hello then the developer text", contents)
+	}
+
+	// After a model turn it opens the next user turn.
+	contents, cfg = encode(t, openresponses.Request{Input: openresponses.Items{
+		openresponses.UserText("Hi"),
+		openresponses.AssistantText("Hello."),
+		openresponses.SystemText("Be formal from here."),
+		openresponses.UserText("How are you?"),
+	}})
+	if cfg.SystemInstruction != nil {
+		t.Fatalf("system = %+v, want none", cfg.SystemInstruction)
+	}
+	if len(contents) != 3 || contents[2].Role != genai.RoleUser || len(contents[2].Parts) != 2 || contents[2].Parts[0].Text != "Be formal from here." {
+		t.Fatalf("contents = %+v", contents)
 	}
 	if cfg.CandidateCount != 1 {
 		t.Fatalf("CandidateCount = %d, want 1", cfg.CandidateCount)
@@ -67,10 +85,11 @@ func TestEncodeTurns(t *testing.T) {
 	contents, _ := encode(t, openresponses.Request{
 		Input: openresponses.Items{
 			openresponses.UserText("What is the weather?"),
-			&openresponses.ReasoningItem{
-				Summary:          openresponses.Contents{&openresponses.SummaryText{Text: "Need a lookup."}},
-				EncryptedContent: base64.StdEncoding.EncodeToString([]byte("sig")),
-			},
+			func() *openresponses.ReasoningItem {
+				r := geminiReasoning(base64.StdEncoding.EncodeToString([]byte("sig")))
+				r.Summary = openresponses.Contents{&openresponses.SummaryText{Text: "Need a lookup."}}
+				return r
+			}(),
 			openresponses.AssistantText("Let me check."),
 			&openresponses.FunctionCall{CallID: "call_1", Name: "weather", Arguments: `{"city":"Oslo"}`},
 			openresponses.NewFunctionCallOutput("call_1", "rainy"),
@@ -151,7 +170,7 @@ func TestEncodeInputErrors(t *testing.T) {
 	}{
 		{"output without call", openresponses.Items{openresponses.NewFunctionCallOutput("nope", "x")}, openresponses.CodeInvalidValue, "input[0].call_id"},
 		{"bad arguments", openresponses.Items{&openresponses.FunctionCall{CallID: "c", Name: "f", Arguments: "[1]"}}, openresponses.CodeInvalidValue, "input[0].arguments"},
-		{"bad signature", openresponses.Items{&openresponses.ReasoningItem{EncryptedContent: "***"}}, openresponses.CodeInvalidValue, "input[0].encrypted_content"},
+		{"bad signature", openresponses.Items{geminiReasoning("***")}, openresponses.CodeInvalidValue, "input[0].encrypted_content"},
 		{"compaction", openresponses.Items{&openresponses.Compaction{EncryptedContent: "x"}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"item reference", openresponses.Items{&openresponses.ItemReference{ID: "msg_1"}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"foreign item", openresponses.Items{&openresponses.UnknownItem{Type: "acme.thing", Raw: json.RawMessage(`{"type":"acme.thing"}`)}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
@@ -166,6 +185,73 @@ func TestEncodeInputErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := encodeRequest(openresponses.Request{Input: tc.input}, ThinkingAuto)
 			wantErr(t, err, tc.code, tc.param)
+		})
+	}
+}
+
+// geminiReasoning is a reasoning item this adapter issued, carrying
+// encrypted as its signature.
+func geminiReasoning(encrypted string) *openresponses.ReasoningItem {
+	r := &openresponses.ReasoningItem{EncryptedContent: encrypted}
+	r.SetIssuer(issuer)
+	return r
+}
+
+// TestEncodeReasoningIssuer pins docs/extensions.md section 4: a
+// signature goes back to Gemini only from an item Gemini issued or one
+// that names no issuer and is not detectably foreign.
+func TestEncodeReasoningIssuer(t *testing.T) {
+	sig := base64.StdEncoding.EncodeToString([]byte("sig"))
+	call := &openresponses.FunctionCall{CallID: "c1", Name: "f", Arguments: "{}"}
+	withSummary := func(r *openresponses.ReasoningItem) *openresponses.ReasoningItem {
+		r.Summary = openresponses.Contents{&openresponses.SummaryText{Text: "thinking"}}
+		return r
+	}
+	foreign := func(encrypted string) *openresponses.ReasoningItem {
+		r := &openresponses.ReasoningItem{EncryptedContent: encrypted}
+		r.SetIssuer("anthropic")
+		return r
+	}
+	cases := []struct {
+		name string
+		item *openresponses.ReasoningItem
+		// thought is whether a thought part is sent, sig the signature the
+		// call carries.
+		thought bool
+		sig     string
+	}{
+		{"own", withSummary(geminiReasoning(sig)), true, "sig"},
+		// An item with no issuer is of unknown origin. Claude's
+		// signatures are base64 too, so the content cannot tell, and the
+		// item is left out whatever it holds.
+		{"no issuer, base64", withSummary(&openresponses.ReasoningItem{EncryptedContent: sig}), false, ""},
+		{"no issuer, empty", withSummary(&openresponses.ReasoningItem{}), false, ""},
+		{"no issuer, not base64", withSummary(&openresponses.ReasoningItem{EncryptedContent: "EqQB***"}), false, ""},
+		{"another issuer", withSummary(foreign(sig)), false, ""},
+		{"another issuer's variant", withSummary(func() *openresponses.ReasoningItem {
+			r := geminiReasoning(sig)
+			r.SetIssuer("gemini/other")
+			return r
+		}()), false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			contents, _, err := encodeInput(openresponses.Items{openresponses.UserText("hi"), tc.item, call})
+			if err != nil {
+				t.Fatal(err)
+			}
+			model := contents[len(contents)-1]
+			var thought bool
+			var got string
+			for _, p := range model.Parts {
+				thought = thought || p.Thought
+				if p.FunctionCall != nil {
+					got = string(p.ThoughtSignature)
+				}
+			}
+			if thought != tc.thought || got != tc.sig {
+				t.Fatalf("thought part %v, call signature %q; want %v, %q", thought, got, tc.thought, tc.sig)
+			}
 		})
 	}
 }
@@ -242,6 +328,7 @@ func TestEncodeConfig(t *testing.T) {
 		TopLogprobs:       ptr(3),
 		ParallelToolCalls: ptr(true),
 		ServiceTier:       openresponses.ServiceTierDefault,
+		PromptCacheKey:    "conversation-1",
 		Metadata:          map[string]string{"team": "a"},
 		Reasoning:         openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh, Summary: openresponses.ReasoningSummaryAuto},
 		Text:              openresponses.TextConfig{Format: openresponses.JSONSchemaFormat("out", json.RawMessage(`{"type":"object"}`), true)},
@@ -327,10 +414,22 @@ func TestEncodeReasoning(t *testing.T) {
 		// An override beats the model ID, for a tuned endpoint.
 		{name: "forced budget", model: "gemini-3-pro-preview", opt: ThinkingBudget, effort: openresponses.ReasoningEffortHigh, budget: genai.Ptr(int32(24576))},
 		{name: "forced level", model: "gemini-2.5-pro", opt: ThinkingLevel, effort: openresponses.ReasoningEffortHigh, level: genai.ThinkingLevelHigh},
-		// Gemini 3 always thinks, so "none" cannot be expressed.
-		{name: "3 none", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortNone, code: openresponses.CodeInvalidValue},
-		{name: "xhigh", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortXHigh, code: openresponses.CodeInvalidValue},
-		{name: "xhigh on 2.5", model: "gemini-2.5-pro", effort: openresponses.ReasoningEffortXHigh, code: openresponses.CodeInvalidValue},
+		// The level field has no "none", so it is a zero budget, which
+		// the generations that take levels also accept. Whether the model
+		// can stop thinking is for Gemini to say, not the adapter.
+		{name: "3 none", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortNone, budget: genai.Ptr(int32(0))},
+		{name: "unknown none", model: "projects/p/locations/l/endpoints/123", effort: openresponses.ReasoningEffortNone, budget: genai.Ptr(int32(0))},
+		// xhigh is the most the model offers: the top level, and the
+		// largest 2.5 budget, which a model with a lower ceiling refuses.
+		{name: "xhigh", model: "gemini-3-pro-preview", effort: openresponses.ReasoningEffortXHigh, level: genai.ThinkingLevelHigh},
+		{name: "xhigh on 2.5", model: "gemini-2.5-pro", effort: openresponses.ReasoningEffortXHigh, budget: genai.Ptr(int32(32768))},
+		// xhigh is the model's own maximum budget, so 2.5 Flash gets the
+		// most it takes rather than one it refuses.
+		{name: "xhigh on 2.5 flash", model: "gemini-2.5-flash", effort: openresponses.ReasoningEffortXHigh, budget: genai.Ptr(int32(24576))},
+		{name: "xhigh on 2.5 flash-lite", model: "publishers/google/models/gemini-2.5-flash-lite", effort: openresponses.ReasoningEffortXHigh, budget: genai.Ptr(int32(24576))},
+		// A budget model the table does not know gets the lowest known
+		// maximum.
+		{name: "xhigh on unknown budget model", model: "projects/p/locations/l/endpoints/123", opt: ThinkingBudget, effort: openresponses.ReasoningEffortXHigh, budget: genai.Ptr(int32(24576))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -361,6 +460,32 @@ func TestEncodeReasoning(t *testing.T) {
 	}
 }
 
+// TestEncodeReasoningEffortMax: Gemini has no setting above high, so
+// openresponses-experimental.effort is ignored and reasoning.effort is
+// mapped as if the member were absent (docs/extensions.md section 3).
+func TestEncodeReasoningEffortMax(t *testing.T) {
+	member := map[string]any{openresponses.MemberEffort: openresponses.EffortMax}
+
+	tc, err := encodeReasoning(openresponses.ReasoningConfig{Extra: member}, "gemini-3-pro-preview", ThinkingAuto)
+	if err != nil || tc != nil {
+		t.Fatalf("member alone = %+v, %v; want no thinking config", tc, err)
+	}
+
+	tc, err = encodeReasoning(openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortHigh, Extra: member}, "gemini-3-pro-preview", ThinkingAuto)
+	if err != nil || tc.ThinkingLevel != genai.ThinkingLevelHigh {
+		t.Fatalf("high with member = %+v, %v", tc, err)
+	}
+
+	// A writer sets xhigh beside max, and xhigh is already Gemini's
+	// highest setting.
+	var r openresponses.ReasoningConfig
+	r.SetExtendedEffort(openresponses.EffortMax)
+	tc, err = encodeReasoning(r, "gemini-3-pro-preview", ThinkingAuto)
+	if err != nil || tc.ThinkingLevel != genai.ThinkingLevelHigh {
+		t.Fatalf("max = %+v, %v; want HIGH", tc, err)
+	}
+}
+
 // A summary of thinking that was switched off is contradictory, and
 // Gemini rejects the pair rather than picking one.
 func TestEncodeReasoningNoneWithSummary(t *testing.T) {
@@ -380,11 +505,9 @@ func TestEncodeConfigErrors(t *testing.T) {
 		{"parallel_tool_calls false", openresponses.Request{ParallelToolCalls: ptr(false)}, openresponses.CodeUnsupportedParameter, "parallel_tool_calls"},
 		{"max_tool_calls", openresponses.Request{MaxToolCalls: ptr(2)}, openresponses.CodeUnsupportedParameter, "max_tool_calls"},
 		{"safety_identifier", openresponses.Request{SafetyIdentifier: "u"}, openresponses.CodeUnsupportedParameter, "safety_identifier"},
-		{"prompt_cache_key", openresponses.Request{PromptCacheKey: "k"}, openresponses.CodeUnsupportedParameter, "prompt_cache_key"},
 		{"truncation auto", openresponses.Request{Truncation: openresponses.TruncationAuto}, openresponses.CodeUnsupportedParameter, "truncation"},
 		{"verbosity", openresponses.Request{Text: openresponses.TextConfig{Verbosity: openresponses.VerbosityLow}}, openresponses.CodeUnsupportedParameter, "text.verbosity"},
 		{"service_tier", openresponses.Request{ServiceTier: "gold"}, openresponses.CodeInvalidValue, "service_tier"},
-		{"effort xhigh", openresponses.Request{Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh}}, openresponses.CodeInvalidValue, "reasoning.effort"},
 		{"bad schema", openresponses.Request{Text: openresponses.TextConfig{Format: openresponses.JSONSchemaFormat("o", json.RawMessage(`{`), false)}}, openresponses.CodeInvalidValue, "text.format.schema"},
 		{"format type", openresponses.Request{Text: openresponses.TextConfig{Format: &openresponses.TextFormat{Type: "yaml"}}}, openresponses.CodeInvalidValue, "text.format.type"},
 	}
@@ -468,4 +591,125 @@ func TestEncodeToolChoice(t *testing.T) {
 		Mode: openresponses.ToolChoiceAuto, Tools: []openresponses.ToolReference{{Type: "gemini.google_search"}},
 	}}}, ThinkingAuto)
 	wantErr(t, err, openresponses.CodeUnsupportedParameter, "tool_choice.tools[0].type")
+}
+
+// TestEncodePlaceholderSignature: Gemini 3 refuses a model step whose
+// function call carries no thought signature, which is every step of a
+// transcript another provider wrote. Such a step gets Google's
+// placeholder on its first function call; a step that has a signature,
+// and every step on a generation that does not validate, is left alone.
+func TestEncodePlaceholderSignature(t *testing.T) {
+	foreign := openresponses.Items{
+		openresponses.UserText("weather in Oslo and Bergen?"),
+		&openresponses.FunctionCall{CallID: "c1", Name: "weather", Arguments: `{"city":"Oslo"}`},
+		&openresponses.FunctionCall{CallID: "c2", Name: "weather", Arguments: `{"city":"Bergen"}`},
+		openresponses.NewFunctionCallOutput("c1", "rain"),
+		openresponses.NewFunctionCallOutput("c2", "sun"),
+	}
+	contents, _ := encode(t, openresponses.Request{Model: "gemini-3-pro-preview", Input: foreign})
+	model := contents[1]
+	if got := string(model.Parts[0].ThoughtSignature); got != string(placeholderSignature) {
+		t.Fatalf("first call signature = %q, want the placeholder", got)
+	}
+	if model.Parts[1].ThoughtSignature != nil {
+		t.Fatalf("second call signature = %q, want none: only the first call of a step carries one", model.Parts[1].ThoughtSignature)
+	}
+	// On the wire it is the string Google documents.
+	wire, err := json.Marshal(model.Parts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		ThoughtSignature []byte `json:"thoughtSignature"`
+	}
+	if err := json.Unmarshal(wire, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	want, _ := base64.RawURLEncoding.DecodeString("skip_thought_signature_validator")
+	if string(decoded.ThoughtSignature) != string(want) {
+		t.Fatalf("wire signature decodes to %q, want the bytes of skip_thought_signature_validator", decoded.ThoughtSignature)
+	}
+
+	contents, _ = encode(t, openresponses.Request{Model: "gemini-2.5-pro", Input: foreign})
+	if contents[1].Parts[0].ThoughtSignature != nil {
+		t.Fatalf("2.5 signature = %q, want none", contents[1].Parts[0].ThoughtSignature)
+	}
+
+	own := openresponses.Items{
+		openresponses.UserText("weather?"),
+		geminiReasoning(base64.StdEncoding.EncodeToString([]byte("sig"))),
+		&openresponses.FunctionCall{CallID: "c1", Name: "weather", Arguments: `{}`},
+	}
+	contents, _ = encode(t, openresponses.Request{Model: "gemini-3-pro-preview", Input: own})
+	if got := string(contents[1].Parts[0].ThoughtSignature); got != "sig" {
+		t.Fatalf("own signature = %q, want sig", got)
+	}
+}
+
+// TestEncodeUnstampedClaudeReasoning: a Claude thinking signature is
+// padded standard base64, so an unstamped Claude item looks like
+// Gemini's. It is left out, and the step it led gets the placeholder on
+// a Gemini 3 model rather than Claude's bytes.
+func TestEncodeUnstampedClaudeReasoning(t *testing.T) {
+	claude := base64.StdEncoding.EncodeToString([]byte("\x08\x04\x12\xa9\x08\n\x10claude-protobuf-signature-bytes"))
+	items := openresponses.Items{
+		openresponses.UserText("weather?"),
+		&openresponses.ReasoningItem{EncryptedContent: claude, Summary: openresponses.Contents{&openresponses.SummaryText{Text: "claude thinking"}}},
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "weather", Arguments: `{}`},
+	}
+	contents, _ := encode(t, openresponses.Request{Model: "gemini-3-pro-preview", Input: items})
+	for _, p := range contents[1].Parts {
+		if p.FunctionCall != nil && string(p.ThoughtSignature) != string(placeholderSignature) {
+			t.Errorf("call signature = %q, want the placeholder", p.ThoughtSignature)
+		}
+		if p.Thought {
+			t.Errorf("unattributed summary sent as a Gemini thought: %q", p.Text)
+		}
+	}
+}
+
+// TestPlaceholderFollowsModel: the placeholder depends on the model's
+// generation, not on the encoding WithThinking fixes.
+func TestPlaceholderFollowsModel(t *testing.T) {
+	items := openresponses.Items{
+		openresponses.UserText("weather?"),
+		&openresponses.FunctionCall{CallID: "c1", Name: "weather", Arguments: `{}`},
+		openresponses.NewFunctionCallOutput("c1", "rain"),
+	}
+	contents, _, err := encodeRequest(openresponses.Request{Model: "gemini-3-pro-preview", Input: items}, ThinkingBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents[1].Parts[0].ThoughtSignature) != string(placeholderSignature) {
+		t.Fatalf("signature = %q, want the placeholder on a Gemini 3 model whatever the encoding", contents[1].Parts[0].ThoughtSignature)
+	}
+	contents, _, err = encodeRequest(openresponses.Request{Model: "gemini-2.5-pro", Input: items}, ThinkingLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contents[1].Parts[0].ThoughtSignature != nil {
+		t.Fatalf("signature = %q, want none on Gemini 2.5 whatever the encoding", contents[1].Parts[0].ThoughtSignature)
+	}
+}
+
+// TestPlaceholderOnUnsignedFirstCall: Gemini 3 checks the first function
+// call of a step for a signature, so a signature elsewhere in the step,
+// here on text a Gemini turn ended with, does not cover a call another
+// provider made after it.
+func TestPlaceholderOnUnsignedFirstCall(t *testing.T) {
+	items := openresponses.Items{
+		openresponses.UserText("go"),
+		geminiReasoning(base64.StdEncoding.EncodeToString([]byte("sig"))),
+		openresponses.AssistantText("Partial answer"),
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "f", Arguments: `{}`},
+		openresponses.NewFunctionCallOutput("toolu_1", "ok"),
+	}
+	contents, _ := encode(t, openresponses.Request{Model: "gemini-3-pro-preview", Input: items})
+	parts := contents[1].Parts
+	if len(parts) != 2 || string(parts[0].ThoughtSignature) != "sig" {
+		t.Fatalf("parts = %+v, want the text with Gemini's signature then the call", parts)
+	}
+	if string(parts[1].ThoughtSignature) != string(placeholderSignature) {
+		t.Fatalf("call signature = %q, want the placeholder", parts[1].ThoughtSignature)
+	}
 }

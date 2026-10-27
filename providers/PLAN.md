@@ -312,6 +312,19 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   signature until the next non-thought part of the model turn and puts
   it there, giving it a thought part of its own only when the turn
   ends without one. The replayed turn has Gemini's own layout.
+- Every reasoning item the decoder emits carries
+  `openresponses-experimental.issuer: "gemini"` (rule 5). On input
+  only an item issued by `gemini` is sent. One another issuer wrote, or
+  one with no issuer, is left out whole, summary included: Claude's
+  signatures are base64 as Gemini's are, so an unattributed item's
+  origin cannot be told. On a Gemini 3 model, the first function call
+  of each model step gets Google's documented placeholder,
+  `skip_thought_signature_validator`, when it has no signature of its
+  own, so Gemini 3 accepts a transcript switched from another provider.
+- `instructions` and the system and developer messages that precede
+  every other input item form the system instruction. A system or
+  developer message after any other item stays in place as text parts
+  of the user turn.
 - Tools use `FunctionDeclaration.ParametersJsonSchema`; `Parameters
   *Schema` is an OpenAPI subset and lossy. `strict` has no equivalent
   and is accepted without effect, the documented exception to rule 3.
@@ -326,13 +339,29 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   `FunctionCallingConfig.Mode` AUTO / NONE / ANY; a named function is
   ANY with `AllowedFunctionNames`. There is no `parallel_tool_calls`
   knob.
-- `reasoning.effort` minimal / low / medium / high map to
-  `ThinkingLevel` one to one; `xhigh` is `invalid_request`. Any
+- `reasoning.effort` goes as `thinkingLevel` or `thinkingBudget`, by
+  the model ID table in the README (rule 1): IDs starting `gemini-1.`
+  or `gemini-2.` take budgets, everything else takes levels, and
+  `WithThinking` fixes the encoding. minimal / low / medium / high map
+  to the levels one to one and to budgets 512 / 4096 / 8192 / 24576.
+  `xhigh` is the highest setting the model takes: `HIGH`, or the
+  model's maximum budget by the README's table from Google's thinking
+  docs (2.5 Pro 32768, 2.5 Flash and Flash-Lite 24576, 24576 for a
+  model it does not know). `none` is `thinkingBudget: 0` in both encodings,
+  since the level field has no value for it; a model that cannot stop
+  thinking refuses it upstream. `openresponses-experimental.effort` is
+  ignored, since its fallback `xhigh` is already the highest setting. Any
   `reasoning.summary` sets `IncludeThoughts: true`.
 - Temperature, top_p, both penalties and `top_logprobs`
   (`ResponseLogprobs` with `Logprobs`) are native. `max_output_tokens`
   is optional. `CandidateCount` is pinned to 1. `metadata` becomes
-  `Labels` on Vertex only.
+  `Labels` on Vertex only. `prompt_cache_key` is a caching hint;
+  Gemini caches implicitly, so the key is accepted without effect.
+- Top-level `Request.Extra` (rule 8): a member under `anthropic.`,
+  `chatcompletions.` or `gemini.` (no Gemini request parameter is
+  defined yet) is `invalid_request` naming it, shared members are
+  ignored, and any other is dropped unless `WithExtra` forwards it
+  into the `GenerateContent` body without overriding a mapped key.
 - Structured output is `ResponseMIMEType: "application/json"` with
   `ResponseJsonSchema`.
 - Images, files and video: data URLs become `InlineData`; every other
@@ -348,10 +377,12 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   UNEXPECTED_TOOL_CALL and OTHER are `ModelError`. A blocked prompt
   (`PromptFeedback.BlockReason` with no candidates) is
   `Incomplete(content_filter)` with empty output.
-- Usage: `PromptTokenCount` is input, `CachedContentTokenCount` is
-  cached, `CandidatesTokenCount + ThoughtsTokenCount` is output,
-  `ThoughtsTokenCount` is `reasoning_tokens`. `ResponseID` and
-  `ModelVersion` fill the response.
+- Usage: `PromptTokenCount + ToolUsePromptTokenCount` is input,
+  `CachedContentTokenCount` is cached, `CandidatesTokenCount +
+  ThoughtsTokenCount` is output, `ThoughtsTokenCount` is
+  `reasoning_tokens`. Gemini reports no cache writes, so
+  `openresponses-experimental.cache_write_tokens` is never set.
+  `ResponseID` and `ModelVersion` fill the response.
 - Grounding becomes `URLCitation` annotations from
   `GroundingChunks[i].Web` joined through `GroundingSupports[].Segment`.
   Gemini's segment offsets are bytes within a part and the spec's
@@ -366,11 +397,27 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   `PartialArgs` exist for streamed arguments and are out of scope for
   the first version. The last chunk carries `FinishReason` and
   `UsageMetadata`.
-- Errors: `genai.APIError{Code, Message, Status}` maps by `Code`. It
-  exposes no headers, so `Retry-After` is synthesized from a
-  `google.rpc.RetryInfo` in `Details` when one is present.
+- Errors: `genai.APIError{Code, Message, Status}` takes its type from
+  `Code` by `ErrorTypeForStatus`, with the lower-cased `Status` as the
+  code, so 401 `UNAUTHENTICATED` and 403 `PERMISSION_DENIED` are
+  `invalid_request` with that status, never `server_error`. An
+  `INVALID_ARGUMENT` overflow message, the Gemini API's "The input token
+  count (N) exceeds …" or Vertex AI's "the input token count is N but
+  model only supports up to M" with N above M, is
+  `context_length_exceeded`. An envelope inside the stream maps as the
+  same one on a non-2xx response; one with no code or a 2xx code takes
+  the HTTP status its gRPC `Status` stands for, and one with neither
+  takes its status from its type. The SDK
+  drops an envelope sent as an SSE `data:` event, which then surfaces
+  as `truncated_stream`. `APIError` exposes no headers, so
+  `Retry-After` is synthesized from a `google.rpc.RetryInfo` in
+  `Details` when one is present.
   `finishMessage` reaches the SDK only on Vertex AI; the Gemini API
   converter drops it, so model errors carry a generic message there.
+- `Describe` (`openresponses.Describer`) reads `models.get`:
+  `inputTokenLimit`, `outputTokenLimit` and `thinking`, with efforts
+  `["none"]` when not thinking. On Vertex AI it returns the source
+  alone, since that model resource carries none of them.
 - Compaction is unsupported. Implicit caching is automatic; explicit
   `CachedContent` is a resource name that could ride in `Extra` later.
 

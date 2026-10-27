@@ -38,8 +38,9 @@ import (
 type Adapter struct {
 	openresponses.UnsupportedCompaction
 
-	client   *genai.Client
-	thinking Thinking
+	client       *genai.Client
+	thinking     Thinking
+	forwardExtra bool
 }
 
 var _ openresponses.Adapter = (*Adapter)(nil)
@@ -59,7 +60,8 @@ const (
 	// generation.
 	ThinkingAuto Thinking = iota
 	// ThinkingLevel always sends thinkingLevel, which Gemini 3 and later
-	// take and Gemini 2.5 and earlier reject.
+	// take and Gemini 2.5 and earlier reject. The level field has no
+	// value for effort "none", which goes as a zero thinkingBudget.
 	ThinkingLevel
 	// ThinkingBudget always sends thinkingBudget, in tokens. Gemini 2.5
 	// and earlier take only this; Gemini 3 accepts it for backward
@@ -72,6 +74,17 @@ const (
 // ID does not say which generation it serves.
 func WithThinking(t Thinking) Option {
 	return func(a *Adapter) { a.thinking = t }
+}
+
+// WithExtra forwards the request's unknown top-level members (Extra) into
+// the GenerateContent body, for Gemini request fields the mapping does
+// not cover, such as cachedContent. Keys the mapping sets are never
+// overridden, and shared openresponses-experimental members and members
+// under a provider's slug are never forwarded. Any other member a client
+// sends then reaches Gemini, so a server that does not trust its clients
+// should filter Extra first. Off by default: the members are dropped.
+func WithExtra() Option {
+	return func(a *Adapter) { a.forwardExtra = true }
 }
 
 // thinkingFor derives the encoding from a model ID, for [ThinkingAuto].

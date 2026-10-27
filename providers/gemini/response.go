@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,9 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 	contents, cfg, err := encodeRequest(req, a.thinking)
 	if err != nil {
 		return err
+	}
+	if a.forwardExtra {
+		forwardExtra(cfg, forwardable(req.Extra))
 	}
 	d := &decoder{em: openresponses.NewEmitter(sink, openresponses.NewResponse(req))}
 	for chunk, err := range a.client.Models.GenerateContentStream(ctx, req.Model, contents, cfg) {
@@ -217,6 +221,9 @@ func (d *decoder) openReasoning() (*openresponses.ReasoningWriter, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Every reasoning item names its issuer, so its signature is sent
+	// back here and nowhere else.
+	r.Item().SetIssuer(issuer)
 	d.reasoning = r
 	return r, nil
 }
@@ -368,7 +375,9 @@ func tokenBytes(token string) []int {
 // mapError converts an SDK error into the matching *openresponses.Error.
 // The HTTP status decides the type, the gRPC status becomes the code,
 // and a RetryInfo detail becomes Retry-After so a 429 keeps its meaning
-// through the handler.
+// through the handler. An error envelope inside the stream reaches here
+// as the same genai.APIError a non-2xx response produces, so one failure
+// maps to one Error whichever way it arrived.
 func mapError(err error) error {
 	var oerr *openresponses.Error
 	if errors.As(err, &oerr) {
@@ -385,30 +394,93 @@ func mapError(err error) error {
 	if code == "" {
 		code = "gemini_error"
 	}
-	var out *openresponses.Error
-	switch {
-	case apiErr.Code == http.StatusUnauthorized, apiErr.Code == http.StatusForbidden:
-		// The adapter's own credentials failing, not the caller's request.
-		// Forwarding the status would send a caller that never supplied a
-		// Google credential off to rotate one it does not hold, so this
-		// reads as what it is: this server cannot reach its upstream.
-		out = openresponses.ServerError(code, apiErr.Message)
-		out.StatusCode = http.StatusBadGateway
-		return out
-	case apiErr.Code == http.StatusNotFound:
-		out = openresponses.NotFound(code, apiErr.Message, "")
-	case apiErr.Code == http.StatusTooManyRequests:
-		out = openresponses.TooManyRequests(code, apiErr.Message)
-		if delay, ok := retryDelay(apiErr.Details); ok {
-			out.WithHeader("Retry-After", strconv.Itoa(delay))
-		}
-	case apiErr.Code >= 400 && apiErr.Code < 500:
-		out = openresponses.InvalidRequest(code, apiErr.Message, "")
-	default:
-		out = openresponses.ServerError(code, apiErr.Message)
+	status := apiErr.Code
+	if status < 400 {
+		// An envelope inside a stream may name its gRPC status and no
+		// code. It is the same failure as the HTTP status that gRPC
+		// status stands for, so it maps as that status would.
+		status = grpcStatus[apiErr.Status]
 	}
-	out.StatusCode = apiErr.Code
+	var out *openresponses.Error
+	switch typ := openresponses.ErrorTypeForStatus(status); {
+	case contextOverflow(apiErr):
+		out = openresponses.ContextLengthExceeded(apiErr.Message)
+	default:
+		// The type follows the status by the root's table (PLAN.md,
+		// Errors); with no status at all it is server_error. 401 UNAUTHENTICATED and 403 PERMISSION_DENIED refuse the
+		// adapter's own credentials, which no retry can fix, so they are
+		// invalid_request with Gemini's status and code like any other
+		// refusal, never server_error; 408 is a timeout upstream, which a
+		// retry may fix.
+		out = &openresponses.Error{Type: typ, Code: code, Message: apiErr.Message}
+		if typ == openresponses.ErrorTypeTooManyRequests {
+			if delay, ok := retryDelay(apiErr.Details); ok {
+				out.WithHeader("Retry-After", strconv.Itoa(delay))
+			}
+		}
+	}
+	if status >= 400 {
+		// An error that arrives inside a 2xx stream carries the code its
+		// envelope names, or the one its gRPC status stands for. One with
+		// neither leaves the status to the type: an error never reads as
+		// a success.
+		out.StatusCode = status
+	}
 	return out
+}
+
+// grpcStatus is the HTTP status each google.rpc.Code name stands for, as
+// Google's API design guide maps them. OK maps to nothing.
+var grpcStatus = map[string]int{
+	"CANCELLED":           499,
+	"UNKNOWN":             http.StatusInternalServerError,
+	"INVALID_ARGUMENT":    http.StatusBadRequest,
+	"DEADLINE_EXCEEDED":   http.StatusGatewayTimeout,
+	"NOT_FOUND":           http.StatusNotFound,
+	"ALREADY_EXISTS":      http.StatusConflict,
+	"PERMISSION_DENIED":   http.StatusForbidden,
+	"RESOURCE_EXHAUSTED":  http.StatusTooManyRequests,
+	"FAILED_PRECONDITION": http.StatusBadRequest,
+	"ABORTED":             http.StatusConflict,
+	"OUT_OF_RANGE":        http.StatusBadRequest,
+	"UNIMPLEMENTED":       http.StatusNotImplemented,
+	"INTERNAL":            http.StatusInternalServerError,
+	"UNAVAILABLE":         http.StatusServiceUnavailable,
+	"DATA_LOSS":           http.StatusInternalServerError,
+	"UNAUTHENTICATED":     http.StatusUnauthorized,
+}
+
+// overflowMessages are Gemini's wordings of a context overflow, each
+// with the input token count and the limit:
+//
+//	The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).
+//	Unable to submit request because the input token count is 1200000 but model only supports up to 1048575.
+//
+// The first is the Gemini API's, the second Vertex AI's.
+var overflowMessages = []*regexp.Regexp{
+	regexp.MustCompile(`input token count \((\d+)\) exceeds the maximum number of tokens allowed \((\d+)\)`),
+	regexp.MustCompile(`input token count is (\d+) but model only supports up to (\d+)`),
+}
+
+// contextOverflow reports whether Gemini refused the request because its
+// input exceeds the model's context window. Gemini has no code of its
+// own for that: it is INVALID_ARGUMENT, a 400, and the message is
+// matched. A message in one of overflowMessages' forms is an overflow
+// when its count exceeds its limit. Failing those, a message that says
+// "input token count" and "exceeds" is taken as one.
+func contextOverflow(e genai.APIError) bool {
+	if e.Code != http.StatusBadRequest && e.Status != "INVALID_ARGUMENT" {
+		return false
+	}
+	msg := strings.ToLower(e.Message)
+	for _, re := range overflowMessages {
+		if m := re.FindStringSubmatch(msg); m != nil {
+			n, err1 := strconv.Atoi(m[1])
+			limit, err2 := strconv.Atoi(m[2])
+			return err1 == nil && err2 == nil && n > limit
+		}
+	}
+	return strings.Contains(msg, "input token count") && strings.Contains(msg, "exceeds")
 }
 
 // retryDelay finds a google.rpc.RetryInfo detail and returns its delay

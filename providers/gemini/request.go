@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/ChristopherDavenport/openresponses"
@@ -16,6 +17,12 @@ import (
 // Slug prefix for Gemini extension types: tools, items and content parts
 // the Open Responses specification does not define.
 const slug = "gemini."
+
+// issuer names this adapter in openresponses-experimental.issuer on the
+// reasoning items it emits, so the thought signatures they carry are
+// sent back to Gemini and to no other provider (docs/extensions.md
+// section 4).
+const issuer = "gemini"
 
 // encodeRequest translates a request into the contents and configuration
 // of one GenerateContent call. Fields Gemini has no equivalent for are
@@ -27,6 +34,9 @@ func encodeRequest(req openresponses.Request, thinking Thinking) ([]*genai.Conte
 		// here means it has none, and Gemini keeps no conversation state.
 		return nil, nil, openresponses.PreviousResponseNotFound(req.PreviousResponseID)
 	}
+	if err := checkExtra(req.Extra); err != nil {
+		return nil, nil, err
+	}
 	cfg, err := encodeConfig(req, thinking)
 	if err != nil {
 		return nil, nil, err
@@ -35,6 +45,12 @@ func encodeRequest(req openresponses.Request, thinking Thinking) ([]*genai.Conte
 	if err != nil {
 		return nil, nil, err
 	}
+	// Gemini 3 validates signatures and earlier generations do not. That
+	// is a fact about the model's generation, read off its ID, and not
+	// about the encoding WithThinking may have fixed.
+	if thinkingFor(req.Model) == ThinkingLevel {
+		placeholderSignatures(contents)
+	}
 	if req.Instructions != "" {
 		system = append([]*genai.Part{genai.NewPartFromText(req.Instructions)}, system...)
 	}
@@ -42,6 +58,84 @@ func encodeRequest(req openresponses.Request, thinking Thinking) ([]*genai.Conte
 		cfg.SystemInstruction = &genai.Content{Parts: system}
 	}
 	return contents, cfg, nil
+}
+
+// providerSlugs are the slugs of the providers this repository has
+// adapters for, including this one. A top-level request member under one
+// of them is a setting for that provider (PLAN.md rule 8).
+var providerSlugs = []string{"anthropic.", "chatcompletions.", slug}
+
+// checkExtra applies PLAN.md rule 8 to the request's unknown top-level
+// members. One under another provider's slug is meant for a provider
+// this one cannot honour, and one under gemini. would be a provider
+// parameter, of which none is defined yet: both are invalid_request
+// naming the member. Shared members this adapter does not implement are
+// ignored, and any other member is dropped or, with [WithExtra],
+// forwarded (see forwardable).
+func checkExtra(extra map[string]any) error {
+	names := make([]string, 0, len(extra))
+	for name := range extra {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		if providerMember(name) {
+			return unsupported(name)
+		}
+	}
+	return nil
+}
+
+func providerMember(name string) bool {
+	for _, s := range providerSlugs {
+		if strings.HasPrefix(name, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// forwardable returns the members [WithExtra] forwards: every member
+// that is neither a shared extension nor under a provider's slug.
+func forwardable(extra map[string]any) map[string]any {
+	out := map[string]any{}
+	for name, v := range extra {
+		if strings.HasPrefix(name, openresponses.ExtensionSlug) || providerMember(name) {
+			continue
+		}
+		out[name] = v
+	}
+	return out
+}
+
+// forwardExtra adds members to the GenerateContent body without
+// replacing a key the mapping set. Gemini's JSON parser takes a field's
+// proto name (system_instruction) as well as its JSON name
+// (systemInstruction), so the two spellings are one key: a member whose
+// camelCase form the body already has is not forwarded, and of two
+// members that spell one field, the first in sorted order is.
+func forwardExtra(cfg *genai.GenerateContentConfig, members map[string]any) {
+	if len(members) == 0 {
+		return
+	}
+	names := make([]string, 0, len(members))
+	for name := range members {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	cfg.HTTPOptions = &genai.HTTPOptions{ExtrasRequestProvider: func(body map[string]any) map[string]any {
+		set := make(map[string]bool, len(body))
+		for k := range body {
+			set[camel(k)] = true
+		}
+		for _, k := range names {
+			if !set[camel(k)] {
+				set[camel(k)] = true
+				body[k] = members[k]
+			}
+		}
+		return body
+	}}
 }
 
 func unsupported(param string) *openresponses.Error {
@@ -79,11 +173,10 @@ func encodeConfig(req openresponses.Request, thinking Thinking) (*genai.Generate
 	if req.SafetyIdentifier != "" {
 		return nil, unsupported("safety_identifier")
 	}
-	if req.PromptCacheKey != "" {
-		// Implicit caching needs no key; explicit caches are a resource the
-		// caller creates, not something a request names.
-		return nil, unsupported("prompt_cache_key")
-	}
+	// prompt_cache_key is a caching hint, and Gemini caches implicitly:
+	// the key has nothing to name, so it is accepted without effect.
+	// Explicit caches are a resource the caller creates, not something a
+	// request names.
 	if req.Truncation == openresponses.TruncationAuto {
 		return nil, unsupported("truncation")
 	}
@@ -154,10 +247,10 @@ func f32(p *float64) *float32 {
 }
 
 // effortBudgets is the thinking-token ladder for the generations that take
-// a budget rather than a level. Gemini documents neither a mapping nor the
-// per-model ceilings, so these are the widest values legal across the 2.5
-// family: flash-lite's floor is 512 and flash and flash-lite cap at 24576,
-// where pro would allow 32768.
+// a budget rather than a level. Gemini documents no mapping, so minimal
+// to high are the widest values legal across the 2.5 family: flash-lite's
+// floor is 512 and flash and flash-lite cap at 24576. xhigh is not here:
+// it is the model's own maximum, from maxBudget.
 var effortBudgets = map[openresponses.ReasoningEffort]int32{
 	openresponses.ReasoningEffortNone:    0,
 	openresponses.ReasoningEffortMinimal: 512,
@@ -166,11 +259,47 @@ var effortBudgets = map[openresponses.ReasoningEffort]int32{
 	openresponses.ReasoningEffortHigh:    24576,
 }
 
+// maxBudgets is each budget-encoded model's maximum thinking budget, from
+// Google's "Supported thinking budgets by model" table:
+// https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thinking
+// It is matched by prefix on the ID after its last "/", longest first,
+// so gemini-2.5-flash-lite is not read as gemini-2.5-flash.
+var maxBudgets = []struct {
+	prefix string
+	budget int32
+}{
+	{"gemini-2.5-flash-lite", 24576},
+	{"gemini-2.5-flash", 24576},
+	{"gemini-2.5-pro", 32768},
+}
+
+// lowestMaxBudget is what a budget-encoded model maxBudgets does not know
+// gets for xhigh: the lowest known maximum, which every model in the
+// table takes.
+const lowestMaxBudget = 24576
+
+// maxBudget is the budget xhigh sends: the most the model takes.
+func maxBudget(model string) int32 {
+	name := model
+	if i := strings.LastIndexByte(name, '/'); i >= 0 {
+		name = name[i+1:]
+	}
+	for _, m := range maxBudgets {
+		if strings.HasPrefix(name, m.prefix) {
+			return m.budget
+		}
+	}
+	return lowestMaxBudget
+}
+
 var effortLevels = map[openresponses.ReasoningEffort]genai.ThinkingLevel{
 	openresponses.ReasoningEffortMinimal: genai.ThinkingLevelMinimal,
 	openresponses.ReasoningEffortLow:     genai.ThinkingLevelLow,
 	openresponses.ReasoningEffortMedium:  genai.ThinkingLevelMedium,
 	openresponses.ReasoningEffortHigh:    genai.ThinkingLevelHigh,
+	// The specification calls xhigh the maximum available, and HIGH is
+	// Gemini's top level.
+	openresponses.ReasoningEffortXHigh: genai.ThinkingLevelHigh,
 }
 
 // encodeReasoning maps effort onto a thinking level or a thinking budget,
@@ -178,11 +307,16 @@ var effortLevels = map[openresponses.ReasoningEffort]genai.ThinkingLevel{
 // sending the wrong one is a 400, so exactly one field is ever set.
 //
 // Which values within an encoding a model accepts stays the model's
-// business: "minimal" exists only on some Gemini 3 models and a budget
-// below a model's floor is raised by Gemini, and both are reported
-// upstream rather than guessed at here.
+// business: "minimal" exists only on some Gemini 3 models, a budget
+// below a model's floor is raised by Gemini, and some models cannot stop
+// thinking. Each is reported upstream rather than guessed at here.
 func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thinking) (*genai.ThinkingConfig, error) {
-	if r.IsZero() {
+	// Only effort and summary are read. xhigh already maps to Gemini's
+	// highest setting, so openresponses-experimental.effort is ignored and
+	// reasoning.effort, which its writer sets to xhigh, is mapped instead
+	// (docs/extensions.md section 3); any other member of reasoning is
+	// ignored too (PLAN.md rule 3).
+	if r.Effort == "" && r.Summary == "" {
 		return nil, nil
 	}
 	if thinking == ThinkingAuto {
@@ -199,6 +333,9 @@ func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thi
 	}
 	if thinking == ThinkingBudget {
 		budget, ok := effortBudgets[r.Effort]
+		if r.Effort == openresponses.ReasoningEffortXHigh {
+			budget, ok = maxBudget(model), true
+		}
 		if !ok {
 			return nil, invalid("reasoning.effort", fmt.Sprintf("reasoning effort %q has no Gemini thinking budget", r.Effort))
 		}
@@ -206,10 +343,13 @@ func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thi
 		return tc, nil
 	}
 	if r.Effort == openresponses.ReasoningEffortNone {
-		// A zero budget is the one way to ask for no thinking, and the
-		// generations that take levels reject it: they always think.
-		return nil, invalid("reasoning.effort",
-			"reasoning effort \"none\" has no thinking level; Gemini 3 and later cannot stop thinking")
+		// The level field has no "none". A zero budget is the one way to
+		// ask for no thinking, and the generations that take levels still
+		// accept a budget, so it is sent as one. Whether this model can
+		// stop thinking is the model's to say (PLAN.md rule 1): one that
+		// cannot refuses the request with its own message.
+		tc.ThinkingBudget = genai.Ptr(int32(0))
+		return tc, nil
 	}
 	level, ok := effortLevels[r.Effort]
 	if !ok {
@@ -353,8 +493,10 @@ func callingMode(m openresponses.ToolChoiceMode, param string) (genai.FunctionCa
 // Everything the user side sends (messages, function outputs) joins one
 // user turn; everything the model side produced (messages, function
 // calls, reasoning, extension parts) joins one model turn, so a function
-// response always directly follows the turn that called it. System and
-// developer messages are returned separately for the system instruction.
+// response always directly follows the turn that called it. The system
+// and developer messages that precede every other item are returned
+// separately for the system instruction; one after any other item stays
+// in place as text parts of the user turn.
 //
 // A reasoning item's signature goes back on the first non-thought part
 // after it, which is where Gemini put it (see decoder.part). It is held
@@ -397,8 +539,14 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 		}
 		appendParts(role, parts)
 	}
+	// leading holds while every item so far is a system or developer
+	// message; only those join the system instruction.
+	leading := true
 	for i, item := range items {
 		param := fmt.Sprintf("input[%d]", i)
+		if m, ok := item.(*openresponses.Message); !ok || (m.Role != openresponses.RoleSystem && m.Role != openresponses.RoleDeveloper) {
+			leading = false
+		}
 		switch it := item.(type) {
 		case *openresponses.Message:
 			parts, err := encodeParts(it.Content, param+".content")
@@ -416,7 +564,14 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 						return nil, nil, unsupported(fmt.Sprintf("%s.content[%d].type", param, j))
 					}
 				}
-				system = append(system, parts...)
+				if leading {
+					system = append(system, parts...)
+					continue
+				}
+				// After any other item, the instruction stays where the
+				// conversation put it: moving it into the system instruction
+				// would change what it applies to.
+				add(genai.RoleUser, parts)
 			default:
 				return nil, nil, invalid(param+".role", fmt.Sprintf("unknown role %q", it.Role))
 			}
@@ -439,12 +594,12 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 			}
 			add(genai.RoleUser, []*genai.Part{part})
 		case *openresponses.ReasoningItem:
-			var sig []byte
-			if it.EncryptedContent != "" {
-				sig, err = base64.StdEncoding.DecodeString(it.EncryptedContent)
-				if err != nil {
-					return nil, nil, invalid(param+".encrypted_content", "encrypted_content is not base64: "+err.Error())
-				}
+			sig, keep, err := signature(it, param)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !keep {
+				continue
 			}
 			if text := reasoningText(it); text != "" {
 				add(genai.RoleModel, []*genai.Part{{Thought: true, Text: text}})
@@ -470,6 +625,79 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 	}
 	flush()
 	return contents, system, nil
+}
+
+// signature decides what a reasoning item sends back, by who issued it
+// (docs/extensions.md section 4). Only an item this adapter issued is
+// sent: its summary as a thought part and its thought signature, where
+// one that is not base64 is invalid_request. Every other item is left
+// out whole, summary included, and keep is false. An item another
+// provider issued carries a signature meaningless to Gemini and a
+// summary of another model's reasoning. An item that names no issuer is
+// of unknown origin, and its content cannot tell: Claude's signatures are
+// base64 like Gemini's. Leaving it out costs a Gemini session recorded
+// before the issuer existed nothing, since on Gemini 3 the step it led
+// gets the placeholder signature and earlier generations need none.
+func signature(it *openresponses.ReasoningItem, param string) (sig []byte, keep bool, err error) {
+	if it.Issuer() != issuer {
+		return nil, false, nil
+	}
+	if it.EncryptedContent == "" {
+		return nil, true, nil
+	}
+	sig, err = base64.StdEncoding.DecodeString(it.EncryptedContent)
+	if err != nil {
+		return nil, false, invalid(param+".encrypted_content", "encrypted_content is not base64: "+err.Error())
+	}
+	return sig, true, nil
+}
+
+// placeholderSignature is the value Google documents for a function
+// call the API did not generate, such as one in history from a model
+// that writes no thought signatures:
+//
+//	"You can set thought_signature to skip_thought_signature_validator,
+//	but, this should be a last resort as it will negatively impact model
+//	performance."
+//	https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+//
+// The documented value is the field's JSON form, which is base64, so the
+// bytes are what that string decodes to; the underscores make it the URL
+// alphabet, which Google's JSON parser accepts as it does the standard
+// one the SDK writes.
+var placeholderSignature = mustDecode("skip_thought_signature_validator")
+
+func mustDecode(s string) []byte {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// placeholderSignatures gives the first function call of each model step
+// the placeholder when that call has no thought signature of its own.
+// Gemini 3 checks that call and refuses the step without one, and a
+// transcript written by another provider, or one whose reasoning items
+// were left out because another provider issued them, has such calls. A
+// signature elsewhere in the step, such as on text a Gemini turn ended
+// with, does not cover the call. Gemini signs only the first call of a
+// parallel step, so the other calls stay unsigned, and a first call
+// Gemini signed is left as it is.
+func placeholderSignatures(contents []*genai.Content) {
+	for _, c := range contents {
+		if c.Role != genai.RoleModel {
+			continue
+		}
+		for _, p := range c.Parts {
+			if p.FunctionCall != nil {
+				if len(p.ThoughtSignature) == 0 {
+					p.ThoughtSignature = placeholderSignature
+				}
+				break
+			}
+		}
+	}
 }
 
 // reasoningText is the summary when there is one, else the content.
