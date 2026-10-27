@@ -385,23 +385,56 @@ func TestMapError(t *testing.T) {
 		{"unavailable", 503, `{"error":{"code":503,"message":"down","status":"UNAVAILABLE"}}`, openresponses.ErrorTypeServerError, "unavailable", "", 0},
 	}
 	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			want := tc.want
-			if want == 0 {
-				want = tc.status
-			}
-			_, err := streamtest.Run(context.Background(), newAdapter(t, apiError(tc.status, tc.body)), hello())
-			var oerr *openresponses.Error
-			if !errorsAs(err, &oerr) {
-				t.Fatalf("err = %v", err)
-			}
-			if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != want {
-				t.Fatalf("err = %+v (status %d, want %d)", oerr, oerr.HTTPStatus(), want)
-			}
-			if got := oerr.Headers.Get("Retry-After"); got != tc.retry {
-				t.Fatalf("Retry-After = %q, want %q", got, tc.retry)
-			}
-		})
+		// The same envelope inside a 2xx stream is the same failure, and
+		// maps to the same error.
+		for via, h := range map[string]http.Handler{"status": apiError(tc.status, tc.body), "in stream": streamError(tc.body)} {
+			t.Run(tc.name+" "+via, func(t *testing.T) {
+				want := tc.want
+				if want == 0 {
+					want = tc.status
+				}
+				_, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+				var oerr *openresponses.Error
+				if !errorsAs(err, &oerr) {
+					t.Fatalf("err = %v", err)
+				}
+				if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != want {
+					t.Fatalf("err = %+v (status %d, want %d)", oerr, oerr.HTTPStatus(), want)
+				}
+				if got := oerr.Headers.Get("Retry-After"); got != tc.retry {
+					t.Fatalf("Retry-After = %q, want %q", got, tc.retry)
+				}
+			})
+		}
+	}
+}
+
+// streamError starts a 200 stream with a text chunk and then sends body,
+// a Gemini error envelope on one line, as an error that arrives after
+// the status has gone out does.
+func streamError(body string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: %s\n\n%s\n\n", textChunk, body)
+	})
+}
+
+// TestStreamErrorNever2xx: an error envelope inside a stream whose code
+// is missing or a success takes its status from its type, so it never
+// reads as a 2xx.
+func TestStreamErrorNever2xx(t *testing.T) {
+	for _, body := range []string{
+		`{"error":{"code":200,"message":"odd","status":"OK"}}`,
+		`{"error":{"message":"no code"}}`,
+	} {
+		_, err := streamtest.Run(context.Background(), newAdapter(t, streamError(body)), hello())
+		var oerr *openresponses.Error
+		if !errorsAs(err, &oerr) {
+			t.Fatalf("err = %v", err)
+		}
+		if oerr.Type != openresponses.ErrorTypeServerError || oerr.HTTPStatus() != http.StatusInternalServerError {
+			t.Fatalf("%s: err = %+v (status %d)", body, oerr, oerr.HTTPStatus())
+		}
 	}
 }
 

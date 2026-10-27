@@ -13,6 +13,10 @@
   `invalid_request` with the shared code `context_length_exceeded`,
   recognised from Gemini's `INVALID_ARGUMENT` message "The input token
   count … exceeds …". It was `invalid_argument` (#61).
+- An error envelope inside a stream whose `code` is missing or a 2xx
+  takes its status from its type, so an error never carries a 2xx
+  status. One with a 4xx or 5xx `code` maps as the same envelope on a
+  non-2xx response does (#54).
 
 ## v0.0.16 - 2026-10-26
 

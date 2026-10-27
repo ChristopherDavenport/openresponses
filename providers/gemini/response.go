@@ -368,7 +368,9 @@ func tokenBytes(token string) []int {
 // mapError converts an SDK error into the matching *openresponses.Error.
 // The HTTP status decides the type, the gRPC status becomes the code,
 // and a RetryInfo detail becomes Retry-After so a 429 keeps its meaning
-// through the handler.
+// through the handler. An error envelope inside the stream reaches here
+// as the same genai.APIError a non-2xx response produces, so one failure
+// maps to one Error whichever way it arrived.
 func mapError(err error) error {
 	var oerr *openresponses.Error
 	if errors.As(err, &oerr) {
@@ -405,7 +407,12 @@ func mapError(err error) error {
 	default:
 		out = openresponses.ServerError(code, apiErr.Message)
 	}
-	out.StatusCode = apiErr.Code
+	if apiErr.Code >= 400 {
+		// An error that arrives inside a 2xx stream carries the code its
+		// envelope names, and one with no code, or a 2xx code, leaves the
+		// status to the type: an error never reads as a success.
+		out.StatusCode = apiErr.Code
+	}
 	return out
 }
 

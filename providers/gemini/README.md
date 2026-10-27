@@ -127,6 +127,16 @@ The type follows the status: 400 and the other 4xx statuses are
 `PERMISSION_DENIED` refuses the adapter's own credentials. No retry
 can fix that, so it is `invalid_request` with the 401 or 403 and the
 code `unauthenticated` or `permission_denied`, never `server_error`.
+
+An error envelope that arrives inside the stream, after the 200 has
+gone out, is the same failure and maps exactly as the same envelope on
+a non-2xx response: its `code` is the status. One with no `code`, or a
+2xx `code`, takes its status from its type, so an error never carries
+a 2xx. The SDK (v1.72.0) reads an envelope that arrives as a line of
+its own; one sent as an SSE `data:` event is dropped by the SDK's
+response converter before the adapter sees it. A stream that ends
+without a finish reason, that case included, fails with a 500
+`server_error` whose code is `truncated_stream`.
 A request whose input exceeds the model's context window is
 `invalid_request` with the code `context_length_exceeded`
 (docs/extensions.md section 6) and the 400. Gemini has no code of its
