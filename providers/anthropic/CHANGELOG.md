@@ -23,6 +23,8 @@
   stream's 200 (#54). An `overloaded_error` mid-stream was a
   `server_error` with status 200, which a retry policy deciding by
   status gave up on; it is now 529, as on a non-streamed response.
+  An error body without Claude's envelope (Vertex AI, Bedrock, a proxy)
+  still takes its type from the HTTP status.
 - A context overflow, Claude's `invalid_request_error` saying "prompt is
   too long", carries the code `context_length_exceeded` (#61).
 - Reasoning items carry `openresponses-experimental.issuer: anthropic`,

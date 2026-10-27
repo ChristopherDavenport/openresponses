@@ -517,8 +517,11 @@ func addUsage(a, b openresponses.Usage) openresponses.Usage {
 // mapError converts an SDK error into the matching *openresponses.Error.
 // The API's error type is the code and decides the type and status, so
 // a failure reads the same whether it came as an HTTP status or as an
-// error event inside a 200 stream; an error type the table does not
-// know falls back to the HTTP status, and a 2xx status never stands.
+// error event inside a 200 stream. A body without Claude's error type,
+// or with one the table does not know, falls back to the HTTP status by
+// the rule every adapter shares (404 not_found, 408 server_error, 429
+// too_many_requests, other 4xx invalid_request, the rest server_error),
+// and a 2xx status never stands.
 // The headers that describe the failure (Retry-After, the rate-limit
 // family, the request id) travel with it.
 func mapError(err error) error {
@@ -537,14 +540,16 @@ func mapError(err error) error {
 		return openresponses.ServerError("upstream_error", err.Error())
 	}
 	code := string(apiErr.Type())
+	status, known := errorStatus[code]
+	if !known && apiErr.StatusCode >= 300 {
+		// No Claude error type, as from Vertex AI, Bedrock or a proxy, or
+		// one the table does not know: the HTTP status decides.
+		status = apiErr.StatusCode
+	}
 	if code == "" {
 		code = "api_error"
 	}
 	message := apiMessage(apiErr)
-	status, known := errorStatus[code]
-	if !known && apiErr.StatusCode >= 300 {
-		status = apiErr.StatusCode
-	}
 	var out *openresponses.Error
 	switch {
 	case code == "invalid_request_error" && strings.Contains(strings.ToLower(message), "prompt is too long"):
@@ -553,6 +558,8 @@ func mapError(err error) error {
 		out = openresponses.NotFound(code, message, "")
 	case status == http.StatusTooManyRequests:
 		out = openresponses.TooManyRequests(code, message)
+	case status == http.StatusRequestTimeout:
+		out = openresponses.ServerError(code, message)
 	case status >= 400 && status < 500:
 		// Credential and permission refusals land here too: a retry
 		// cannot fix them, so they are never server_error.

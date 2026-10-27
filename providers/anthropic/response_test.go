@@ -617,3 +617,35 @@ func TestWithCacheTTL(t *testing.T) {
 		t.Fatalf("cache_control = %v", body["cache_control"])
 	}
 }
+
+// TestMapErrorWithoutEnvelope covers an error body without Claude's
+// envelope (Vertex, Bedrock, a proxy): the HTTP status decides, as for
+// any upstream.
+func TestMapErrorWithoutEnvelope(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+		typ    openresponses.ErrorType
+	}{
+		{"vertex 429", 429, `{"error":{"code":429,"message":"Quota exceeded","status":"RESOURCE_EXHAUSTED"}}`, openresponses.ErrorTypeTooManyRequests},
+		{"bedrock 400", 400, `{"message":"Input is too long for requested model."}`, openresponses.ErrorTypeInvalidRequest},
+		{"vertex 403", 403, `{"error":{"code":403,"message":"Permission denied","status":"PERMISSION_DENIED"}}`, openresponses.ErrorTypeInvalidRequest},
+		{"proxy 401 html", 401, `<html>401</html>`, openresponses.ErrorTypeInvalidRequest},
+		{"proxy 404", 404, `{"detail":"no route"}`, openresponses.ErrorTypeNotFound},
+		{"timeout 408", 408, `{"detail":"slow"}`, openresponses.ErrorTypeServerError},
+		{"bad gateway", 502, `<html>502</html>`, openresponses.ErrorTypeServerError},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := streamtest.Run(context.Background(), newAdapter(t, apiError(tc.status, tc.body, nil)), hello())
+			var oerr *openresponses.Error
+			if !errorsAs(err, &oerr) {
+				t.Fatalf("err = %v", err)
+			}
+			if oerr.Type != tc.typ || oerr.HTTPStatus() != tc.status {
+				t.Fatalf("HTTP %d -> %s/%s/%d, want %s", tc.status, oerr.Type, oerr.Code, oerr.HTTPStatus(), tc.typ)
+			}
+		})
+	}
+}

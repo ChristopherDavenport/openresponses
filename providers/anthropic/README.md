@@ -295,11 +295,14 @@ came as an HTTP status or as an `error` event inside a 200 stream:
 | `overloaded_error` | `server_error` | 529 |
 
 A refusal of the adapter's own key or permissions is `invalid_request`,
-since a retry cannot fix it. An error type not in the table takes its
-type from the HTTP status (404, 429, other 4xx, and `server_error` for
-the rest), and inside a stream, whose status is 200, it is
-`server_error` with no status of its own, so it reads as 500. A 2xx
-status is never put on an error.
+since a retry cannot fix it. A body without Claude's error envelope, as
+Vertex AI (`RESOURCE_EXHAUSTED`), Bedrock and proxies send, or with an
+error type not in the table, takes its type from the HTTP status: 404
+`not_found`, 408 `server_error`, 429 `too_many_requests`, any other 4xx
+`invalid_request`, and `server_error` for the rest, keeping the status
+and with code `api_error` when there is no type. Inside a stream,
+whose status is 200, an unknown type is `server_error` with no status
+of its own, so it reads as 500. A 2xx status is never put on an error.
 
 A context overflow is `invalid_request` with code
 `context_length_exceeded` (docs/extensions.md, section 6). Claude has no
