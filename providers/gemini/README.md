@@ -138,10 +138,18 @@ it incomplete with `content_filter`. `MALFORMED_FUNCTION_CALL`,
 `UNEXPECTED_TOOL_CALL`, `TOO_MANY_TOOL_CALLS` and `OTHER` fail it with
 a `model_error` whose code is the reason in lower case. Grounding
 supports become `url_citation` annotations with character offsets into
-the message text, and logprobs land on the `output_text` part. Usage
-counts thinking tokens in `output_tokens` and reports them in
-`reasoning_tokens`; `model` on the response is the version Gemini
-served.
+the message text, and logprobs land on the `output_text` part. `model` on
+the response is the version Gemini served.
+
+Usage: `input_tokens` is `promptTokenCount` plus
+`toolUsePromptTokenCount`, and `cached_tokens` is
+`cachedContentTokenCount`, the part of the input read from a cache.
+`output_tokens` is `candidatesTokenCount` plus `thoughtsTokenCount`, and
+`reasoning_tokens` is `thoughtsTokenCount`. Gemini reports no cache
+writes, so the adapter never sets
+`openresponses-experimental.cache_write_tokens` (docs/extensions.md
+section 5): implicit caching charges nothing to write, and an explicit
+cache is a resource created and billed outside any request.
 
 Upstream errors keep their HTTP status; the gRPC status in lower case
 is the code, and a `RetryInfo` detail on a 429 becomes `Retry-After`.

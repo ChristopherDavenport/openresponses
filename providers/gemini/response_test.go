@@ -360,6 +360,10 @@ func TestStreamThoughtsWithSummary(t *testing.T) {
 	if u.InputTokens != 3 || u.OutputTokens != 9 || u.OutputTokensDetails.ReasoningTokens != 7 || u.InputTokensDetails.CachedTokens != 1 || u.TotalTokens != 12 {
 		t.Fatalf("usage = %+v", u)
 	}
+	// Gemini reports no cache writes, so none is claimed.
+	if n, ok := u.InputTokensDetails.CacheWriteTokens(); ok {
+		t.Fatalf("cache writes = %d, want none reported", n)
+	}
 }
 
 func TestMapError(t *testing.T) {

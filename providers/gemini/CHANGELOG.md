@@ -28,6 +28,9 @@
   `instructions`, form the system instruction. A host that appends a
   standing instruction at the end of the input will see it reach the
   model as part of the last user turn (#55).
+- The README states the usage mapping in full, and that Gemini reports
+  no cache writes, so `openresponses-experimental.cache_write_tokens` is
+  never set (#53).
 
 ## v0.0.16 - 2026-10-26
 
