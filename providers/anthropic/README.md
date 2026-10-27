@@ -241,9 +241,15 @@ exactly `anthropic` or it has none, as items recorded before the member
 existed do, and its `encrypted_content` is not empty. Any other item is
 left out of the request, the documented exception to dropping nothing:
 another issuer's signature, or an empty one, is a 400 from Claude, and
-the adapter does not send the item's summary as text instead. Claude's
+the adapter does not send the item's summary as text instead. An item
+with no issuer is of unknown origin, and this adapter replays it as
+Claude's: most sessions recorded before the member are Claude's, and
+Claude needs its thinking blocks within a tool loop. Claude's
 signatures and the base64 the Gemini adapter writes cannot be told
-apart, so an item with no issuer is sent as Claude's.
+apart, so a session recorded by a Gemini adapter that did not yet
+stamp its items, then sent to Claude, carries Gemini's signatures as
+Claude's and can be refused with a 400 (`Invalid signature in thinking
+block`). Stamping or dropping such items before sending avoids it.
 
 `end_turn`, `tool_use` and `stop_sequence` complete the response.
 `max_tokens` and `model_context_window_exceeded` end it incomplete

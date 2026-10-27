@@ -223,21 +223,22 @@ it as 1.3 requires.
 2. **Another issuer:** it MUST NOT send `encrypted_content` to its
    provider. It leaves the item out, or sends the item's summary as
    text, and its README states which.
-3. **No member:** the issuer is unknown. Sessions recorded before this
-   extension carry no member, and Claude requires the thinking block on
-   a tool-use turn, so leaving every such item out would break those
-   sessions. The adapter MAY therefore send `encrypted_content` as its
-   own. It SHOULD leave the item out when it can tell the content is not
-   its own. An empty `encrypted_content` is never a signature. Claude's
+3. **No member:** the item is of unknown origin. Sessions recorded
+   before this extension carry no member. Each adapter states in its
+   README whether it replays such items as its own or treats them as
+   foreign; either way it never sends an empty `encrypted_content`,
+   which is never a signature. The format rarely settles it: Claude's
    `signature` and the base64 of Gemini's `thoughtSignature` are both
-   base64 text, so the format cannot tell those two apart; it can only
-   rule out content that is not in the adapter's own format at all,
-   such as text that is not base64 reaching the Gemini adapter.
+   base64 text, so it can only rule out content that is not in the
+   adapter's own format at all.
 
-The Claude adapter treats an item as foreign when it carries another
-issuer, any value other than exactly `anthropic`, or when its
-`encrypted_content` is empty, and leaves it out. Every other item with
-no member is sent as Claude's.
+The Claude adapter replays an item with no member as its own: most
+sessions recorded before this extension are Claude's, and Claude needs
+its thinking blocks within a tool loop. It treats an item as foreign
+when it carries another issuer, any value other than exactly
+`anthropic`, or when its `encrypted_content` is empty, and leaves it
+out. The Gemini adapter treats an item with no member as foreign; its
+README says what it sends in its place.
 
 **Replaces** the per-adapter stamps proposed in the review of #56
 (`anthropic.signature: true`, `gemini.signature: true`), which said the
