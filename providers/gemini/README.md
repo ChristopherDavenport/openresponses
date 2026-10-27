@@ -107,6 +107,20 @@ comes back it puts the signature on that part again. Keep reasoning
 items in the input you replay, or Gemini 3 rejects the next function
 call turn.
 
+Every reasoning item the adapter emits names its issuer,
+`"openresponses-experimental.issuer": "gemini"` (docs/extensions.md
+section 4), so a transcript that moves between providers does not send
+one provider's signature to another. On input a reasoning item is
+treated by its issuer, compared as a whole string:
+
+| issuer | what is sent |
+|---|---|
+| `gemini` | the summary as a thought part and `encrypted_content`, base64-decoded, as the signature; content that is not base64 is `invalid_request` on `encrypted_content` |
+| absent, `encrypted_content` empty | the summary as a thought part, no signature |
+| absent, `encrypted_content` base64 | as `gemini`: items recorded before the member existed keep working |
+| absent, `encrypted_content` not base64 | nothing: the content is another provider's signature, so the item is left out |
+| any other value, `gemini/<variant>` included | nothing: the item is left out whole, summary included, since its summary is another model's reasoning rather than thoughts Gemini had |
+
 `STOP` completes the response. `MAX_TOKENS` ends it incomplete with
 `max_output_tokens`; the safety, recitation, blocklist, prohibited
 content, SPII, language and image reasons, and a blocked prompt, end

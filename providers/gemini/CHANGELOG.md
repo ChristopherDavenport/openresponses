@@ -17,6 +17,11 @@
   takes its status from its type, so an error never carries a 2xx
   status. One with a 4xx or 5xx `code` maps as the same envelope on a
   non-2xx response does (#54).
+- Reasoning items carry `"openresponses-experimental.issuer":
+  "gemini"`. On input, a reasoning item another issuer wrote is left
+  out, and one with no issuer whose `encrypted_content` is not base64
+  is left out as foreign rather than refused. Only Gemini's own
+  signatures, and unattributed base64 ones, go back to Gemini (#56).
 
 ## v0.0.16 - 2026-10-26
 

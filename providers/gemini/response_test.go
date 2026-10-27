@@ -156,6 +156,9 @@ func TestSignatureRoundTrip(t *testing.T) {
 	if !ok || rs.Summary.Text() != "Need the weather." || rs.EncryptedContent != "c2ln" {
 		t.Fatalf("reasoning = %+v", out[0])
 	}
+	if rs.Issuer() != "gemini" {
+		t.Fatalf("issuer = %q, want gemini", rs.Issuer())
+	}
 	if _, ok := out[1].(*openresponses.FunctionCall); !ok {
 		t.Fatalf("second item = %T", out[1])
 	}
@@ -347,7 +350,7 @@ func TestStreamThoughtsWithSummary(t *testing.T) {
 		`{"candidates":[{"content":{"parts":[{"text":"Answer."}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"thoughtsTokenCount":7,"cachedContentTokenCount":1,"totalTokenCount":12}}`)
 	resp := sink.Response()
 	rs := resp.Output[0].(*openresponses.ReasoningItem)
-	if rs.Summary.Text() != "First, consider." || rs.EncryptedContent != "" {
+	if rs.Summary.Text() != "First, consider." || rs.EncryptedContent != "" || rs.Issuer() != "gemini" {
 		t.Fatalf("reasoning = %+v", rs)
 	}
 	if resp.OutputText() != "Answer." {

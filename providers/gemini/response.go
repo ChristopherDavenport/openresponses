@@ -217,6 +217,9 @@ func (d *decoder) openReasoning() (*openresponses.ReasoningWriter, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Every reasoning item names its issuer, so its signature is sent
+	// back here and nowhere else.
+	r.Item().SetIssuer(issuer)
 	d.reasoning = r
 	return r, nil
 }

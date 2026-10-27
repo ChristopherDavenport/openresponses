@@ -151,7 +151,7 @@ func TestEncodeInputErrors(t *testing.T) {
 	}{
 		{"output without call", openresponses.Items{openresponses.NewFunctionCallOutput("nope", "x")}, openresponses.CodeInvalidValue, "input[0].call_id"},
 		{"bad arguments", openresponses.Items{&openresponses.FunctionCall{CallID: "c", Name: "f", Arguments: "[1]"}}, openresponses.CodeInvalidValue, "input[0].arguments"},
-		{"bad signature", openresponses.Items{&openresponses.ReasoningItem{EncryptedContent: "***"}}, openresponses.CodeInvalidValue, "input[0].encrypted_content"},
+		{"bad signature", openresponses.Items{geminiReasoning("***")}, openresponses.CodeInvalidValue, "input[0].encrypted_content"},
 		{"compaction", openresponses.Items{&openresponses.Compaction{EncryptedContent: "x"}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"item reference", openresponses.Items{&openresponses.ItemReference{ID: "msg_1"}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"foreign item", openresponses.Items{&openresponses.UnknownItem{Type: "acme.thing", Raw: json.RawMessage(`{"type":"acme.thing"}`)}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
@@ -166,6 +166,70 @@ func TestEncodeInputErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := encodeRequest(openresponses.Request{Input: tc.input}, ThinkingAuto)
 			wantErr(t, err, tc.code, tc.param)
+		})
+	}
+}
+
+// geminiReasoning is a reasoning item this adapter issued, carrying
+// encrypted as its signature.
+func geminiReasoning(encrypted string) *openresponses.ReasoningItem {
+	r := &openresponses.ReasoningItem{EncryptedContent: encrypted}
+	r.SetIssuer(issuer)
+	return r
+}
+
+// TestEncodeReasoningIssuer pins docs/extensions.md section 4: a
+// signature goes back to Gemini only from an item Gemini issued or one
+// that names no issuer and is not detectably foreign.
+func TestEncodeReasoningIssuer(t *testing.T) {
+	sig := base64.StdEncoding.EncodeToString([]byte("sig"))
+	call := &openresponses.FunctionCall{CallID: "c1", Name: "f", Arguments: "{}"}
+	withSummary := func(r *openresponses.ReasoningItem) *openresponses.ReasoningItem {
+		r.Summary = openresponses.Contents{&openresponses.SummaryText{Text: "thinking"}}
+		return r
+	}
+	foreign := func(encrypted string) *openresponses.ReasoningItem {
+		r := &openresponses.ReasoningItem{EncryptedContent: encrypted}
+		r.SetIssuer("anthropic")
+		return r
+	}
+	cases := []struct {
+		name string
+		item *openresponses.ReasoningItem
+		// thought is whether a thought part is sent, sig the signature the
+		// call carries.
+		thought bool
+		sig     string
+	}{
+		{"own", withSummary(geminiReasoning(sig)), true, "sig"},
+		{"no issuer, base64", withSummary(&openresponses.ReasoningItem{EncryptedContent: sig}), true, "sig"},
+		{"no issuer, empty", withSummary(&openresponses.ReasoningItem{}), true, ""},
+		{"no issuer, not base64", withSummary(&openresponses.ReasoningItem{EncryptedContent: "EqQB***"}), false, ""},
+		{"another issuer", withSummary(foreign(sig)), false, ""},
+		{"another issuer's variant", withSummary(func() *openresponses.ReasoningItem {
+			r := geminiReasoning(sig)
+			r.SetIssuer("gemini/other")
+			return r
+		}()), false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			contents, _, err := encodeInput(openresponses.Items{openresponses.UserText("hi"), tc.item, call})
+			if err != nil {
+				t.Fatal(err)
+			}
+			model := contents[len(contents)-1]
+			var thought bool
+			var got string
+			for _, p := range model.Parts {
+				thought = thought || p.Thought
+				if p.FunctionCall != nil {
+					got = string(p.ThoughtSignature)
+				}
+			}
+			if thought != tc.thought || got != tc.sig {
+				t.Fatalf("thought part %v, call signature %q; want %v, %q", thought, got, tc.thought, tc.sig)
+			}
 		})
 	}
 }

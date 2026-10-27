@@ -17,6 +17,12 @@ import (
 // the Open Responses specification does not define.
 const slug = "gemini."
 
+// issuer names this adapter in openresponses-experimental.issuer on the
+// reasoning items it emits, so the thought signatures they carry are
+// sent back to Gemini and to no other provider (docs/extensions.md
+// section 4).
+const issuer = "gemini"
+
 // encodeRequest translates a request into the contents and configuration
 // of one GenerateContent call. Fields Gemini has no equivalent for are
 // rejected with invalid_request naming the field; nothing is dropped
@@ -438,12 +444,12 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 			}
 			add(genai.RoleUser, []*genai.Part{part})
 		case *openresponses.ReasoningItem:
-			var sig []byte
-			if it.EncryptedContent != "" {
-				sig, err = base64.StdEncoding.DecodeString(it.EncryptedContent)
-				if err != nil {
-					return nil, nil, invalid(param+".encrypted_content", "encrypted_content is not base64: "+err.Error())
-				}
+			sig, keep, err := signature(it, param)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !keep {
+				continue
 			}
 			if text := reasoningText(it); text != "" {
 				add(genai.RoleModel, []*genai.Part{{Thought: true, Text: text}})
@@ -469,6 +475,36 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 	}
 	flush()
 	return contents, system, nil
+}
+
+// signature decides what a reasoning item sends back, by who issued it
+// (docs/extensions.md section 4). An item this adapter issued sends its
+// thought signature, and one that is not base64 is invalid_request. An
+// item another provider issued is left out whole: its signature is
+// meaningless to Gemini, and its summary is that provider's reasoning,
+// not thoughts Gemini had. An item that names no issuer was recorded
+// before the member existed, or by something that does not write it; it
+// is taken as this adapter's unless its encrypted_content is detectably
+// foreign, which for Gemini's base64 signatures means not base64, and
+// then it is left out. An empty encrypted_content is no signature, and
+// the item's summary is still sent. keep reports whether the item is
+// sent at all.
+func signature(it *openresponses.ReasoningItem, param string) (sig []byte, keep bool, err error) {
+	own := it.Issuer() == issuer
+	if !own && it.Issuer() != "" {
+		return nil, false, nil
+	}
+	if it.EncryptedContent == "" {
+		return nil, true, nil
+	}
+	sig, err = base64.StdEncoding.DecodeString(it.EncryptedContent)
+	switch {
+	case err == nil:
+		return sig, true, nil
+	case own:
+		return nil, false, invalid(param+".encrypted_content", "encrypted_content is not base64: "+err.Error())
+	}
+	return nil, false, nil
 }
 
 // reasoningText is the summary when there is one, else the content.
