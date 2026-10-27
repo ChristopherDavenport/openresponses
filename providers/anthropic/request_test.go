@@ -59,8 +59,8 @@ func TestEncodeSystem(t *testing.T) {
 		Instructions: "Be brief.",
 		Input: openresponses.Items{
 			openresponses.SystemText("You are a pirate."),
-			openresponses.UserText("Hello"),
 			openresponses.DeveloperText("Answer in French."),
+			openresponses.UserText("Hello"),
 		},
 	})
 	var got []string
@@ -75,6 +75,34 @@ func TestEncodeSystem(t *testing.T) {
 	}
 	if p.MaxTokens != DefaultMaxTokens || p.Model != "claude-opus-5" {
 		t.Fatalf("max_tokens/model = %d/%s", p.MaxTokens, p.Model)
+	}
+}
+
+// TestEncodeLateSystem covers a system or developer message after another
+// item: it stays in place as user text, and the system prompt is only
+// what came before.
+func TestEncodeLateSystem(t *testing.T) {
+	p := encode(t, openresponses.Request{Input: openresponses.Items{
+		openresponses.DeveloperText("You are dax."),
+		openresponses.UserText("Read a.go"),
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "read", Arguments: `{}`},
+		openresponses.NewFunctionCallOutput("toolu_1", "package a"),
+		openresponses.DeveloperText("The policy allowed read."),
+		openresponses.AssistantText("Done."),
+		openresponses.SystemText("Be brief."),
+	}})
+	if len(p.System) != 1 || p.System[0].Text != "You are dax." {
+		t.Fatalf("system = %+v", p.System)
+	}
+	if len(p.Messages) != 5 {
+		t.Fatalf("got %d messages, want 5", len(p.Messages))
+	}
+	tools := p.Messages[2]
+	if tools.Role != sdk.MessageParamRoleUser || len(tools.Content) != 2 || tools.Content[0].OfToolResult == nil || tools.Content[1].OfText.Text != "The policy allowed read." {
+		t.Fatalf("note after the tool result = %+v", tools)
+	}
+	if last := p.Messages[4]; last.Role != sdk.MessageParamRoleUser || last.Content[0].OfText.Text != "Be brief." {
+		t.Fatalf("trailing system message = %+v", last)
 	}
 }
 

@@ -28,6 +28,13 @@
   `encrypted_content`, is left out instead of being sent as a thinking
   block Claude refuses (#56). Items with no issuer are still sent, so
   sessions recorded before keep working.
+- Only the system and developer messages before every other input item
+  go to `system` (#55). A later one stays where it is, as user text,
+  instead of being moved into the system prompt, which broke Claude's
+  prompt cache for the rest of the conversation. This changes behaviour
+  for a host that appends a standing instruction at the end of the
+  input: it is now read as part of the turn, not as system prompt; put
+  it in `instructions` or at the front.
 
 ## v0.0.16 - 2026-10-26
 

@@ -363,8 +363,10 @@ func encodeToolChoice(c openresponses.ToolChoice, disableParallel bool) (sdk.Too
 // joins one user message; everything the assistant produced (messages,
 // function calls, reasoning, extension blocks) joins one assistant
 // message, so a tool result always directly follows the message that
-// called it. System and developer messages are returned separately for
-// the system prompt.
+// called it. System and developer messages before every other item are
+// returned separately for the system prompt; a later one stays where it
+// is, as user text, so the system prompt and the cached prefix it
+// starts do not change.
 func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system []sdk.TextBlockParam, err error) {
 	add := func(role sdk.MessageParamRole, blocks []sdk.ContentBlockParamUnion) {
 		if len(blocks) == 0 {
@@ -376,8 +378,13 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 		}
 		messages = append(messages, sdk.MessageParam{Role: role, Content: blocks})
 	}
+	leading := true // no item but system and developer messages yet
 	for i, item := range items {
 		p := fmt.Sprintf("input[%d]", i)
+		msg, isMessage := item.(*openresponses.Message)
+		if !isMessage || msg.Role != openresponses.RoleSystem && msg.Role != openresponses.RoleDeveloper {
+			leading = false
+		}
 		switch it := item.(type) {
 		case *openresponses.Message:
 			blocks, err := encodeBlocks(it.Content, p+".content")
@@ -390,6 +397,10 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			case openresponses.RoleAssistant:
 				add(sdk.MessageParamRoleAssistant, blocks)
 			case openresponses.RoleSystem, openresponses.RoleDeveloper:
+				if !leading {
+					add(sdk.MessageParamRoleUser, blocks)
+					continue
+				}
 				for j, b := range blocks {
 					if b.OfText == nil {
 						return nil, nil, unsupported(fmt.Sprintf("%s.content[%d].type", p, j))

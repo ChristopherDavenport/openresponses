@@ -55,6 +55,20 @@ an hour. A one-hour write costs twice the base input price, against
 1.25 times for five minutes, so pick it when requests sharing a prefix
 arrive 5 to 60 minutes apart.
 
+## Request
+
+`instructions`, then the system and developer messages that come before
+every other input item, in order, form `system`. A system or developer
+message after any other item stays where it is, as text blocks of a user
+turn with its text unchanged, joining the user message around it: a
+note after tool results follows them in the same user message. A later
+system message is therefore never moved into `system`, which is the
+front of the prefix the prompt cache matches. Claude's mid-conversation
+system message is not used. The other items fold into alternating
+messages: every user-side item (user messages, function outputs) joins
+one user message and every assistant-side item (assistant messages,
+function calls, reasoning, `anthropic.` items) one assistant message.
+
 ## What the request mapping rejects and ignores
 
 A request field the Messages API has no equivalent for comes back as an
