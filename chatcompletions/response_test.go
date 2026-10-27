@@ -256,6 +256,40 @@ func TestStreamFinishReasons(t *testing.T) {
 	wantErr(t, err, "server_error", "")
 }
 
+// A mid-stream error frame maps as the same error would on a
+// non-streamed response, never with the stream's 2xx.
+func TestStreamErrorFrame(t *testing.T) {
+	cases := []struct {
+		frame  string
+		typ    openresponses.ErrorType
+		code   string
+		status int
+	}{
+		{`{"error":{"message":"slow","type":"requests","code":"rate_limit_exceeded"}}`, openresponses.ErrorTypeTooManyRequests, "rate_limit_exceeded", 429},
+		{`{"error":{"message":"slow","type":"rate_limit_error"}}`, openresponses.ErrorTypeTooManyRequests, "rate_limit_error", 429},
+		{`{"error":{"message":"busy","type":"overloaded_error"}}`, openresponses.ErrorTypeServerError, "overloaded_error", 529},
+		{`{"error":{"message":"boom","type":"server_error"}}`, openresponses.ErrorTypeServerError, "server_error", 500},
+		{`{"error":{"message":"bad","type":"invalid_request_error","code":"invalid_value"}}`, openresponses.ErrorTypeInvalidRequest, "invalid_value", 400},
+		{`{"error":{"message":"key","type":"authentication_error"}}`, openresponses.ErrorTypeInvalidRequest, "authentication_error", 401},
+		{`{"error":{"message":"denied","type":"permission_error"}}`, openresponses.ErrorTypeInvalidRequest, "permission_error", 403},
+		{`{"error":{"message":"upstream","code":502}}`, openresponses.ErrorTypeServerError, "502", 502},
+		{`{"error":{"message":"slow","code":429}}`, openresponses.ErrorTypeTooManyRequests, "429", 429},
+		{`{"error":{"message":"what"}}`, openresponses.ErrorTypeServerError, "upstream_error", 500},
+	}
+	for _, tc := range cases {
+		t.Run(tc.frame, func(t *testing.T) {
+			_, err := streamtest.Run(context.Background(), newAdapter(t, serve(content("x"), tc.frame)), hello())
+			var oerr *openresponses.Error
+			if !errors.As(err, &oerr) {
+				t.Fatalf("err = %v", err)
+			}
+			if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != tc.status {
+				t.Fatalf("err = %s/%s %d, want %s/%s %d", oerr.Type, oerr.Code, oerr.HTTPStatus(), tc.typ, tc.code, tc.status)
+			}
+		})
+	}
+}
+
 func TestMapError(t *testing.T) {
 	cases := []struct {
 		name    string

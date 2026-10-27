@@ -104,6 +104,13 @@ versions may break the API.
   message, each output's parts introduced by a text part
   `Output of call <call_id>:`, as providers/PLAN.md states. Video in a
   function output is still `invalid_request`.
+- `chatcompletions` maps an `{"error": …}` frame inside a stream as the
+  same error would map on a non-streamed response, from its `code` or
+  `type` (`rate_limit_exceeded` is 429 `too_many_requests`,
+  `overloaded_error` 529 `server_error`, `authentication_error` 401
+  `invalid_request`) or OpenRouter's numeric status code. Every such
+  frame was a 500 `server_error`, so a rate limit mid-stream read as a
+  server failure.
 
 ## v0.0.16 - 2026-10-26
 

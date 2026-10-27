@@ -47,8 +47,9 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 			return openresponses.ServerError("invalid_upstream_response", "chunk: "+err.Error())
 		}
 		if c.Error != nil {
-			// Some providers report a mid-stream failure as a data frame.
-			return c.Error.toError(http.StatusInternalServerError, nil)
+			// Some providers report a mid-stream failure as a data frame,
+			// after the stream's 2xx status.
+			return c.Error.toError(c.Error.status(), nil)
 		}
 		if err := d.chunk(&c); err != nil {
 			return err
@@ -454,19 +455,64 @@ type apiError struct {
 	Param   string `json:"param"`
 }
 
-func (e *apiError) toError(status int, headers http.Header) *openresponses.Error {
-	code := ""
+// errorStatus is the HTTP status that OpenAI and the providers that copy
+// its envelope send with an error of a given code or type, for an error
+// that arrives inside a stream without one.
+var errorStatus = map[string]int{
+	"invalid_request_error":   http.StatusBadRequest,
+	"context_length_exceeded": http.StatusBadRequest,
+	"authentication_error":    http.StatusUnauthorized,
+	"invalid_api_key":         http.StatusUnauthorized,
+	"permission_error":        http.StatusForbidden,
+	"permission_denied":       http.StatusForbidden,
+	"not_found_error":         http.StatusNotFound,
+	"model_not_found":         http.StatusNotFound,
+	"rate_limit_error":        http.StatusTooManyRequests,
+	"rate_limit_exceeded":     http.StatusTooManyRequests,
+	"insufficient_quota":      http.StatusTooManyRequests,
+	"overloaded_error":        529,
+	"server_error":            http.StatusInternalServerError,
+	"api_error":               http.StatusInternalServerError,
+}
+
+// code returns the envelope's code as a string.
+func (e *apiError) code() string {
 	switch v := e.Code.(type) {
 	case string:
-		code = v
+		return v
 	case float64:
-		code = fmt.Sprintf("%d", int(v))
+		return fmt.Sprintf("%d", int(v))
 	}
+	return ""
+}
+
+// status is the status the error would have on a non-streamed response:
+// a numeric code in the HTTP error range is one (OpenRouter sends them),
+// and otherwise the code, then the type, names it. It is 0, leaving the
+// status to the error type, when neither is known.
+func (e *apiError) status() int {
+	if v, ok := e.Code.(float64); ok && v >= 400 && v < 600 && v == float64(int(v)) {
+		return int(v)
+	}
+	if s, ok := errorStatus[e.code()]; ok {
+		return s
+	}
+	return errorStatus[e.Type]
+}
+
+// toError maps the envelope by status. A status of 0, from a stream
+// frame that names no known error, is a server_error whose status the
+// type decides.
+func (e *apiError) toError(status int, headers http.Header) *openresponses.Error {
+	code := e.code()
 	if code == "" {
 		code = e.Type
 	}
-	if code == "" {
+	if code == "" && status != 0 {
 		code = fmt.Sprintf("http_%d", status)
+	}
+	if code == "" {
+		code = "upstream_error"
 	}
 	var out *openresponses.Error
 	switch {

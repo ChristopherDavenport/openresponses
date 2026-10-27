@@ -388,7 +388,14 @@ Where it differs from the SDK-backed adapters:
 - Tool calls stream by index and are opened when the name is known
   (the first delta everywhere in practice); a call resuming after a
   later one started is an upstream error. A mid-stream `{"error": …}`
-  frame fails the response. Errors keep the envelope's `code`, `type`,
+  frame fails the response with the type and status its `code`, else
+  its `type`, has on a non-streamed response: OpenAI's names
+  (`rate_limit_exceeded` and `rate_limit_error` 429,
+  `invalid_request_error` 400, `authentication_error` 401,
+  `permission_error` 403, `server_error` 500, and Claude-compatible
+  `overloaded_error` 529), or a numeric code from 400 to 599, which
+  OpenRouter sends as the HTTP status. A frame naming neither is a
+  `server_error`. Errors keep the envelope's `code`, `type`,
   `param` and the failure headers.
 - The SSE reader moved to `internal/sse` so the root package and this
   one share it.
