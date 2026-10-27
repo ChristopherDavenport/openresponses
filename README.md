@@ -248,10 +248,11 @@ decision for a server: any key a client sends reaches the upstream
 provider unless the adapter clears or filters `Extra`.
 
 Where the specification has no member for something more than one
-provider needs (reasoning effort above `xhigh`, who issued a reasoning
-item, cache writes, a common code for context overflow), this library
-defines a shared extension under the `openresponses.` slug. Each one is
-specified in [docs/extensions.md](docs/extensions.md).
+provider needs, this library defines a shared extension under the
+`openresponses-experimental.` slug. The set covers reasoning effort above
+`xhigh`, who issued a reasoning item, cache writes, a common code for
+context overflow, and model information. Each one is a candidate for the
+specification and is specified in [docs/extensions.md](docs/extensions.md).
 
 Errors built from remote data (an HTTP error response, an error event or
 a WebSocket error frame) carry only the headers that describe a failure,

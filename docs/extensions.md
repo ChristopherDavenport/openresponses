@@ -16,15 +16,15 @@ as in RFC 2119.
 
 | Extension | Placement | Issues | Verdict |
 | --- | --- | --- | --- |
-| [Unknown members are kept](#1-unknown-members-are-kept) | every object | #53, #56 | general rule |
-| [`openresponses.effort`](#3-reasoning-effort-above-xhigh) | request `reasoning` | #51 | in the set |
-| [`openresponses.issuer`](#4-who-issued-a-reasoning-item) | reasoning item | #56 | in the set |
-| [`openresponses.cache_write_tokens`, `openresponses.cache_write_tokens_by_ttl`](#5-cache-writes) | `usage.input_tokens_details` | #53 | in the set |
+| [Unknown members are kept](#13-unknown-members-are-kept) | every object | #53, #56 | general rule |
+| [`openresponses-experimental.effort`](#3-reasoning-effort-above-xhigh) | request `reasoning` | #51 | in the set |
+| [`openresponses-experimental.issuer`](#4-who-issued-a-reasoning-item) | reasoning item | #56 | in the set |
+| [`openresponses-experimental.cache_write_tokens`, `openresponses-experimental.cache_write_tokens_by_ttl`](#5-cache-writes) | `usage.input_tokens_details` | #53 | in the set |
 | [`context_length_exceeded`](#6-error-codes) | error `code` value | #61 | in the set, as a code |
-| [Model information](#7-not-in-the-set) | none | #51 | not in this version |
-| [Retryability](#7-not-in-the-set) | none | #58 | not needed |
-| [Refusal category](#7-not-in-the-set) | `incomplete_details` | #59 | provider slug instead |
-| [Claude content parts](#7-not-in-the-set) | content part | #63 | provider slug instead |
+| [`openresponses-experimental.model_info`](#7-model-information) | `GET /models/{model}` model object | #51 | in the set |
+| [Retryability](#8-not-in-the-set) | none | #58 | not needed |
+| [Refusal category](#8-not-in-the-set) | `incomplete_details` | #59 | provider slug instead |
+| [Claude content parts](#8-not-in-the-set) | content part | #63 | provider slug instead |
 
 ## 1. General rules
 
@@ -46,15 +46,23 @@ not get wrong, and every member is a candidate for that process.
 ### 1.2 Slugs
 
 A slug names whoever defines the extension. Each one in this document is
-named with the slug `openresponses.`, and the sibling libraries name
-theirs the same way after their repository (`agentsession.`,
-`agentturn.`).
+named with the slug `openresponses-experimental.`, and the sibling
+libraries name theirs the same way after their repository
+(`agentsession.`, `agentturn.`). The specification does not define what
+characters a slug may contain, and it does not mention hyphens, so
+`openresponses-experimental` is a valid slug. Its examples join slug and
+name with a colon (`acme:trace_event`). This library has joined them
+with a dot since its first extension (`anthropic.`, `gemini.`), and this
+set does the same.
 
-> Open question: a reader may take `openresponses.` for the
-> specification's own namespace. A slug that names this library more
-> narrowly would avoid that. Members stay under the draft slug until the
-> question is settled. Renaming one after a release means readers have
-> to accept both names.
+"Experimental" marks each member of the set as a candidate for the
+specification, not as unstable. A member the specification adopts
+becomes its unprefixed specification form. From the release that writes
+the specification form, writers in this library write only that form,
+and readers accept both forms for two minor releases, so that sessions
+and stored responses written before still read. When the specification
+adopts a member with a different shape or meaning, the section here
+states the mapping between the two forms for that period.
 
 A **shared** extension is one whose meaning does not depend on the
 provider: any adapter may write it and any reader may act on it. Only
@@ -109,7 +117,7 @@ Any other unknown top-level member is treated as PLAN rule 8 says.
 
 ### 1.6 Writing an extension down
 
-Every section in 3–6 says the same things in the same order: the gap in
+Every section in 3–7 says the same things in the same order: the gap in
 the specification, where the member goes, its shape, who writes it, who
 reads it, and the rules. A section that cannot say all of that does not
 belong in this document.
@@ -118,10 +126,11 @@ belong in this document.
 
 | Extension | Written by | Read by |
 | --- | --- | --- |
-| `openresponses.effort` | clients (agentturn, dax) | `providers/anthropic` |
-| `openresponses.issuer` | `providers/anthropic`, `providers/gemini` | both, on input; agentturn (#286, #242) |
-| `openresponses.cache_write_tokens`, `openresponses.cache_write_tokens_by_ttl` | `providers/anthropic` | agenteval (#68), any price table |
+| `openresponses-experimental.effort` | clients (agentturn, dax) | `providers/anthropic` |
+| `openresponses-experimental.issuer` | `providers/anthropic`, `providers/gemini` | both, on input; agentturn (#286, #242) |
+| `openresponses-experimental.cache_write_tokens`, `openresponses-experimental.cache_write_tokens_by_ttl` | `providers/anthropic` | agenteval (#68), any price table |
 | `context_length_exceeded` | all three adapters | agentturn's compaction |
+| `openresponses-experimental.model_info` | the handler (from an adapter), the Responses client's vendor mappings | dax, agentturn's compaction budget, agentkit's effort floor, effort fitting |
 
 ## 3. Reasoning effort above `xhigh`
 
@@ -138,7 +147,7 @@ setting.
 ```json
 "reasoning": {
   "effort": "xhigh",
-  "openresponses.effort": "max"
+  "openresponses-experimental.effort": "max"
 }
 ```
 
@@ -185,7 +194,7 @@ unsigned reasoning item sent to Claude comes back as a 400.
   "id": "rs_…",
   "summary": [ … ],
   "encrypted_content": "…",
-  "openresponses.issuer": "anthropic"
+  "openresponses-experimental.issuer": "anthropic"
 }
 ```
 
@@ -241,8 +250,8 @@ reports the same quantity as an unprefixed `cache_write_tokens`.
   "input_tokens": 12000,
   "input_tokens_details": {
     "cached_tokens": 9600,
-    "openresponses.cache_write_tokens": 2100,
-    "openresponses.cache_write_tokens_by_ttl": { "5m": 100, "1h": 2000 }
+    "openresponses-experimental.cache_write_tokens": 2100,
+    "openresponses-experimental.cache_write_tokens_by_ttl": { "5m": 100, "1h": 2000 }
   },
   "output_tokens": 300,
   "output_tokens_details": { "reasoning_tokens": 0 },
@@ -252,20 +261,20 @@ reports the same quantity as an unprefixed `cache_write_tokens`.
 
 **Shape.**
 
-- `openresponses.cache_write_tokens`: a non-negative integer, the input
+- `openresponses-experimental.cache_write_tokens`: a non-negative integer, the input
   tokens written to the prompt cache by this response. They are counted
   in `input_tokens` and are disjoint from `cached_tokens`. A token read
   from the cache is not also written.
-- `openresponses.cache_write_tokens_by_ttl`: an object that splits that
+- `openresponses-experimental.cache_write_tokens_by_ttl`: an object that splits that
   count by how long the provider keeps the entry.
   - Each key is a duration: a decimal integer followed by `s`, `m` or
     `h`.
   - Each value is a non-negative integer.
-  - The values sum to `openresponses.cache_write_tokens`.
+  - The values sum to `openresponses-experimental.cache_write_tokens`.
   - It is present only when the provider reports the split.
 
 **Writers.** An adapter whose provider reports cache writes MUST set
-`openresponses.cache_write_tokens`, and sets the split when the provider
+`openresponses-experimental.cache_write_tokens`, and sets the split when the provider
 reports it. Across the turns of one response (for example a resumed
 pause), the counts are summed. The Claude adapter maps `cache_creation`:
 `ephemeral_5m_input_tokens` becomes the `5m` entry and
@@ -297,7 +306,7 @@ today it must match three providers' messages.
 value already used by an established upstream for the same condition is
 adopted unprefixed, so a client that already handles that upstream needs
 no change. A condition no upstream names would take an
-`openresponses.`-prefixed value.
+`openresponses-experimental.`-prefixed value.
 
 | Code | Type | Meaning |
 | --- | --- | --- |
@@ -319,19 +328,110 @@ The codes the library already uses for refusing a request
 `unsupported_parameter`) are OpenAI's and keep their OpenAI meaning.
 They belong in this registry when a section is written for them.
 
-## 7. Not in the set
+## 7. Model information
 
-**Model information (#51).** Context window, maximum output, the
-efforts a model accepts and its modalities do not depend on the
-provider. But the specification has no models resource, and its
-extension rules cover members, items and events, not new endpoints.
-Producing the information means calling each provider's model listing,
-which is provider knowledge that PLAN rule 1 keeps out of the adapters
-and CONTRIBUTING keeps out of the root. It stays in dax, and moves to
-agentkit once a second product needs it. A later version of this
-document may define a model-information object if a producer that is
-not provider-specific appears, for example a Responses server that
-lists its models.
+**Gap.** Nothing in the specification says what a model accepts, so
+every layer above a model guesses:
+
+- A harness compacts on a fixed token budget, because nothing gives it
+  the context window.
+- A product cannot choose a summary request's effort, because it does
+  not know whether the model refuses `none`.
+- An adapter sends an effort the model does not take, and the request
+  fails.
+
+Provider APIs publish this information (Claude's and Gemini's model
+endpoints, OpenRouter's catalogue, Ollama's `/api/show`), each in its own
+shape. The specification has no models resource to carry it.
+
+**Placement.** A member of the model object served at `GET
+/models/{model}`, under the same base URL as `/responses`. OpenAI and
+the servers compatible with it (OpenRouter, Ollama, vLLM) already serve
+that endpoint, with `id`, `object: "model"`, `created` and `owned_by`.
+The member is added to that object, and every other member keeps its
+meaning. A server that has no such endpoint MAY serve one that holds
+only `id`, `object` and this member. It is not a member of a response:
+a client needs the information before its first request, and repeating
+it on every response would add bytes to each.
+
+```json
+{
+  "id": "example-model",
+  "object": "model",
+  "openresponses-experimental.model_info": {
+    "source": "anthropic",
+    "context_window": 200000,
+    "max_output_tokens": 64000,
+    "reasoning": true,
+    "efforts": ["none", "low", "medium", "high", "xhigh", "max"],
+    "default_effort": "high",
+    "input_modalities": ["text", "image", "file"]
+  }
+}
+```
+
+**Shape.** An object. Every member except `source` is optional, and an
+absent member means the source did not say. It never means "no" or
+zero.
+
+| Member | Type | Meaning |
+| --- | --- | --- |
+| `source` | string | Who answered: the provider's slug (`anthropic`, `gemini`, `openrouter`, `ollama`) or the serving implementation's name. Required. |
+| `context_window` | integer | The most input tokens one request may carry, with its instructions and tools. |
+| `max_output_tokens` | integer | The most output tokens one response may carry, reasoning included. |
+| `reasoning` | boolean | Whether the model reasons at all. |
+| `efforts` | array of strings | The reasoning efforts the model accepts, ordered from least to most. The values are the specification's `ReasoningEffortEnum`, `minimal`, and `max` as defined in section 3. `none` is listed when reasoning can be turned off. A model that cannot reason lists only `none`. |
+| `default_effort` | string | The effort the model runs at when the request sends none. |
+| `input_modalities` | array of strings | The input content the model accepts: `text`, `image`, `file`, `audio`, `video`. |
+
+Prices are not in the set. They vary by account, route and date, and
+they change without the model changing. A price table belongs to its
+reader (agenteval keeps one), keyed by `id`.
+
+**Writers.** A writer fills a member only from what the provider
+publishes, and leaves out what the provider does not say. It never
+fills a member from a table of models it keeps, because such a table
+falls behind every model release. The sources the provider adapters and
+the Responses client map from:
+
+| Member | Claude `GET /v1/models/{id}` | Gemini `models.get` | OpenRouter catalogue | Ollama `/api/show` |
+| --- | --- | --- | --- | --- |
+| `context_window` | `max_input_tokens` | `inputTokenLimit` | `context_length` | (not said) |
+| `max_output_tokens` | `max_tokens` | `outputTokenLimit` | `top_provider.max_completion_tokens` | (not said) |
+| `reasoning` | `capabilities.thinking.supported` | `thinking` | `reasoning` present, or `supported_parameters` has `reasoning` | `capabilities` has `thinking` |
+| `efforts` | `none`, plus each level whose `capabilities.effort.<level>.supported` is true when `capabilities.effort.supported` is true | `["none"]` when not thinking; otherwise not said | `reasoning.supported_efforts`, plus `none` unless `reasoning.mandatory` | `["none"]` when not thinking; otherwise not said |
+| `default_effort` | (not said) | (not said) | `reasoning.default_effort` | (not said) |
+| `input_modalities` | (not said) | (not said) | `architecture.input_modalities` | `capabilities` has `vision` → `image` |
+
+In this library, the handler is to serve the endpoint when its adapter
+can describe a model, and the Claude and Gemini adapters are to describe
+models from their providers' model endpoints. None of this is
+implemented yet. The Responses client reads the member from
+an upstream that serves it, and otherwise maps the OpenRouter and Ollama
+sources above.
+
+**Readers.** The information is a hint taken before a request. The
+response is the authority: a request the model refuses still fails as
+the provider says, as PLAN rule 1 requires. With the information, a
+reader:
+
+- MAY derive a compaction budget from `context_window`.
+- MAY fit a requested effort to `efforts`. The fit is the requested
+  effort when it is listed, and otherwise the listed effort nearest to
+  it in the order above, the lower of two equally near. A reader MUST
+  NOT fit an effort other than `none` to `none` while the model lists
+  any other effort.
+
+Without it, or with a member absent, a reader MUST send the request as
+asked, which is the specification's behaviour, and uses its own
+defaults (for compaction, a fixed budget).
+
+**Replaces** the `Info` and `Describer` types that #51 proposed adding to
+the root package. dax's `internal/modelinfo` has been trying out this
+shape since dax v0.0.1. With this section, its fields gain a wire form
+that any implementation can serve or read.
+
+## 8. Not in the set
 
 **Retryability (#58).** Not needed. The specification already says
 which error types can be retried (`server_error`: "Retrying later may
