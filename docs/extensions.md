@@ -411,7 +411,7 @@ the Responses client map from:
 | `context_window` | `max_input_tokens` | `inputTokenLimit` | `context_length` | (not said) |
 | `max_output_tokens` | `max_tokens` | `outputTokenLimit` | `top_provider.max_completion_tokens` | (not said) |
 | `reasoning` | `capabilities.thinking.supported` | `thinking` | `reasoning` present, or `supported_parameters` has `reasoning` | `capabilities` has `thinking` |
-| `efforts` | `none`, plus each level whose `capabilities.effort.<level>.supported` is true when `capabilities.effort.supported` is true | `["none"]` when not thinking; otherwise not said | `reasoning.supported_efforts`, plus `none` unless `reasoning.mandatory` | `["none"]` when not thinking; otherwise not said |
+| `efforts` | each level whose `capabilities.effort.<level>.supported` is true, when `capabilities.effort.supported` is true, after `none` unless the adapter refuses `none` for a model that cannot turn thinking off | `["none"]` when not thinking; otherwise not said | `reasoning.supported_efforts`, plus `none` unless `reasoning.mandatory` | `["none"]` when not thinking; otherwise not said |
 | `default_effort` | (not said) | (not said) | `reasoning.default_effort` | (not said) |
 | `input_modalities` | (not said) | (not said) | `architecture.input_modalities` | `capabilities` has `vision` → `image` |
 

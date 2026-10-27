@@ -335,9 +335,11 @@ returns the shared model information of docs/extensions.md section 7,
 with `source: "anthropic"`. `context_window` is `max_input_tokens` and
 `max_output_tokens` is `max_tokens`, each when above zero; `reasoning`
 is `capabilities.thinking.supported`; when
-`capabilities.effort.supported` is true, `efforts` is `none` followed by
-each of `low`, `medium`, `high`, `xhigh` and `max` whose
-`capabilities.effort.<level>.supported` is true. Claude does not say a
+`capabilities.effort.supported` is true, `efforts` is each of `low`,
+`medium`, `high`, `xhigh` and `max` whose
+`capabilities.effort.<level>.supported` is true, after `none` unless the
+adapter refuses `none` for the model (`ThinkingAlwaysOn`, by the
+reasoning effort table or `WithThinking`). Claude does not say a
 default effort or input modalities, so those are left out, and nothing
 is filled from a table of models. A model Claude does not know is
 `not_found`. Without `WithModels`, which a Vertex AI client has no

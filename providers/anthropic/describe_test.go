@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/ChristopherDavenport/openresponses"
@@ -41,7 +42,8 @@ func TestDescribe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []openresponses.ReasoningEffort{"none", "low", "medium", "high", "xhigh", "max"}
+	// Opus 5.5 cannot turn thinking off, and the adapter refuses none.
+	want := []openresponses.ReasoningEffort{"low", "medium", "high", "xhigh", "max"}
 	if info.Source != "anthropic" || info.ContextWindow != 1000000 || info.MaxOutputTokens != 128000 ||
 		info.Reasoning == nil || !*info.Reasoning || !slices.Equal(info.Efforts, want) {
 		t.Fatalf("info = %+v", info)
@@ -78,5 +80,19 @@ func TestDescribeWithoutModels(t *testing.T) {
 	var oerr *openresponses.Error
 	if !errorsAs(err, &oerr) || oerr.Type != openresponses.ErrorTypeNotFound {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestDescribeNone(t *testing.T) {
+	a := describer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, strings.Replace(modelJSON, "claude-opus-5-5", "claude-sonnet-5", 1))
+	}))
+	info, err := a.Describe(context.Background(), "claude-sonnet-5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Efforts) == 0 || info.Efforts[0] != "none" {
+		t.Fatalf("efforts = %v, want none first", info.Efforts)
 	}
 }

@@ -31,13 +31,19 @@ func (a *Adapter) Describe(ctx context.Context, model string) (*openresponses.In
 	if err != nil {
 		return nil, mapError(err)
 	}
-	return describe(m), nil
+	thinking := a.thinking
+	if thinking == ThinkingAuto {
+		thinking = thinkingFor(model)
+	}
+	return describe(m, thinking != ThinkingAlwaysOn), nil
 }
 
 // describe maps Claude's model object onto the shared model information.
-// efforts is none followed by each level Claude says the model takes,
-// when it says the model takes an effort at all.
-func describe(m *sdk.ModelInfo) *openresponses.Info {
+// efforts is each level Claude says the model takes, when it says the
+// model takes an effort at all, after none when the adapter accepts none
+// for the model (acceptsNone); it refuses none for a model that cannot
+// turn thinking off.
+func describe(m *sdk.ModelInfo, acceptsNone bool) *openresponses.Info {
 	info := &openresponses.Info{Source: issuer}
 	if m.MaxInputTokens > 0 {
 		info.ContextWindow = int(m.MaxInputTokens)
@@ -51,7 +57,10 @@ func describe(m *sdk.ModelInfo) *openresponses.Info {
 		info.Reasoning = &reasons
 	}
 	if caps.Effort.Supported {
-		info.Efforts = []openresponses.ReasoningEffort{openresponses.ReasoningEffortNone}
+		info.Efforts = []openresponses.ReasoningEffort{}
+		if acceptsNone {
+			info.Efforts = append(info.Efforts, openresponses.ReasoningEffortNone)
+		}
 		for _, level := range []struct {
 			effort    openresponses.ReasoningEffort
 			supported bool
