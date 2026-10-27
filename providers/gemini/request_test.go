@@ -657,3 +657,27 @@ func TestEncodeUnstampedClaudeReasoning(t *testing.T) {
 		}
 	}
 }
+
+// TestPlaceholderFollowsModel: the placeholder depends on the model's
+// generation, not on the encoding WithThinking fixes.
+func TestPlaceholderFollowsModel(t *testing.T) {
+	items := openresponses.Items{
+		openresponses.UserText("weather?"),
+		&openresponses.FunctionCall{CallID: "c1", Name: "weather", Arguments: `{}`},
+		openresponses.NewFunctionCallOutput("c1", "rain"),
+	}
+	contents, _, err := encodeRequest(openresponses.Request{Model: "gemini-3-pro-preview", Input: items}, ThinkingBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents[1].Parts[0].ThoughtSignature) != string(placeholderSignature) {
+		t.Fatalf("signature = %q, want the placeholder on a Gemini 3 model whatever the encoding", contents[1].Parts[0].ThoughtSignature)
+	}
+	contents, _, err = encodeRequest(openresponses.Request{Model: "gemini-2.5-pro", Input: items}, ThinkingLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contents[1].Parts[0].ThoughtSignature != nil {
+		t.Fatalf("signature = %q, want none on Gemini 2.5 whatever the encoding", contents[1].Parts[0].ThoughtSignature)
+	}
+}

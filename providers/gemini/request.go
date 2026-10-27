@@ -45,10 +45,10 @@ func encodeRequest(req openresponses.Request, thinking Thinking) ([]*genai.Conte
 	if err != nil {
 		return nil, nil, err
 	}
-	if thinking == ThinkingAuto {
-		thinking = thinkingFor(req.Model)
-	}
-	if thinking == ThinkingLevel {
+	// Gemini 3 validates signatures and earlier generations do not. That
+	// is a fact about the model's generation, read off its ID, and not
+	// about the encoding WithThinking may have fixed.
+	if thinkingFor(req.Model) == ThinkingLevel {
 		placeholderSignatures(contents)
 	}
 	if req.Instructions != "" {

@@ -189,12 +189,12 @@ documents a placeholder for this case: "You can set
 should be a last resort as it will negatively impact model
 performance"
 ([thought signatures](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures)).
-On a model that takes thinking levels (see the model ID table above),
-each model step that has a function call and no signature on any of
+On a model the model ID table above puts in the levels generation,
+whatever `WithThinking` sets, each model step that has a function call and no signature on any of
 its parts gets that placeholder on its first function call, the only
 call Gemini signs in a parallel step. A step with a signature of its
-own is left as Gemini wrote it, and the generations that take budgets
-do not validate signatures, so nothing is added there. The string is
+own is left as Gemini wrote it, and the generations the table puts on
+budgets do not validate signatures, so nothing is added there. The string is
 the field's JSON form, which is base64: the adapter sends the bytes it
 decodes to, in the URL alphabet its underscores belong to.
 

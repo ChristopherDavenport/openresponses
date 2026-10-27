@@ -52,10 +52,11 @@
   shared members are ignored, and any other is dropped. `WithExtra`
   forwards those others into the `GenerateContent` body without
   overriding a mapped key. Off by default.
-- On a model that takes thinking levels, a model step with a function
-  call and no thought signature gets Google's documented placeholder,
-  `skip_thought_signature_validator`, on its first call, so Gemini 3
-  accepts a transcript switched from another provider.
+- On a model whose ID the README's table puts in the levels
+  generation, whatever `WithThinking` sets, a model step with a
+  function call and no thought signature gets Google's documented
+  placeholder, `skip_thought_signature_validator`, on its first call,
+  so Gemini 3 accepts a transcript switched from another provider.
 
 ## v0.0.16 - 2026-10-26
 
