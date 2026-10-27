@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `prompt_cache_key` is accepted without effect instead of being
+  refused. It is a caching hint, and Gemini caches implicitly (#57).
+
 ## v0.0.16 - 2026-10-26
 
 - Security: golang.org/x/net is v0.60.0, which fixes GO-2026-6617,

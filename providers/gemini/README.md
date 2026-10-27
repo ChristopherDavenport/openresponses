@@ -66,9 +66,9 @@ gemini.New(client, gemini.WithThinking(gemini.ThinkingBudget))
 A request field Gemini has no equivalent for comes back as an
 `invalid_request` error with `code: unsupported_parameter` and `param`
 naming the field, rather than being dropped: `parallel_tool_calls:
-false`, `max_tool_calls`, `safety_identifier`, `prompt_cache_key`,
-`truncation: auto`, `text.verbosity`, `file_id` on images and files,
-`compaction` and `item_reference` items, tools and items from other
+false`, `max_tool_calls`, `safety_identifier`, `truncation: auto`,
+`text.verbosity`, `file_id` on images and files, `compaction` and
+`item_reference` items, tools and items from other
 providers' slugs, and the `reasoning.effort` values the model's
 generation cannot express (see above). `reasoning.summary` alongside
 `reasoning.effort: none` is rejected as contradictory.
@@ -77,8 +77,9 @@ generation cannot express (see above). `reasoning.summary` alongside
 
 Accepted without effect: `strict` on function tools and on
 `text.format`, `include`, `stream_options` and `store` (the handler's
-concerns). `metadata` becomes Vertex AI labels, which the Gemini API
-rejects.
+concerns), and `prompt_cache_key`, which is a caching hint: Gemini
+caches implicitly, so the key has nothing to name. `metadata` becomes
+Vertex AI labels, which the Gemini API rejects.
 
 Extension types use the `gemini.` slug. A tool `{"type":
 "gemini.google_search"}` is Google Search; its remaining keys are the

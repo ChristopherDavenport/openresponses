@@ -79,11 +79,10 @@ func encodeConfig(req openresponses.Request, thinking Thinking) (*genai.Generate
 	if req.SafetyIdentifier != "" {
 		return nil, unsupported("safety_identifier")
 	}
-	if req.PromptCacheKey != "" {
-		// Implicit caching needs no key; explicit caches are a resource the
-		// caller creates, not something a request names.
-		return nil, unsupported("prompt_cache_key")
-	}
+	// prompt_cache_key is a caching hint, and Gemini caches implicitly:
+	// the key has nothing to name, so it is accepted without effect.
+	// Explicit caches are a resource the caller creates, not something a
+	// request names.
 	if req.Truncation == openresponses.TruncationAuto {
 		return nil, unsupported("truncation")
 	}
