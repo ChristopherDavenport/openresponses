@@ -27,6 +27,9 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 	if err != nil {
 		return err
 	}
+	if a.forwardExtra {
+		forwardExtra(cfg, forwardable(req.Extra))
+	}
 	d := &decoder{em: openresponses.NewEmitter(sink, openresponses.NewResponse(req))}
 	for chunk, err := range a.client.Models.GenerateContentStream(ctx, req.Model, contents, cfg) {
 		if err != nil {

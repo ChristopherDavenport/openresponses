@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/url"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/ChristopherDavenport/openresponses"
@@ -33,6 +34,9 @@ func encodeRequest(req openresponses.Request, thinking Thinking) ([]*genai.Conte
 		// here means it has none, and Gemini keeps no conversation state.
 		return nil, nil, openresponses.PreviousResponseNotFound(req.PreviousResponseID)
 	}
+	if err := checkExtra(req.Extra); err != nil {
+		return nil, nil, err
+	}
 	cfg, err := encodeConfig(req, thinking)
 	if err != nil {
 		return nil, nil, err
@@ -48,6 +52,70 @@ func encodeRequest(req openresponses.Request, thinking Thinking) ([]*genai.Conte
 		cfg.SystemInstruction = &genai.Content{Parts: system}
 	}
 	return contents, cfg, nil
+}
+
+// providerSlugs are the slugs of the providers this repository has
+// adapters for, including this one. A top-level request member under one
+// of them is a setting for that provider (PLAN.md rule 8).
+var providerSlugs = []string{"anthropic.", "chatcompletions.", slug}
+
+// checkExtra applies PLAN.md rule 8 to the request's unknown top-level
+// members. One under another provider's slug is meant for a provider
+// this one cannot honour, and one under gemini. would be a provider
+// parameter, of which none is defined yet: both are invalid_request
+// naming the member. Shared members this adapter does not implement are
+// ignored, and any other member is dropped or, with [WithExtra],
+// forwarded (see forwardable).
+func checkExtra(extra map[string]any) error {
+	names := make([]string, 0, len(extra))
+	for name := range extra {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		if providerMember(name) {
+			return unsupported(name)
+		}
+	}
+	return nil
+}
+
+func providerMember(name string) bool {
+	for _, s := range providerSlugs {
+		if strings.HasPrefix(name, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// forwardable returns the members [WithExtra] forwards: every member
+// that is neither a shared extension nor under a provider's slug.
+func forwardable(extra map[string]any) map[string]any {
+	out := map[string]any{}
+	for name, v := range extra {
+		if strings.HasPrefix(name, openresponses.ExtensionSlug) || providerMember(name) {
+			continue
+		}
+		out[name] = v
+	}
+	return out
+}
+
+// forwardExtra adds members to the GenerateContent body without
+// replacing a key the mapping set.
+func forwardExtra(cfg *genai.GenerateContentConfig, members map[string]any) {
+	if len(members) == 0 {
+		return
+	}
+	cfg.HTTPOptions = &genai.HTTPOptions{ExtrasRequestProvider: func(body map[string]any) map[string]any {
+		for k, v := range members {
+			if _, set := body[k]; !set {
+				body[k] = v
+			}
+		}
+		return body
+	}}
 }
 
 func unsupported(param string) *openresponses.Error {

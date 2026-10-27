@@ -113,6 +113,27 @@ concerns), and `prompt_cache_key`, which is a caching hint: Gemini
 caches implicitly, so the key has nothing to name. `metadata` becomes
 Vertex AI labels, which the Gemini API rejects.
 
+Unknown top-level request members are read by kind (PLAN.md rule 8).
+A member under another provider's slug, `anthropic.` or
+`chatcompletions.`, is a setting meant for a provider this adapter
+cannot honour, and is `invalid_request` with `code:
+unsupported_parameter` and `param` naming the member. A member under
+`gemini.` is a provider parameter; none is defined yet, so each is
+refused the same way. A shared `openresponses-experimental.` member the
+adapter does not implement is ignored, since each defines a fallback the
+specification's own fields carry. Any other member is dropped, unless
+the adapter is built with `WithExtra`:
+
+```go
+gemini.New(client, gemini.WithExtra())
+```
+
+which forwards those other members into the `GenerateContent` body, for
+Gemini request fields the mapping does not cover, such as
+`cachedContent`. A key the mapping sets is never overridden. Every
+member a client sends then reaches Gemini, so a server that does not
+trust its clients should filter `Extra` first.
+
 Extension types use the `gemini.` slug. A tool `{"type":
 "gemini.google_search"}` is Google Search; its remaining keys are the
 tool's configuration in the SDK's wire form (`excludeDomains`, and so

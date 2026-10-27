@@ -45,6 +45,12 @@
   section 7, the context window, output limit and whether the model
   thinks. On Vertex AI it returns the source alone, since that model
   resource publishes none of them (#51).
+- Unknown top-level request members follow PLAN.md rule 8: one under
+  `anthropic.`, `chatcompletions.` or `gemini.` (no Gemini request
+  parameter is defined yet) is `invalid_request` naming the member,
+  shared members are ignored, and any other is dropped. `WithExtra`
+  forwards those others into the `GenerateContent` body without
+  overriding a mapped key. Off by default.
 
 ## v0.0.16 - 2026-10-26
 
