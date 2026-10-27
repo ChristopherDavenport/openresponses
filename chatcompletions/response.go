@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/ChristopherDavenport/openresponses"
+	"github.com/ChristopherDavenport/openresponses/internal/jsonx"
 	"github.com/ChristopherDavenport/openresponses/internal/sse"
 )
 
@@ -47,8 +50,9 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 			return openresponses.ServerError("invalid_upstream_response", "chunk: "+err.Error())
 		}
 		if c.Error != nil {
-			// Some providers report a mid-stream failure as a data frame.
-			return c.Error.toError(http.StatusInternalServerError, nil)
+			// Some providers report a mid-stream failure as a data frame,
+			// after the stream's 2xx status.
+			return c.Error.toError(c.Error.status(), nil)
 		}
 		if err := d.chunk(&c); err != nil {
 			return err
@@ -152,16 +156,62 @@ type topLogprob struct {
 	Bytes   []int   `json:"bytes"`
 }
 
+// usage and its details keep the members the mapping does not read, so
+// they reach the response's usage at the same depth.
 type usage struct {
-	PromptTokens        int `json:"prompt_tokens"`
-	CompletionTokens    int `json:"completion_tokens"`
-	TotalTokens         int `json:"total_tokens"`
-	PromptTokensDetails *struct {
-		CachedTokens int `json:"cached_tokens"`
-	} `json:"prompt_tokens_details"`
-	CompletionTokensDetails *struct {
-		ReasoningTokens int `json:"reasoning_tokens"`
-	} `json:"completion_tokens_details"`
+	PromptTokens            int                `json:"prompt_tokens"`
+	CompletionTokens        int                `json:"completion_tokens"`
+	TotalTokens             int                `json:"total_tokens"`
+	PromptTokensDetails     *promptDetails     `json:"prompt_tokens_details"`
+	CompletionTokensDetails *completionDetails `json:"completion_tokens_details"`
+	extra                   map[string]any
+}
+
+type promptDetails struct {
+	CachedTokens     *int `json:"cached_tokens"`
+	CacheWriteTokens *int `json:"cache_write_tokens"` // OpenRouter
+	extra            map[string]any
+}
+
+type completionDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
+	extra           map[string]any
+}
+
+func (u *usage) UnmarshalJSON(data []byte) error {
+	type plain usage
+	var p plain
+	extra, _, err := jsonx.UnmarshalExtra(data, &p)
+	if err != nil {
+		return err
+	}
+	*u = usage(p)
+	u.extra = extra
+	return nil
+}
+
+func (d *promptDetails) UnmarshalJSON(data []byte) error {
+	type plain promptDetails
+	var p plain
+	extra, _, err := jsonx.UnmarshalExtra(data, &p)
+	if err != nil {
+		return err
+	}
+	*d = promptDetails(p)
+	d.extra = extra
+	return nil
+}
+
+func (d *completionDetails) UnmarshalJSON(data []byte) error {
+	type plain completionDetails
+	var p plain
+	extra, _, err := jsonx.UnmarshalExtra(data, &p)
+	if err != nil {
+		return err
+	}
+	*d = completionDetails(p)
+	d.extra = extra
+	return nil
 }
 
 // decoder folds chunks into Emitter calls. At most one writer is open at
@@ -419,13 +469,31 @@ func (d *decoder) finish() error {
 	return openresponses.ModelError(d.finished, "the model stopped generating: "+d.finished)
 }
 
+// mapUsage maps the counts, writes a cache-write count as the shared
+// member (docs/extensions.md section 5), and keeps every member it does
+// not read in Extra at the depth it arrived at. DeepSeek reports cache
+// reads as prompt_cache_hit_tokens, read when cached_tokens is absent.
 func mapUsage(u *usage) *openresponses.Usage {
-	out := &openresponses.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens, TotalTokens: u.TotalTokens}
-	if u.PromptTokensDetails != nil {
-		out.InputTokensDetails.CachedTokens = u.PromptTokensDetails.CachedTokens
+	out := &openresponses.Usage{InputTokens: u.PromptTokens, OutputTokens: u.CompletionTokens, TotalTokens: u.TotalTokens, Extra: u.extra}
+	cached := false
+	if d := u.PromptTokensDetails; d != nil {
+		out.InputTokensDetails.Extra = d.extra
+		if d.CachedTokens != nil {
+			out.InputTokensDetails.CachedTokens = *d.CachedTokens
+			cached = true
+		}
+		if d.CacheWriteTokens != nil && *d.CacheWriteTokens >= 0 {
+			out.InputTokensDetails.SetCacheWriteTokens(*d.CacheWriteTokens)
+		}
 	}
-	if u.CompletionTokensDetails != nil {
-		out.OutputTokensDetails.ReasoningTokens = u.CompletionTokensDetails.ReasoningTokens
+	if n, ok := u.extra["prompt_cache_hit_tokens"].(json.Number); ok && !cached {
+		if hit, err := n.Int64(); err == nil && hit >= 0 {
+			out.InputTokensDetails.CachedTokens = int(hit)
+		}
+	}
+	if d := u.CompletionTokensDetails; d != nil {
+		out.OutputTokensDetails.ReasoningTokens = d.ReasoningTokens
+		out.OutputTokensDetails.Extra = d.extra
 	}
 	if out.TotalTokens == 0 {
 		out.TotalTokens = out.InputTokens + out.OutputTokens
@@ -454,32 +522,173 @@ type apiError struct {
 	Param   string `json:"param"`
 }
 
-func (e *apiError) toError(status int, headers http.Header) *openresponses.Error {
-	code := ""
+// errorStatus is the HTTP status that OpenAI and the providers that copy
+// its envelope send with an error of a given code or type, for an error
+// that arrives inside a stream without one.
+var errorStatus = map[string]int{
+	"invalid_request_error":   http.StatusBadRequest,
+	"context_length_exceeded": http.StatusBadRequest,
+	"authentication_error":    http.StatusUnauthorized,
+	"invalid_api_key":         http.StatusUnauthorized,
+	"permission_error":        http.StatusForbidden,
+	"permission_denied":       http.StatusForbidden,
+	"not_found_error":         http.StatusNotFound,
+	"model_not_found":         http.StatusNotFound,
+	"rate_limit_error":        http.StatusTooManyRequests,
+	"rate_limit_exceeded":     http.StatusTooManyRequests,
+	"insufficient_quota":      http.StatusTooManyRequests,
+	"overloaded_error":        529,
+	"server_error":            http.StatusInternalServerError,
+	"api_error":               http.StatusInternalServerError,
+}
+
+// code returns the envelope's code as a string.
+func (e *apiError) code() string {
 	switch v := e.Code.(type) {
 	case string:
-		code = v
+		return v
 	case float64:
-		code = fmt.Sprintf("%d", int(v))
+		return fmt.Sprintf("%d", int(v))
 	}
+	return ""
+}
+
+// status is the status the error would have on a non-streamed response:
+// a numeric code in the HTTP error range is one (OpenRouter sends them as
+// numbers, LiteLLM as strings), and otherwise the code, then the type,
+// names it. It is 0, leaving the status to the error type, when neither
+// is known.
+func (e *apiError) status() int {
+	if n, err := strconv.Atoi(e.code()); err == nil && n >= 400 && n < 600 {
+		return n
+	}
+	if s, ok := errorStatus[e.code()]; ok {
+		return s
+	}
+	return errorStatus[e.Type]
+}
+
+// overflowMessages are the phrases, in lower case, by which upstreams
+// that send no code of their own for it refuse a request whose input
+// exceeds the model's context window.
+var overflowMessages = []string{
+	"maximum context length",                       // OpenAI, vLLM, DeepSeek, OpenRouter
+	"exceeds the available context size",           // llama.cpp
+	"too large for model with",                     // Mistral
+	"prompt is too long",                           // Claude's compatible endpoint
+	"exceeds the maximum number of tokens allowed", // Gemini's compatible endpoint
+}
+
+// The counts a "maximum context length" message carries: the window, and
+// either the input or the total requested and the output's share of it.
+var (
+	windowCount = regexp.MustCompile(`maximum context length is (\d+)`)
+	inputCount  = regexp.MustCompile(`(\d+) input tokens|resulted in (\d+) tokens|\((\d+) in the messages`)
+	totalCount  = regexp.MustCompile(`requested (?:about )?(\d+) tokens`)
+	outputCount = regexp.MustCompile(`(\d+) in the (?:completion|output)`)
+)
+
+// inputExceeds reads the counts in a lower-cased overflow message and
+// reports whether the input alone exceeds the window. known is false
+// when the message does not carry the counts.
+func inputExceeds(msg string) (exceeds, known bool) {
+	window, ok := firstCount(windowCount, msg)
+	if !ok {
+		return false, false
+	}
+	// A total with the output's share counts every part of the input,
+	// functions included, where "N in the messages" counts one part.
+	if total, ok := firstCount(totalCount, msg); ok {
+		if output, ok := firstCount(outputCount, msg); ok {
+			return total-output > window, true
+		}
+	}
+	if input, ok := firstCount(inputCount, msg); ok {
+		return input > window, true
+	}
+	total, ok := firstCount(totalCount, msg)
+	if !ok {
+		return false, false
+	}
+	return total > window, true
+}
+
+// firstCount returns the first group re matched in msg as a number.
+func firstCount(re *regexp.Regexp, msg string) (int, bool) {
+	m := re.FindStringSubmatch(msg)
+	for _, g := range m[min(1, len(m)):] {
+		if n, err := strconv.Atoi(g); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
+// contextOverflow reports whether the error refuses a request whose
+// input exceeds the model's context window: OpenAI's code, llama.cpp's
+// type, or one of overflowMessages in the message. A message whose
+// counts show that the input fits is not one, nor is one that refuses
+// the output limit without counts: the output limit, not the input, is
+// what has to change, and compacting would not help.
+func (e *apiError) contextOverflow() bool {
+	if e.code() == openresponses.CodeContextLengthExceeded || e.Type == "exceed_context_size_error" {
+		return true
+	}
+	msg := strings.ToLower(e.Message)
+	for _, phrase := range overflowMessages {
+		if !strings.Contains(msg, phrase) {
+			continue
+		}
+		if exceeds, known := inputExceeds(msg); known {
+			return exceeds
+		}
+		return !strings.Contains(msg, "max_tokens") && !strings.Contains(msg, "max_completion_tokens")
+	}
+	return false
+}
+
+// toError maps the envelope by status with
+// [openresponses.ErrorTypeForStatus], the rule the root Client follows.
+// A status of 0, from a stream frame that names no known error, leaves
+// the status to the type: invalid_request for an overflow, server_error
+// otherwise. The envelope's type, and a code the adapter replaces, are
+// kept under the adapter's slug.
+func (e *apiError) toError(status int, headers http.Header) *openresponses.Error {
+	code := e.code()
 	if code == "" {
 		code = e.Type
 	}
-	if code == "" {
+	if code == "" && status != 0 {
 		code = fmt.Sprintf("http_%d", status)
 	}
+	if code == "" {
+		code = "upstream_error"
+	}
+	typ := openresponses.ErrorTypeForStatus(status)
+	if overflowStatus(status) && e.contextOverflow() {
+		code, typ = openresponses.CodeContextLengthExceeded, openresponses.ErrorTypeInvalidRequest
+	}
 	var out *openresponses.Error
-	switch {
-	case status == http.StatusNotFound:
+	switch typ {
+	case openresponses.ErrorTypeNotFound:
 		out = openresponses.NotFound(code, e.Message, e.Param)
-	case status == http.StatusTooManyRequests:
+	case openresponses.ErrorTypeTooManyRequests:
 		out = openresponses.TooManyRequests(code, e.Message)
-	case status >= 400 && status < 500:
+	case openresponses.ErrorTypeInvalidRequest:
 		out = openresponses.InvalidRequest(code, e.Message, e.Param)
 	default:
 		out = openresponses.ServerError(code, e.Message)
 	}
 	out.StatusCode = status
+	if e.Type != "" {
+		out.Extra = map[string]any{memberType: e.Type}
+	}
+	if c := e.code(); c != "" && c != out.Code {
+		if out.Extra == nil {
+			out.Extra = map[string]any{}
+		}
+		out.Extra[memberCode] = c
+	}
 	for name, values := range headers {
 		if !failureHeader(name) {
 			continue
@@ -490,6 +699,25 @@ func (e *apiError) toError(status int, headers http.Header) *openresponses.Error
 	}
 	return out
 }
+
+// overflowStatus reports whether an upstream refuses a context overflow
+// with status: 0 for a frame that names no status, a bad request, or a
+// body too large. A refusal of the
+// adapter's credentials is never one, whatever its message.
+func overflowStatus(status int) bool {
+	switch status {
+	case 0, http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		return true
+	}
+	return false
+}
+
+// Members of an error under the adapter's slug: the upstream envelope's
+// type, and its code when the error's code replaces it.
+const (
+	memberType = "chatcompletions.type"
+	memberCode = "chatcompletions.code"
+)
 
 // mapError converts a non-2xx response. The status decides the type,
 // the envelope's code or type is the code, and the headers that describe

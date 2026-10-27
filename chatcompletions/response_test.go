@@ -107,6 +107,37 @@ func TestRequestWire(t *testing.T) {
 	}
 }
 
+// Cache writes become the shared member, and the members the mapping
+// does not read are kept at the depth they arrived at.
+func TestStreamUsageCacheAndExtra(t *testing.T) {
+	// OpenRouter.
+	sink := run(t, hello(), content("Hi"), finish("stop"),
+		`{"choices":[],"usage":{"prompt_tokens":12000,"completion_tokens":300,"total_tokens":12300,"cost":0.0123,"is_byok":false,"prompt_tokens_details":{"cached_tokens":9600,"cache_write_tokens":2100,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":5,"image_tokens":0}}}`)
+	u := sink.Response().Usage
+	if u.InputTokens != 12000 || u.InputTokensDetails.CachedTokens != 9600 || u.OutputTokensDetails.ReasoningTokens != 5 {
+		t.Fatalf("usage = %+v", u)
+	}
+	sameJSON(t, u, `{
+		"input_tokens":12000,"output_tokens":300,"total_tokens":12300,"cost":0.0123,"is_byok":false,
+		"input_tokens_details":{"cached_tokens":9600,"audio_tokens":0,"openresponses-experimental.cache_write_tokens":2100},
+		"output_tokens_details":{"reasoning_tokens":5,"image_tokens":0}
+	}`)
+	if n, ok := u.InputTokensDetails.CacheWriteTokens(); !ok || n != 2100 {
+		t.Fatalf("cache writes = %d %v", n, ok)
+	}
+
+	// DeepSeek reports cache reads only, outside prompt_tokens_details.
+	sink = run(t, hello(), content("Hi"), finish("stop"),
+		`{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,"prompt_cache_hit_tokens":64,"prompt_cache_miss_tokens":36}}`)
+	u = sink.Response().Usage
+	if u.InputTokensDetails.CachedTokens != 64 || u.Extra["prompt_cache_miss_tokens"] == nil {
+		t.Fatalf("usage = %+v", u)
+	}
+	if _, ok := u.InputTokensDetails.CacheWriteTokens(); ok {
+		t.Fatalf("cache writes reported for DeepSeek: %+v", u.InputTokensDetails)
+	}
+}
+
 func TestStreamToolCalls(t *testing.T) {
 	sink := run(t, hello(), roleChunk,
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"weather","arguments":""}}]}}]}`,
@@ -256,6 +287,68 @@ func TestStreamFinishReasons(t *testing.T) {
 	wantErr(t, err, "server_error", "")
 }
 
+// A mid-stream error frame maps as the same error would on a
+// non-streamed response, never with the stream's 2xx.
+func TestStreamErrorFrame(t *testing.T) {
+	cases := []struct {
+		frame  string
+		typ    openresponses.ErrorType
+		code   string
+		status int
+	}{
+		{`{"error":{"message":"slow","type":"requests","code":"rate_limit_exceeded"}}`, openresponses.ErrorTypeTooManyRequests, "rate_limit_exceeded", 429},
+		{`{"error":{"message":"slow","type":"rate_limit_error"}}`, openresponses.ErrorTypeTooManyRequests, "rate_limit_error", 429},
+		{`{"error":{"message":"busy","type":"overloaded_error"}}`, openresponses.ErrorTypeServerError, "overloaded_error", 529},
+		{`{"error":{"message":"boom","type":"server_error"}}`, openresponses.ErrorTypeServerError, "server_error", 500},
+		{`{"error":{"message":"bad","type":"invalid_request_error","code":"invalid_value"}}`, openresponses.ErrorTypeInvalidRequest, "invalid_value", 400},
+		{`{"error":{"message":"key","type":"authentication_error"}}`, openresponses.ErrorTypeInvalidRequest, "authentication_error", 401},
+		{`{"error":{"message":"denied","type":"permission_error"}}`, openresponses.ErrorTypeInvalidRequest, "permission_error", 403},
+		{`{"error":{"message":"upstream","code":502}}`, openresponses.ErrorTypeServerError, "502", 502},
+		{`{"error":{"message":"slow","code":429}}`, openresponses.ErrorTypeTooManyRequests, "429", 429},
+		{`{"error":{"message":"what"}}`, openresponses.ErrorTypeServerError, "upstream_error", 500},
+		{`{"error":{"message":"This model's maximum context length is 8192 tokens.","type":"invalid_request_error","code":"context_length_exceeded"}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, 400},
+		{`{"error":{"message":"This endpoint's maximum context length is 8192 tokens.","code":400}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, 400},
+		{`{"error":{"message":"This model's maximum context length is 4096 tokens."}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, 400},
+		{`{"error":{"message":"Your request timed out","code":408}}`, openresponses.ErrorTypeServerError, "408", 408},
+		{`{"error":{"message":"busy","code":"503"}}`, openresponses.ErrorTypeServerError, "503", 503},
+		{`{"error":{"message":"bad","code":"400"}}`, openresponses.ErrorTypeInvalidRequest, "400", 400},
+		{`{"error":{"message":"conflict","code":409}}`, openresponses.ErrorTypeInvalidRequest, "409", 409},
+	}
+	for _, tc := range cases {
+		t.Run(tc.frame, func(t *testing.T) {
+			_, err := streamtest.Run(context.Background(), newAdapter(t, serve(content("x"), tc.frame)), hello())
+			var oerr *openresponses.Error
+			if !errors.As(err, &oerr) {
+				t.Fatalf("err = %v", err)
+			}
+			if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != tc.status {
+				t.Fatalf("err = %s/%s %d, want %s/%s %d", oerr.Type, oerr.Code, oerr.HTTPStatus(), tc.typ, tc.code, tc.status)
+			}
+		})
+	}
+}
+
+// The envelope's type, and a code the adapter replaced, are kept under
+// the adapter's slug.
+func TestErrorKeepsUpstreamCodeAndType(t *testing.T) {
+	_, err := streamtest.Run(context.Background(), newAdapter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		fmt.Fprint(w, `{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}`)
+	})), hello())
+	oerr := openresponses.AsError(err)
+	if oerr.Code != openresponses.CodeContextLengthExceeded || oerr.Extra["chatcompletions.code"] != "400" || oerr.Extra["chatcompletions.type"] != "exceed_context_size_error" {
+		t.Fatalf("err = %+v", oerr)
+	}
+	_, err = streamtest.Run(context.Background(), newAdapter(t, serve(content("x"), `{"error":{"message":"bad","type":"invalid_request_error","code":"invalid_value"}}`)), hello())
+	oerr = openresponses.AsError(err)
+	if oerr.Code != "invalid_value" || oerr.Extra["chatcompletions.type"] != "invalid_request_error" {
+		t.Fatalf("err = %+v", oerr)
+	}
+	if _, replaced := oerr.Extra["chatcompletions.code"]; replaced {
+		t.Fatalf("code kept although not replaced: %+v", oerr.Extra)
+	}
+}
+
 func TestMapError(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -272,7 +365,28 @@ func TestMapError(t *testing.T) {
 		{"invalid with param", 400, `{"error":{"message":"bad","type":"invalid_request_error","param":"messages","code":null}}`, nil, openresponses.ErrorTypeInvalidRequest, "invalid_request_error", "bad", "messages", ""},
 		{"numeric code", 400, `{"error":{"message":"bad","code":20015}}`, nil, openresponses.ErrorTypeInvalidRequest, "20015", "bad", "", ""},
 		{"unauthorized", 401, `{"error":{"message":"key","type":"authentication_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, "authentication_error", "key", "", ""},
+		{"forbidden", 403, `{"error":{"message":"model not allowed","type":"permission_error","code":"model_not_allowed"}}`, nil, openresponses.ErrorTypeInvalidRequest, "model_not_allowed", "model not allowed", "", ""},
 		{"not found", 404, `{"error":{"message":"no model","code":"model_not_found"}}`, nil, openresponses.ErrorTypeNotFound, "model_not_found", "no model", "", ""},
+		{"openai overflow", 400, `{"error":{"message":"This model's maximum context length is 128000 tokens.","type":"invalid_request_error","param":"messages","code":"context_length_exceeded"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "This model's maximum context length is 128000 tokens.", "messages", ""},
+		{"vllm overflow", 400, `{"object":"error","message":"This model's maximum context length is 4096 tokens. However, you requested 5000 tokens.","type":"BadRequestError","param":null,"code":400}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		{"llama.cpp overflow", 400, `{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "the request exceeds the available context size, try increasing it", "", ""},
+		{"mistral overflow", 400, `{"object":"error","message":"Prompt contains 40000 tokens and 0 draft tokens, too large for model with 32768 maximum context length","type":"invalid_request_error","param":null,"code":null}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		{"claude overflow", 400, `{"error":{"message":"prompt is too long: 210000 tokens > 200000 maximum","type":"invalid_request_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "prompt is too long: 210000 tokens > 200000 maximum", "", ""},
+		{"gemini overflow", 400, `[{"error":{"code":400,"message":"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}]`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		{"vllm overflow by input", 400, `{"object":"error","message":"This model's maximum context length is 4096 tokens. However, your request has 5000 input tokens. Please reduce the length of the input messages.","type":"BadRequestError","param":null,"code":400}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		// A request whose input fits but whose output limit does not is
+		// not an overflow: compacting the input cannot help it.
+		{"vllm max_tokens too large", 400, `{"object":"error","message":"'max_tokens' or 'max_completion_tokens' is too large: 5000. This model's maximum context length is 4096 tokens and your request has 100 input tokens (5000 > 4096 - 100).","type":"BadRequestError","param":null,"code":400}`, nil, openresponses.ErrorTypeInvalidRequest, "http_400", "", "", ""},
+		{"vllm completion too large", 400, `{"object":"error","message":"This model's maximum context length is 4096 tokens. However, you requested 5100 tokens (100 in the messages, 5000 in the completion). Please reduce the length of the messages or completion.","type":"BadRequestError","param":null,"code":400}`, nil, openresponses.ErrorTypeInvalidRequest, "http_400", "", "", ""},
+		{"openrouter output too large", 400, `{"error":{"message":"This endpoint's maximum context length is 8192 tokens. However, you requested about 9000 tokens (8000 of text input, 1000 in the output). Please reduce the length of either one.","code":400}}`, nil, openresponses.ErrorTypeInvalidRequest, "400", "", "", ""},
+		{"overflow counting functions", 400, `{"error":{"message":"This model's maximum context length is 4096 tokens. However, you requested 4300 tokens (4000 in the messages, 200 in the functions, and 100 in the completion).","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		{"deepseek overflow", 400, `{"error":{"message":"This model's maximum context length is 131072 tokens. However, you requested 140000 tokens (135000 in the messages, 5000 in the completion).","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		// The status decides the type as the root Client decides it, so a
+		// timeout stays retryable.
+		{"timeout", 408, `{"error":{"message":"Your request timed out","code":408}}`, nil, openresponses.ErrorTypeServerError, "408", "Your request timed out", "", ""},
+		{"conflict", 409, `{"error":{"message":"busy","type":"conflict_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, "conflict_error", "busy", "", ""},
+		{"payload too large", 413, `request entity too large`, nil, openresponses.ErrorTypeInvalidRequest, "http_413", "request entity too large", "", ""},
+		{"unprocessable", 422, `{"error":{"message":"bad","type":"invalid_request_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, "invalid_request_error", "bad", "", ""},
 		{"plain text", 503, `upstream unavailable`, nil, openresponses.ErrorTypeServerError, "http_503", "upstream unavailable", "", ""},
 	}
 	for _, tc := range cases {
@@ -289,7 +403,7 @@ func TestMapError(t *testing.T) {
 			if !errors.As(err, &oerr) {
 				t.Fatalf("err = %v", err)
 			}
-			if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.Message != tc.message || oerr.Param != tc.param || oerr.HTTPStatus() != tc.status {
+			if oerr.Type != tc.typ || oerr.Code != tc.code || (tc.message != "" && oerr.Message != tc.message) || oerr.Param != tc.param || oerr.HTTPStatus() != tc.status {
 				t.Fatalf("err = %+v", oerr)
 			}
 			if got := oerr.Headers.Get("Retry-After"); got != tc.retry {
