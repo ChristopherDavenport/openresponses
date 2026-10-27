@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -282,7 +283,7 @@ func TestStreamGrounding(t *testing.T) {
 	}
 	for i, a := range text.Annotations {
 		got := a.(*openresponses.URLCitation)
-		if *got != want[i] {
+		if !reflect.DeepEqual(*got, want[i]) {
 			t.Fatalf("annotation %d = %+v, want %+v", i, *got, want[i])
 		}
 	}

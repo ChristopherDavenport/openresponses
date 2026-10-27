@@ -17,10 +17,13 @@ providers/
 
 Each module has the same shape:
 
-- `go.mod` requires a released root version and has no `replace`
-  directive. `conformance/` requires `v0.0.0` and replaces it with `../`
-  because nothing imports it; a published module cannot, since
-  consumers ignore `replace`.
+- `go.mod` requires the root at the version the whole repository is
+  released at and replaces it with the tree (`../..`), so one pull
+  request can change the root and the adapters it affects. `make
+  replaces` refuses a first-party require without that `replace`.
+  Consumers ignore a dependency's `replace` and get the require, which
+  names the commit the provider was tagged from. `conformance/` is
+  unpublished and does the same with a root require of `v0.0.0`.
 - `New` takes the provider SDK's own client, already constructed. The
   adapter never sees a URL, a key or a credential.
 - `Create` is `openresponses.CollectStream` over `CreateStream`, so
@@ -33,20 +36,30 @@ Each module has the same shape:
   provider serves. Examples live in an `examples/` directory inside the
   module, because the root module cannot import a provider without
   pulling the provider's SDK into the root graph. Each module keeps its
-  own `CHANGELOG.md`, since it is versioned on its own.
+  own `CHANGELOG.md` for its own notes, though every module is released
+  at the same version.
 
 ## Rules every adapter follows
 
 1. Map shapes; do not validate model capabilities. A field the provider
    rejects for a given model comes back as `invalid_request` carrying the
    provider's message. An adapter that knows which model supports which
-   parameter lags every model release.
+   parameter lags every model release. Where a provider takes one
+   setting in mutually exclusive encodings by model generation, the
+   adapter picks the encoding from the model ID by a table in its
+   README, assumes the newest encoding for an ID it does not recognise,
+   and offers an option to fix the encoding. It still never refuses a
+   value on a model's behalf.
 2. Endpoints and credentials belong to the client. Vertex, Bedrock and
    API keys are lines in the README that construct the SDK client; the
    adapter has no Vertex code.
 3. Nothing is dropped silently. A request field with no provider
    equivalent returns `invalid_request` with `param` set. Any exception
-   is listed in the adapter's README.
+   is listed in the adapter's README. A shared extension member
+   (`openresponses-experimental.`, [docs/extensions.md](../docs/extensions.md))
+   that the adapter does not implement is not such a field: each one
+   defines a fallback that the specification's own fields carry, so the
+   adapter ignores it.
 4. Provider extensions ride on the slug-prefixed unknown types,
    `anthropic.` and `gemini.`, per CONTRIBUTING. Server tools go in as
    `UnknownTool` and their results come out as `UnknownItem`.
@@ -54,37 +67,92 @@ Each module has the same shape:
    Anthropic's thinking `signature` and Gemini's `thoughtSignature` both
    go there, base64 for Gemini's bytes, and come back out as the
    provider's block on the next turn. It is always emitted, since stored
-   continuation depends on it being in what the handler saves.
+   continuation depends on it being in what the handler saves. Each
+   reasoning item an adapter emits names its issuer in
+   `openresponses-experimental.issuer`, and an adapter sends
+   `encrypted_content` back only as docs/extensions.md section 4 says:
+   its own items, never another issuer's, and items with no issuer
+   unless the content is detectably foreign.
 6. `previous_response_id` is the handler's job through a
    `ResponseStore`. Without one the adapter returns
    `PreviousResponseNotFound`.
 7. Streaming goes through `Emitter`. Both providers emit content blocks
    sequentially, which matches its one-open-item model.
-8. `Request.Extra` is dropped by default, with an option to forward it.
+8. Extension members on a request are read by kind, as
+   docs/extensions.md section 1.5 says. A shared member the adapter
+   implements is acted on, and one it does not implement is ignored
+   (rule 3). A member under the adapter's own slug is a provider
+   parameter, defined in its README. A member under another provider's
+   slug is `invalid_request` with `param` set to the member's name: it
+   is a setting meant for a provider this one cannot honour. Any other
+   unknown top-level member in `Request.Extra` is dropped by default,
+   with an option to forward it.
+9. When a provider's id grammar refuses a `call_id`, the adapter
+   rewrites it within the request by a stated deterministic function,
+   applied identically to the call and its output. Ids the grammar
+   accepts pass unchanged, and rewritten ids never appear in a response.
+   Each README states its function, so another implementation produces
+   the same ids; the Anthropic adapter's is `call_` followed by the first
+   24 hex digits of the SHA-256 of the `call_id`.
+
+## Errors
+
+Every adapter maps a provider failure to `*openresponses.Error` by the
+same rules, so one failure reads the same way through each of them and
+a client can decide whether to retry from the error type alone. The
+specification says which types a retry can help: `server_error` and
+`too_many_requests`.
+
+- The same upstream failure maps to the same `Error` whether it
+  arrives as an HTTP status or as an error event inside a 2xx stream.
+  The adapter takes the type and status the provider's error type has
+  on a non-streamed response (Claude: `overloaded_error` is 529
+  `server_error`, `rate_limit_error` 429 `too_many_requests`,
+  `api_error` 500 `server_error`), and otherwise leaves the status to
+  the type. A 2xx status is never put on an error. A Chat Completions
+  `{"error": …}` frame inside a stream is classified by its `code` and
+  `type` when it carries them, as the same error would be on a
+  non-streamed response.
+- An upstream refusal of the adapter's own credentials or permissions
+  (Gemini `UNAUTHENTICATED` and `PERMISSION_DENIED`, Claude
+  `authentication_error` and `permission_error`) is `invalid_request`,
+  with the upstream status and the provider's code. Retrying cannot fix
+  it, so it is never `server_error`.
+- A request refused because its input exceeds the model's context
+  window is `invalid_request` with code `context_length_exceeded`,
+  whatever the provider's own code, as docs/extensions.md section 6
+  defines it. Each README states how its adapter recognises one. Output
+  cut short by a token limit is not an overflow: that response ends
+  `incomplete` with `max_output_tokens`, Claude's
+  `model_context_window_exceeded` stop included.
+- `Retry-After` and the rate-limit headers travel in `Error.Headers`,
+  as `Client` already does for Open Responses upstreams.
 
 ## Build and release
 
 A committed `go.work` at the repository root lists `.`, `conformance`
-and each provider module as it is created. In workspace mode the
-provider modules build against the local root, so an adapter can use
-root API that has not been tagged yet and CI sees the combination on
-the pull request. `./...` does not cross module boundaries in workspace
-mode, so the Makefile loops stay; `PROVIDERS` lists the provider
-modules and `SUBMODULES` includes them. `go mod tidy` runs per module
-as before.
+and each provider module, so editors and `go build ./...` in any
+directory see the tree. It is not what makes a release work: the
+`replace` directives are, because `go mod tidy` ignores the workspace.
+`./...` does not cross module boundaries, so the Makefile loops over
+the modules; `PROVIDERS` lists the provider modules and `SUBMODULES`
+includes them. `go mod tidy` runs per module.
 
-A `release-check` target runs `go vet` and `go test` in each provider
-module with `GOWORK=off`, which builds what consumers get. It runs
-before every provider tag.
+Every published module is released at one version, from one commit,
+and each provider requires the root at exactly that version. Tags are
+`vX.Y.Z`, `providers/anthropic/vX.Y.Z` and `providers/gemini/vX.Y.Z`,
+and a provider that did not change still gets its tag. `make release
+VERSION=vX.Y.Z` points every provider's root require at the version,
+dates the changelogs, tidies, runs `make check`, commits, guards and
+tags the root and then each provider with `make release-guard`, and
+pushes the branch and every tag in one `git push --atomic`, so no tag is
+visible without the others. `make extracted` builds, vets and tests
+each provider with its `replace` dropped, as a consumer gets it.
+CLAUDE.md holds the whole procedure and the reason for each guard.
 
 Workspace mode rejects `-mod=mod`, so a `GOFLAGS=-mod=mod` in the
 environment fails as soon as `go.work` exists. The default
 `-mod=readonly` works.
-
-Tags are `providers/anthropic/vX.Y.Z` and `providers/gemini/vX.Y.Z`,
-versioned independently of the root. When a root change breaks an
-adapter: tag the root, bump the adapter's `require`, run
-`release-check`, tag the adapter.
 
 CI caches each module's `go.sum`. Live tests against a real provider
 are a manual target that reads a key from the environment; they never
@@ -103,7 +171,7 @@ and `OPENRESPONSES_MODEL`.
 
 ## Anthropic
 
-Dependency: `github.com/anthropics/anthropic-sdk-go` (v1.74.0 at the
+Dependency: `github.com/anthropics/anthropic-sdk-go` (v1.78.0 at the
 time of writing). Its module graph includes `aws-sdk-go-v2`,
 `google.golang.org/api`, `grpc` and OpenTelemetry, which is why this is
 a module rather than a package.
@@ -185,7 +253,7 @@ must replay as different blocks.
 
 ## Gemini
 
-Dependency: `google.golang.org/genai` (v1.71.0 at the time of writing).
+Dependency: `google.golang.org/genai` (v1.72.0 at the time of writing).
 The adapter takes a `*genai.Client`:
 
 ```go
@@ -303,9 +371,18 @@ Where it differs from the SDK-backed adapters:
   `WithMaxTokensField` says `max_completion_tokens`; providers split.
 - `WithExtra` forwards `Request.Extra` for provider parameters
   (`top_k`, routing), never overriding a mapped key. Off by default.
-- Function outputs are one `tool` message each and text only; images in
-  tool results, `input_video`, `file_url` and image `file_id` have no
-  place in the protocol and are `invalid_request`. Assistant history
+- Function outputs are one `tool` message each. A
+  `function_call_output` with image or file parts is sent as a `tool`
+  message holding its text parts (or the text `[see next message]` when
+  it has none), and its image and file parts follow in one `user`
+  message after the run of tool messages, introduced by a text part
+  `Output of call <call_id>:`. When several outputs in one run have
+  such parts, that one message holds each output's introduction and
+  parts in the order of the outputs. This replaces the earlier rule that
+  function outputs were text only, under which an image in a tool result
+  was `invalid_request`. `input_video`, in a function output or a
+  message, `file_url` and image `file_id` have no place in the protocol
+  and are `invalid_request`. Assistant history
   folds into one assistant message per turn since tool calls are a
   field of the message that made them.
 - Tool calls stream by index and are opened when the name is known
@@ -336,7 +413,7 @@ own terms. The rest is too small to export.
 
 ## Order of work
 
-1. Wiring: `go.work`, `SUBMODULES`, `release-check`, CI cache entries,
+1. Wiring: `go.work`, `SUBMODULES`, the release targets, CI cache entries,
    and a sentence in CONTRIBUTING that provider knowledge lives here and
    never in the root.
 2. `providers/gemini`: module, request encoder with its

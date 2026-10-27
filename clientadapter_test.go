@@ -149,3 +149,32 @@ func jsonBody(v any) io.Reader {
 	data, _ := json.Marshal(v)
 	return bytesReader(data)
 }
+
+// TestClientAdapterFiltersForwardedErrorHeaders checks that an upstream
+// error event reaches the sink with the same header filter every *Error
+// path applies: only failure headers in headers, and no other spelling
+// of headers in the payload's Extra.
+func TestClientAdapterFiltersForwardedErrorHeaders(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "event: error\ndata: "+
+			`{"type":"error","sequence_number":0,"error":{"type":"too_many_requests","code":"c","message":"m","param":null,`+
+			`"headers":{"Retry-After":"3","Set-Cookie":"secret"},"Headers":{"set-cookie":"secret"},"x:hint":"kept"}}`+"\n\n")
+	}))
+	defer upstream.Close()
+	var got *ErrorEvent
+	_ = NewClient(upstream.URL).AsAdapter().CreateStream(testContext(t), Request{Model: "m"}, EventSinkFunc(func(ev StreamEvent) error {
+		if e, ok := ev.(*ErrorEvent); ok {
+			got = e
+		}
+		return nil
+	}))
+	if got == nil {
+		t.Fatal("no error event forwarded")
+	}
+	out, err := json.Marshal(got.Error)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSameJSON(t, []byte(`{"type":"too_many_requests","code":"c","message":"m","param":null,"headers":{"Retry-After":"3"},"x:hint":"kept"}`), out)
+}

@@ -42,9 +42,12 @@
 // slug-prefixed (for example "acme:search_result"). They decode to
 // [UnknownItem], [UnknownContent], [UnknownTool], [UnknownAnnotation] and
 // [UnknownEvent], which retain the original bytes and re-marshal them
-// verbatim, and a decoded [Response] re-encodes without the keys its
-// source left out, so a proxy built on this package neither drops nor
-// invents data. Packages may register their own types with
+// verbatim. Members the spec does not define on a built-in object, at
+// any depth below the request or response, are kept in that object's
+// Extra field and written back on encode, and a decoded [Response]
+// re-encodes without the keys its source left out, so a proxy built on
+// this package neither drops nor invents data. Every built-in streaming
+// event, [ErrorPayload] and [Error] keep them the same way. Packages may register their own types with
 // [RegisterItem], [RegisterContent], [RegisterTool], [RegisterAnnotation]
 // and [RegisterEvent].
 //

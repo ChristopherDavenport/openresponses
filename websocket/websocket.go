@@ -501,13 +501,16 @@ func (w *Conn) deliver(ctx context.Context, r result) bool {
 }
 
 // Send starts a turn. The stream, stream_options and background fields
-// are cleared because the protocol forbids them. req is not modified.
+// are cleared because the protocol forbids them, and a text part of a
+// function_call_output is sent as input_text, as
+// [openresponses.NormalizeOutputParts] says. req is not modified.
 func (w *Conn) Send(ctx context.Context, req openresponses.Request) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
 		return openresponses.ErrStreamClosed
 	}
+	req.Input = openresponses.NormalizeOutputParts(req.Input)
 	req.Stream = false
 	req.StreamOptions = nil
 	req.Background = false

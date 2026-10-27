@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -320,5 +321,59 @@ func TestClientResponseTooLarge(t *testing.T) {
 	}
 	if _, err := NewClient(srv.URL).Create(context.Background(), Request{Model: "m"}); err != nil {
 		t.Fatalf("default cap rejected a small body: %v", err)
+	}
+}
+
+// TestClientSendsTextOutputPartsAsInputText checks that a text part in a
+// function_call_output goes out as input_text, the part the
+// specification allows there, without changing the caller's request.
+func TestClientSendsTextOutputPartsAsInputText(t *testing.T) {
+	var parts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input []struct {
+				Type   string          `json:"type"`
+				Output json.RawMessage `json:"output"`
+			} `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		parts = nil
+		for _, item := range body.Input {
+			var out []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if item.Type == ItemTypeFunctionCallOutput && json.Unmarshal(item.Output, &out) == nil {
+				for _, p := range out {
+					parts = append(parts, p.Type+":"+p.Text)
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, sampleResponse())
+	}))
+	defer srv.Close()
+
+	output := &FunctionCallOutput{CallID: "c", Output: FunctionCallOutputData{Parts: Contents{
+		&Text{Text: "### Page state"}, &InputImage{ImageURL: "data:image/png;base64,AA=="}, &InputText{Text: "ok"},
+	}}}
+	req := Request{Model: "m", Input: Items{&FunctionCall{CallID: "c", Name: "shot"}, output}}
+	if _, err := NewClient(srv.URL).Create(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"input_text:### Page state", "input_image:", "input_text:ok"}; !reflect.DeepEqual(parts, want) {
+		t.Errorf("sent parts %v, want %v", parts, want)
+	}
+	if _, ok := output.Output.Parts[0].(*Text); !ok || req.Input[1] != output {
+		t.Error("the caller's request was changed")
+	}
+}
+
+func TestNormalizeOutputPartsTypedNil(t *testing.T) {
+	input := Items{(*FunctionCallOutput)(nil), nil}
+	got := NormalizeOutputParts(input)
+	if len(got) != 2 || got[0] != input[0] || got[1] != nil {
+		t.Errorf("got %#v", got)
 	}
 }

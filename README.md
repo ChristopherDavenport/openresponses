@@ -17,7 +17,8 @@ all three transports in both directions:
   wraps it and adds the WebSocket turn protocol.
 - **Lossless passthrough**: slug-prefixed items, content parts, tools,
   annotations and events that the spec does not define are kept verbatim,
-  unknown top-level keys survive in `Extra`, and a decoded response
+  unknown members of the request, the response and the objects inside
+  them survive in `Extra`, and a decoded response
   re-encodes without keys its source never sent, so a proxy built on
   this package never drops or invents data.
 
@@ -75,8 +76,14 @@ second, err := conn.Turn(ctx, openresponses.Request{
 })
 ```
 
+In a `function_call_output`, the client sends a `text` part as
+`input_text`, the text part the specification allows there, over HTTP
+and WebSocket alike (`NormalizeOutputParts`), so a tool that built `Text`
+parts still reaches a server that refuses them.
+
 Non-2xx responses and error events surface as `*openresponses.Error`,
-with `IsNotFound`, `IsRateLimited` and `IsInvalidRequest` helpers.
+with `IsNotFound`, `IsRateLimited`, `IsInvalidRequest` and
+`IsContextLengthExceeded` helpers.
 
 ## Server
 
@@ -242,15 +249,37 @@ Unknown types decode to `UnknownItem`, `UnknownContent`, `UnknownTool`,
 bytes (an `UnknownEvent` takes the sequence number a sink assigns it, so
 a proxied extension event stays in order). Register your own decoders
 with `RegisterItem`, `RegisterContent`, `RegisterTool`,
-`RegisterAnnotation` and `RegisterEvent`. Unknown top-level request and
-response keys are preserved in `Extra`. That passthrough is a policy
-decision for a server: any key a client sends reaches the upstream
-provider unless the adapter clears or filters `Extra`.
+`RegisterAnnotation` and `RegisterEvent`. Members the spec does not
+define are preserved in an `Extra` field, on the request and response
+and on every item, content part, tool and nested object inside them, as
+[docs/extensions.md](docs/extensions.md) section 1.3 requires, and on
+every streaming event and error. That
+passthrough is a policy decision for a server: any key a client sends
+reaches the upstream provider unless the adapter clears or filters
+`Extra`.
+
+Where the specification has no member for something more than one
+provider needs, this library defines a shared extension under the
+`openresponses-experimental.` slug. The set covers reasoning effort above
+`xhigh`, who issued a reasoning item, cache writes, a common code for
+context overflow, and model information. Each one is a candidate for the
+specification and is specified in [docs/extensions.md](docs/extensions.md).
+The Go binding is in `extensions.go`: the member names (`MemberEffort`,
+`MemberIssuer`, ...) and accessors on the objects that carry them
+(`ReasoningConfig.ExtendedEffort`, `ReasoningItem.Issuer`,
+`InputTokensDetails.CacheWriteTokens`, ...), `Info` for model
+information with the optional `Describer` an adapter implements beside
+`Streamer`, and `CodeContextLengthExceeded` with
+`IsContextLengthExceeded` in `errors.go`.
 
 Errors built from remote data (an HTTP error response, an error event or
 a WebSocket error frame) carry only the headers that describe a failure,
 such as `Retry-After` and the rate-limit family, so a peer cannot plant
-headers on a server that forwards its error.
+headers on a server that forwards its error. Such an error keeps the
+error object's other unknown members in `Extra`, except any spelling of
+`headers`, which only the filtered field carries. `client.AsAdapter()`
+applies the same filter to an upstream error event before it forwards
+the event.
 
 ## Compliance
 
@@ -279,9 +308,10 @@ alone; `github.com/coder/websocket` is reachable only through the
 |---|---|
 | `enums.go` | statuses, roles, effort levels and wire type constants |
 | `items.go`, `content.go`, `tools.go` | items, content parts, annotations, tools, `ToolChoice`, `TextFormat` |
-| `registry.go` | type registries and `Unmarshal*` dispatch |
+| `registry.go` | type registries and `Unmarshal*` dispatch; `ItemID` returns the item's own `id` member and `CallID` its `call_id` member, reading extension items from their raw JSON; an `item_reference` has no id of its own |
 | `request.go`, `response.go` | `Request`, `CompactRequest`, `Response`, `CompactResponse`, `Validate` |
 | `errors.go` | `Error`, `ErrorPayload`, error types and codes |
+| `extensions.go` | the shared extensions of `docs/extensions.md`: member names, accessors, `Info` |
 | `events.go` | the 24 streaming events, `ErrorEvent`, `UnknownEvent`, `DecodeEvent` |
 | `sse.go`, `stream.go` | SSE framing, `EventStream`, `Accumulator` |
 | `emitter.go` | `Emitter` and the item writers for streaming adapters |

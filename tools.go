@@ -41,6 +41,9 @@ type FunctionTool struct {
 	Description string          `json:"description"`
 	Parameters  json.RawMessage `json:"parameters"`
 	Strict      *bool           `json:"strict,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ToolType returns "function".
@@ -54,7 +57,15 @@ func (f *FunctionTool) MarshalJSON() ([]byte, error) {
 	if len(cp.Parameters) == 0 {
 		cp.Parameters = json.RawMessage("null")
 	}
-	return jsonx.MarshalTyped(ToolTypeFunction, cp)
+	return jsonx.MarshalTypedWithExtra(ToolTypeFunction, cp, f.Extra)
+}
+
+// UnmarshalJSON decodes the tool and keeps unknown members in Extra.
+func (f *FunctionTool) UnmarshalJSON(data []byte) error {
+	type plain FunctionTool
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(f))
+	f.Extra = extra
+	return err
 }
 
 // NewFunctionTool builds a function tool. parameters must be a JSON
@@ -103,6 +114,9 @@ type ToolChoice struct {
 // FunctionToolChoice forces a call to the named function.
 type FunctionToolChoice struct {
 	Name string `json:"name"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // AllowedTools restricts the model to a subset of the configured tools.
@@ -110,12 +124,33 @@ type FunctionToolChoice struct {
 type AllowedTools struct {
 	Tools []ToolReference `json:"tools"`
 	Mode  ToolChoiceMode  `json:"mode"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ToolReference names a tool inside an allowed_tools choice.
 type ToolReference struct {
 	Type string `json:"type"`
 	Name string `json:"name,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
+}
+
+// MarshalJSON emits the reference with its Extra members.
+func (r ToolReference) MarshalJSON() ([]byte, error) {
+	type plain ToolReference
+	return jsonx.MarshalWithExtra(plain(r), r.Extra, nil)
+}
+
+// UnmarshalJSON decodes the reference and keeps unknown members in
+// Extra.
+func (r *ToolReference) UnmarshalJSON(data []byte) error {
+	type plain ToolReference
+	extra, _, err := jsonx.UnmarshalExtra(data, (*plain)(r))
+	r.Extra = extra
+	return err
 }
 
 // FunctionReference builds a reference to the named function tool.
@@ -137,9 +172,9 @@ func (c ToolChoice) IsZero() bool {
 func (c ToolChoice) MarshalJSON() ([]byte, error) {
 	switch {
 	case c.Function != nil:
-		return jsonx.MarshalTyped(ToolTypeFunction, c.Function)
+		return jsonx.MarshalTypedWithExtra(ToolTypeFunction, c.Function, c.Function.Extra)
 	case c.Allowed != nil:
-		return jsonx.MarshalTyped("allowed_tools", c.Allowed)
+		return jsonx.MarshalTypedWithExtra("allowed_tools", c.Allowed, c.Allowed.Extra)
 	case c.Mode != "":
 		return json.Marshal(c.Mode)
 	default:
@@ -163,10 +198,12 @@ func (c *ToolChoice) UnmarshalJSON(data []byte) error {
 	switch typ {
 	case ToolTypeFunction:
 		c.Function = &FunctionToolChoice{}
-		return json.Unmarshal(data, c.Function)
+		c.Function.Extra, err = jsonx.UnmarshalTypedExtra(data, c.Function)
+		return err
 	case "allowed_tools":
 		c.Allowed = &AllowedTools{}
-		return json.Unmarshal(data, c.Allowed)
+		c.Allowed.Extra, err = jsonx.UnmarshalTypedExtra(data, c.Allowed)
+		return err
 	default:
 		return fmt.Errorf("tool_choice: unknown type %q", typ)
 	}
@@ -181,6 +218,23 @@ type TextFormat struct {
 	Description string          `json:"description,omitempty"`
 	Schema      json.RawMessage `json:"schema,omitempty"`
 	Strict      *bool           `json:"strict,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
+}
+
+// MarshalJSON emits the format with its Extra members.
+func (f TextFormat) MarshalJSON() ([]byte, error) {
+	type plain TextFormat
+	return jsonx.MarshalWithExtra(plain(f), f.Extra, nil)
+}
+
+// UnmarshalJSON decodes the format and keeps unknown members in Extra.
+func (f *TextFormat) UnmarshalJSON(data []byte) error {
+	type plain TextFormat
+	extra, _, err := jsonx.UnmarshalExtra(data, (*plain)(f))
+	f.Extra = extra
+	return err
 }
 
 // JSONSchemaFormat builds a json_schema text format.
@@ -193,10 +247,15 @@ func JSONSchemaFormat(name string, schema json.RawMessage, strict bool) *TextFor
 type TextConfig struct {
 	Format    *TextFormat `json:"format,omitempty"`
 	Verbosity Verbosity   `json:"verbosity,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // IsZero reports whether no text options are set.
-func (t TextConfig) IsZero() bool { return t.Format == nil && t.Verbosity == "" }
+func (t TextConfig) IsZero() bool {
+	return t.Format == nil && t.Verbosity == "" && len(t.Extra) == 0
+}
 
 // MarshalJSON always emits format, defaulting to {"type":"text"}.
 func (t TextConfig) MarshalJSON() ([]byte, error) {
@@ -205,7 +264,15 @@ func (t TextConfig) MarshalJSON() ([]byte, error) {
 	if cp.Format == nil {
 		cp.Format = &TextFormat{Type: TextFormatText}
 	}
-	return json.Marshal(cp)
+	return jsonx.MarshalWithExtra(cp, t.Extra, nil)
+}
+
+// UnmarshalJSON decodes the options and keeps unknown members in Extra.
+func (t *TextConfig) UnmarshalJSON(data []byte) error {
+	type plain TextConfig
+	extra, _, err := jsonx.UnmarshalExtra(data, (*plain)(t))
+	t.Extra = extra
+	return err
 }
 
 // ReasoningConfig is the "reasoning" field of a request or response. The
@@ -215,20 +282,29 @@ func (t TextConfig) MarshalJSON() ([]byte, error) {
 type ReasoningConfig struct {
 	Effort  ReasoningEffort
 	Summary ReasoningSummary
+
+	// Extra holds members not defined by the spec, such as
+	// [MemberEffort].
+	Extra map[string]any
 }
 
-// IsZero reports whether neither effort nor summary is set.
-func (r ReasoningConfig) IsZero() bool { return r.Effort == "" && r.Summary == "" }
+// IsZero reports whether neither effort nor summary nor any Extra member
+// is set.
+func (r ReasoningConfig) IsZero() bool {
+	return r.Effort == "" && r.Summary == "" && len(r.Extra) == 0
+}
 
-// MarshalJSON emits effort and summary, using null for empty values.
+// MarshalJSON emits effort and summary, using null for empty values,
+// and the Extra members.
 func (r ReasoningConfig) MarshalJSON() ([]byte, error) {
-	return json.Marshal(struct {
+	return jsonx.MarshalWithExtra(struct {
 		Effort  *ReasoningEffort  `json:"effort"`
 		Summary *ReasoningSummary `json:"summary"`
-	}{nilIfEmpty(r.Effort), nilIfEmpty(r.Summary)})
+	}{nilIfEmpty(r.Effort), nilIfEmpty(r.Summary)}, r.Extra, nil)
 }
 
-// UnmarshalJSON decodes effort and summary, treating null as empty.
+// UnmarshalJSON decodes effort and summary, treating null as empty, and
+// keeps unknown members in Extra.
 func (r *ReasoningConfig) UnmarshalJSON(data []byte) error {
 	*r = ReasoningConfig{}
 	if len(data) == 0 || string(data) == "null" {
@@ -238,9 +314,11 @@ func (r *ReasoningConfig) UnmarshalJSON(data []byte) error {
 		Effort  *ReasoningEffort  `json:"effort"`
 		Summary *ReasoningSummary `json:"summary"`
 	}
-	if err := json.Unmarshal(data, &aux); err != nil {
+	extra, _, err := jsonx.UnmarshalExtra(data, &aux)
+	if err != nil {
 		return err
 	}
+	r.Extra = extra
 	if aux.Effort != nil {
 		r.Effort = *aux.Effort
 	}
@@ -253,6 +331,23 @@ func (r *ReasoningConfig) UnmarshalJSON(data []byte) error {
 // StreamOptions configures streaming.
 type StreamOptions struct {
 	IncludeObfuscation bool `json:"include_obfuscation,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
+}
+
+// MarshalJSON emits the options with their Extra members.
+func (o StreamOptions) MarshalJSON() ([]byte, error) {
+	type plain StreamOptions
+	return jsonx.MarshalWithExtra(plain(o), o.Extra, nil)
+}
+
+// UnmarshalJSON decodes the options and keeps unknown members in Extra.
+func (o *StreamOptions) UnmarshalJSON(data []byte) error {
+	type plain StreamOptions
+	extra, _, err := jsonx.UnmarshalExtra(data, (*plain)(o))
+	o.Extra = extra
+	return err
 }
 
 func nilIfEmpty[T ~string](s T) *T {

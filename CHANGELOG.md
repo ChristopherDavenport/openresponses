@@ -5,6 +5,98 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- Members the specification does not define are kept below the top
+  level too, as [docs/extensions.md](docs/extensions.md) section 1.3
+  requires of every object. Each built-in item and content part, the
+  URL citation, the function tool, `usage` and both its details objects,
+  `reasoning`, `text` and its `format`, the object forms of
+  `tool_choice`, `stream_options`, `incomplete_details` and the log
+  probabilities now have an `Extra` field that decoding fills and
+  encoding writes back, as `Request.Extra` and `Response.Extra` already
+  did at the top level. A proxy, store or session recorder built on this
+  package dropped them before, so a member such as a provider's cache
+  write count in `usage.input_tokens_details` was lost the first time a
+  response was decoded. Every built-in streaming event, `ErrorPayload`
+  and `Error` have the same `Extra`: an error forwarded from an upstream,
+  as an HTTP envelope, an error event or a failed response, keeps the
+  members it carried, while `headers` still passes only the failure
+  headers: a member named `headers` in any other case is dropped from
+  such an error's `Extra`, so it cannot carry headers past the filter.
+- `ClientAdapter` forwards an upstream error event with that same
+  filter applied: only failure headers in its payload's `headers`, and
+  no other spelling of `headers`. It forwarded the event unchanged, so a
+  proxy passed an upstream's `Set-Cookie` in the error payload to its
+  own clients. **Breaking:** these types contain a map, so they
+  are no longer comparable with `==`; compare fields or use
+  `reflect.DeepEqual`.
+- `Extra` keeps a member exactly as it arrived. Values are decoded with
+  `UseNumber`, so a number in `Extra` is a `json.Number` holding its
+  literal text: `9007199254740993` and `1.50` re-encode unchanged, and
+  `1.0e400` no longer fails the whole decode. **Breaking:** code that
+  read a number from `Request.Extra` or `Response.Extra` as `float64`
+  gets a `json.Number`; numbers Go code puts in `Extra` encode as
+  before. Only a key spelled exactly as the specification spells it
+  fills a field: encoding/json alone matched `CALL_ID` or `Call_Id` to
+  `call_id`, which invented a member on re-encode or lost one of two
+  values, and such a key now stays in `Extra`. A member the type
+  declares is never taken from `Extra` on encode, even when the field
+  is empty and omitted.
+- Go bindings for the shared extensions in
+  [docs/extensions.md](docs/extensions.md), in `extensions.go`:
+  `ExtensionSlug` and the member names `MemberEffort`, `MemberIssuer`,
+  `MemberCacheWriteTokens`, `MemberCacheWriteTokensByTTL` and
+  `MemberModelInfo`, and accessors on the objects that carry them.
+  `ReasoningConfig.SetExtendedEffort(EffortMax)` asks for an effort
+  above `xhigh` and sets `effort` to `xhigh` for a server that ignores
+  it; `ExtendedEffort` reads it back. `ReasoningItem.Issuer` and
+  `SetIssuer` say who issued a reasoning item's `encrypted_content`.
+  `InputTokensDetails.CacheWriteTokens`, `CacheWriteTokensByTTL`,
+  `SetCacheWriteTokens` and `SetCacheWriteTokensByTTL` carry prompt
+  cache writes, split by TTL when the provider reports it; a split with
+  a malformed key or value reads as absent (`nil, false`), never as the
+  part that could be read. `CacheWriteTokens` reads OpenRouter's
+  unprefixed `cache_write_tokens` when the shared member is absent. `EffortMax`
+  is not a `ReasoningEffort` constant: the specification's enum stops at
+  `xhigh`. No adapter writes or reads these members yet.
+- `Info` is what a model accepts (context window, output limit, whether
+  it reasons, its efforts, default effort and input modalities), the
+  value of `openresponses-experimental.model_info`. `Describer`, beside
+  `Streamer`, is the optional interface an adapter implements when it
+  can describe a model. Nothing implements it yet.
+- `CodeContextLengthExceeded` (`context_length_exceeded`, the code
+  OpenAI sends) is the code for a request whose input exceeds the
+  model's context window. `ContextLengthExceeded` builds the error, and
+  `IsContextLengthExceeded`, beside `IsRateLimited`, recognises it by
+  code, so a harness that compacts on overflow has one thing to match.
+- `ItemID(Item)` returns an item's own `id` member and `CallID(Item)` its
+  `call_id` member, for every item type, extension items included: an
+  `UnknownItem`'s `call_id` is read from its raw JSON and a registered
+  extension type's from its encoding. An `item_reference` has no id of
+  its own, so `ItemID` returns "" for it. A consumer that pairs calls
+  with outputs or tracks items by id no longer needs a type switch that
+  misses extension calls.
+- `Text`'s documentation no longer recommends it for function call
+  outputs. A `function_call_output` takes `input_text`, `input_image`,
+  `input_file` and `input_video` parts, so a tool result's text is an
+  `InputText`; a `text` part there is off-spec, and Ollama refuses the
+  request (ChristopherDavenport/agenttool#100). `Client` and
+  `websocket.Conn` now send a `text` part of a `function_call_output` as
+  `input_text`, without changing the caller's request, so a tool written
+  to the old documentation keeps working. `NormalizeOutputParts` is that
+  rewrite, for a transport that sends requests itself.
+- `Response.Clone` copies the response's reasoning, text and tool choice,
+  with every `Extra` map in them deep-copied, and `NewResponse` copies
+  the `Extra` maps of the tools and tool choice it echoes. A clone or a
+  new response shared those maps with its source, so setting an
+  extension member on one changed the other, including the responses
+  the `Accumulator` and the response store hold.
+- `NewResponse` echoes the request's reasoning effort and summary
+  without its `Extra` members. A response carries an extension member of
+  `reasoning` only when the adapter honoured it, which the adapter
+  decides.
+
 ## v0.0.16 - 2026-10-26
 
 - A function call that the token limit cut off now ends `incomplete` in

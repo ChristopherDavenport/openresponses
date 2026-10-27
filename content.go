@@ -61,6 +61,9 @@ func (c Contents) Text() string {
 // InputText is a text part of a user, system or developer message.
 type InputText struct {
 	Text string `json:"text"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ContentType returns "input_text".
@@ -69,7 +72,15 @@ func (*InputText) ContentType() string { return ContentTypeInputText }
 // MarshalJSON emits the part with its type discriminator.
 func (p *InputText) MarshalJSON() ([]byte, error) {
 	type plain InputText
-	return jsonx.MarshalTyped(ContentTypeInputText, (*plain)(p))
+	return jsonx.MarshalTypedWithExtra(ContentTypeInputText, (*plain)(p), p.Extra)
+}
+
+// UnmarshalJSON decodes the part and keeps unknown members in Extra.
+func (p *InputText) UnmarshalJSON(data []byte) error {
+	type plain InputText
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(p))
+	p.Extra = extra
+	return err
 }
 
 // InputImage is an image part of a user message. ImageURL is a fully
@@ -78,6 +89,9 @@ type InputImage struct {
 	ImageURL string      `json:"image_url"`
 	Detail   ImageDetail `json:"detail,omitempty"`
 	FileID   string      `json:"file_id,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ContentType returns "input_image".
@@ -92,7 +106,15 @@ func (p *InputImage) MarshalJSON() ([]byte, error) {
 	if cp.Detail == "" {
 		cp.Detail = ImageDetailAuto
 	}
-	return jsonx.MarshalTyped(ContentTypeInputImage, cp)
+	return jsonx.MarshalTypedWithExtra(ContentTypeInputImage, cp, p.Extra)
+}
+
+// UnmarshalJSON decodes the part and keeps unknown members in Extra.
+func (p *InputImage) UnmarshalJSON(data []byte) error {
+	type plain InputImage
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(p))
+	p.Extra = extra
+	return err
 }
 
 // InputFile is a file part of a user message. Exactly one of FileData
@@ -102,6 +124,9 @@ type InputFile struct {
 	FileData string `json:"file_data,omitempty"`
 	FileURL  string `json:"file_url,omitempty"`
 	FileID   string `json:"file_id,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ContentType returns "input_file".
@@ -110,12 +135,23 @@ func (*InputFile) ContentType() string { return ContentTypeInputFile }
 // MarshalJSON emits the part with its type discriminator.
 func (p *InputFile) MarshalJSON() ([]byte, error) {
 	type plain InputFile
-	return jsonx.MarshalTyped(ContentTypeInputFile, (*plain)(p))
+	return jsonx.MarshalTypedWithExtra(ContentTypeInputFile, (*plain)(p), p.Extra)
+}
+
+// UnmarshalJSON decodes the part and keeps unknown members in Extra.
+func (p *InputFile) UnmarshalJSON(data []byte) error {
+	type plain InputFile
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(p))
+	p.Extra = extra
+	return err
 }
 
 // InputVideo is a video part of a user message.
 type InputVideo struct {
 	VideoURL string `json:"video_url"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ContentType returns "input_video".
@@ -124,7 +160,15 @@ func (*InputVideo) ContentType() string { return ContentTypeInputVideo }
 // MarshalJSON emits the part with its type discriminator.
 func (p *InputVideo) MarshalJSON() ([]byte, error) {
 	type plain InputVideo
-	return jsonx.MarshalTyped(ContentTypeInputVideo, (*plain)(p))
+	return jsonx.MarshalTypedWithExtra(ContentTypeInputVideo, (*plain)(p), p.Extra)
+}
+
+// UnmarshalJSON decodes the part and keeps unknown members in Extra.
+func (p *InputVideo) UnmarshalJSON(data []byte) error {
+	type plain InputVideo
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(p))
+	p.Extra = extra
+	return err
 }
 
 // OutputText is a text part of an assistant message.
@@ -132,6 +176,9 @@ type OutputText struct {
 	Text        string      `json:"text"`
 	Annotations Annotations `json:"annotations"`
 	Logprobs    []LogProb   `json:"logprobs,omitempty"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ContentType returns "output_text".
@@ -145,12 +192,23 @@ func (p *OutputText) MarshalJSON() ([]byte, error) {
 	if cp.Annotations == nil {
 		cp.Annotations = Annotations{}
 	}
-	return jsonx.MarshalTyped(ContentTypeOutputText, cp)
+	return jsonx.MarshalTypedWithExtra(ContentTypeOutputText, cp, p.Extra)
+}
+
+// UnmarshalJSON decodes the part and keeps unknown members in Extra.
+func (p *OutputText) UnmarshalJSON(data []byte) error {
+	type plain OutputText
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(p))
+	p.Extra = extra
+	return err
 }
 
 // Refusal is a refusal part of an assistant message.
 type Refusal struct {
 	Refusal string `json:"refusal"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ContentType returns "refusal".
@@ -159,12 +217,27 @@ func (*Refusal) ContentType() string { return ContentTypeRefusal }
 // MarshalJSON emits the part with its type discriminator.
 func (p *Refusal) MarshalJSON() ([]byte, error) {
 	type plain Refusal
-	return jsonx.MarshalTyped(ContentTypeRefusal, (*plain)(p))
+	return jsonx.MarshalTypedWithExtra(ContentTypeRefusal, (*plain)(p), p.Extra)
 }
 
-// Text is a plain text part, used inside function call outputs.
+// UnmarshalJSON decodes the part and keeps unknown members in Extra.
+func (p *Refusal) UnmarshalJSON(data []byte) error {
+	type plain Refusal
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(p))
+	p.Extra = extra
+	return err
+}
+
+// Text is a plain text part. The specification allows it in message
+// content and in a reasoning item's summary and content. It is not one
+// of the parts a function_call_output takes, which are input_text,
+// input_image, input_file and input_video, so a tool result's text is an
+// [InputText].
 type Text struct {
 	Text string `json:"text"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ContentType returns "text".
@@ -173,12 +246,23 @@ func (*Text) ContentType() string { return ContentTypeText }
 // MarshalJSON emits the part with its type discriminator.
 func (p *Text) MarshalJSON() ([]byte, error) {
 	type plain Text
-	return jsonx.MarshalTyped(ContentTypeText, (*plain)(p))
+	return jsonx.MarshalTypedWithExtra(ContentTypeText, (*plain)(p), p.Extra)
+}
+
+// UnmarshalJSON decodes the part and keeps unknown members in Extra.
+func (p *Text) UnmarshalJSON(data []byte) error {
+	type plain Text
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(p))
+	p.Extra = extra
+	return err
 }
 
 // SummaryText is a part of a reasoning item's summary.
 type SummaryText struct {
 	Text string `json:"text"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ContentType returns "summary_text".
@@ -187,12 +271,23 @@ func (*SummaryText) ContentType() string { return ContentTypeSummaryText }
 // MarshalJSON emits the part with its type discriminator.
 func (p *SummaryText) MarshalJSON() ([]byte, error) {
 	type plain SummaryText
-	return jsonx.MarshalTyped(ContentTypeSummaryText, (*plain)(p))
+	return jsonx.MarshalTypedWithExtra(ContentTypeSummaryText, (*plain)(p), p.Extra)
+}
+
+// UnmarshalJSON decodes the part and keeps unknown members in Extra.
+func (p *SummaryText) UnmarshalJSON(data []byte) error {
+	type plain SummaryText
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(p))
+	p.Extra = extra
+	return err
 }
 
 // ReasoningText is a part of a reasoning item's content.
 type ReasoningText struct {
 	Text string `json:"text"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // ContentType returns "reasoning_text".
@@ -201,7 +296,15 @@ func (*ReasoningText) ContentType() string { return ContentTypeReasoningText }
 // MarshalJSON emits the part with its type discriminator.
 func (p *ReasoningText) MarshalJSON() ([]byte, error) {
 	type plain ReasoningText
-	return jsonx.MarshalTyped(ContentTypeReasoningText, (*plain)(p))
+	return jsonx.MarshalTypedWithExtra(ContentTypeReasoningText, (*plain)(p), p.Extra)
+}
+
+// UnmarshalJSON decodes the part and keeps unknown members in Extra.
+func (p *ReasoningText) UnmarshalJSON(data []byte) error {
+	type plain ReasoningText
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(p))
+	p.Extra = extra
+	return err
 }
 
 // UnknownContent is a content part whose type is not registered. Raw holds
@@ -239,6 +342,9 @@ type LogProb struct {
 	Logprob     float64      `json:"logprob"`
 	Bytes       []int        `json:"bytes"`
 	TopLogprobs []TopLogProb `json:"top_logprobs"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // MarshalJSON emits required arrays as [] rather than null.
@@ -251,7 +357,15 @@ func (l LogProb) MarshalJSON() ([]byte, error) {
 	if cp.TopLogprobs == nil {
 		cp.TopLogprobs = []TopLogProb{}
 	}
-	return json.Marshal(cp)
+	return jsonx.MarshalWithExtra(cp, l.Extra, nil)
+}
+
+// UnmarshalJSON decodes the value and keeps unknown members in Extra.
+func (l *LogProb) UnmarshalJSON(data []byte) error {
+	type plain LogProb
+	extra, _, err := jsonx.UnmarshalExtra(data, (*plain)(l))
+	l.Extra = extra
+	return err
 }
 
 // TopLogProb is one of the most likely alternatives at a token position.
@@ -259,6 +373,9 @@ type TopLogProb struct {
 	Token   string  `json:"token"`
 	Logprob float64 `json:"logprob"`
 	Bytes   []int   `json:"bytes"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // MarshalJSON emits Bytes as [] rather than null.
@@ -268,7 +385,15 @@ func (l TopLogProb) MarshalJSON() ([]byte, error) {
 	if cp.Bytes == nil {
 		cp.Bytes = []int{}
 	}
-	return json.Marshal(cp)
+	return jsonx.MarshalWithExtra(cp, l.Extra, nil)
+}
+
+// UnmarshalJSON decodes the value and keeps unknown members in Extra.
+func (l *TopLogProb) UnmarshalJSON(data []byte) error {
+	type plain TopLogProb
+	extra, _, err := jsonx.UnmarshalExtra(data, (*plain)(l))
+	l.Extra = extra
+	return err
 }
 
 // Annotation is an annotation attached to an output text part. The only
@@ -306,6 +431,9 @@ type URLCitation struct {
 	Title      string `json:"title"`
 	StartIndex int    `json:"start_index"`
 	EndIndex   int    `json:"end_index"`
+
+	// Extra holds members not defined by the spec.
+	Extra map[string]any `json:"-"`
 }
 
 // AnnotationType returns "url_citation".
@@ -314,7 +442,15 @@ func (*URLCitation) AnnotationType() string { return AnnotationTypeURLCitation }
 // MarshalJSON emits the annotation with its type discriminator.
 func (a *URLCitation) MarshalJSON() ([]byte, error) {
 	type plain URLCitation
-	return jsonx.MarshalTyped(AnnotationTypeURLCitation, (*plain)(a))
+	return jsonx.MarshalTypedWithExtra(AnnotationTypeURLCitation, (*plain)(a), a.Extra)
+}
+
+// UnmarshalJSON decodes the annotation and keeps unknown members in Extra.
+func (a *URLCitation) UnmarshalJSON(data []byte) error {
+	type plain URLCitation
+	extra, err := jsonx.UnmarshalTypedExtra(data, (*plain)(a))
+	a.Extra = extra
+	return err
 }
 
 // UnknownAnnotation is an annotation whose type is not registered.

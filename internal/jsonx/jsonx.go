@@ -73,8 +73,9 @@ func InjectType(typ string, body []byte) ([]byte, error) {
 }
 
 // MarshalWithExtra marshals v (which must produce a JSON object), merges
-// extra into the result and removes the keys in omit. Keys already
-// present in v win over extra.
+// extra into the result and removes the keys in omit. A key v declares
+// is never taken from extra, even when v leaves it out as empty, so
+// extra cannot set or invent a declared member.
 func MarshalWithExtra(v any, extra map[string]any, omit map[string]bool) ([]byte, error) {
 	body, err := json.Marshal(v)
 	if err != nil {
@@ -87,8 +88,9 @@ func MarshalWithExtra(v any, extra map[string]any, omit map[string]bool) ([]byte
 	if err := json.Unmarshal(body, &merged); err != nil {
 		return nil, fmt.Errorf("jsonx: re-decode for extra merge: %w", err)
 	}
+	info := structInfoOf(reflect.TypeOf(v))
 	for k, val := range extra {
-		if _, exists := merged[k]; exists {
+		if _, exists := merged[k]; exists || info.keys[k] {
 			continue
 		}
 		raw, err := json.Marshal(val)
@@ -103,26 +105,97 @@ func MarshalWithExtra(v any, extra map[string]any, omit map[string]bool) ([]byte
 	return json.Marshal(merged)
 }
 
+// MarshalTypedWithExtra marshals v with extra merged in, as
+// MarshalWithExtra does, and injects "type": typ as MarshalTyped does. A
+// "type" key in extra is ignored, so the discriminator is never doubled.
+func MarshalTypedWithExtra(typ string, v any, extra map[string]any) ([]byte, error) {
+	if _, ok := extra["type"]; ok {
+		cp := make(map[string]any, len(extra))
+		for k, val := range extra {
+			if k != "type" {
+				cp[k] = val
+			}
+		}
+		extra = cp
+	}
+	body, err := MarshalWithExtra(v, extra, nil)
+	if err != nil {
+		return nil, err
+	}
+	return InjectType(typ, body)
+}
+
+// UnmarshalTypedExtra decodes data into v and returns the top-level keys
+// not declared by v's struct tags, less the "type" discriminator, or nil
+// when there are none. It is the decoding half of MarshalTypedWithExtra.
+func UnmarshalTypedExtra(data []byte, v any) (map[string]any, error) {
+	extra, _, err := UnmarshalExtra(data, v)
+	if err != nil {
+		return nil, err
+	}
+	delete(extra, "type")
+	if len(extra) == 0 {
+		return nil, nil
+	}
+	return extra, nil
+}
+
 // UnmarshalExtra decodes data into v and returns the top-level keys not
 // declared by v's struct tags (extra, nil when there are none) and the
 // declared keys that data did not carry (absent, nil when there are
 // none). absent lets a decoded value re-encode without inventing members
 // its source never sent.
+//
+// Only a key spelled exactly as declared fills a field; encoding/json
+// alone would also match "CALL_ID" or "Call_Id" to call_id, so such a
+// key goes to extra instead. Extra values are decoded with
+// json.Decoder.UseNumber, so a number is a json.Number holding its
+// literal text and re-encodes unchanged, at any precision or magnitude.
 func UnmarshalExtra(data []byte, v any) (extra map[string]any, absent map[string]bool, err error) {
-	if err := json.Unmarshal(data, v); err != nil {
-		return nil, nil, err
-	}
 	var all map[string]json.RawMessage
 	if err := json.Unmarshal(data, &all); err != nil {
+		// Not an object: let the struct decode report the error.
+		if err := json.Unmarshal(data, v); err != nil {
+			return nil, nil, err
+		}
 		return nil, nil, err
 	}
 	info := structInfoOf(reflect.TypeOf(v))
+	if all != nil {
+		// The object of declared keys is spliced from the original bytes
+		// rather than re-encoded, so a raw value (an unknown item, tool
+		// parameters) reaches its field byte for byte: json.Marshal would
+		// compact it and escape <, > and &.
+		var known bytes.Buffer
+		known.WriteByte('{')
+		for k, raw := range all {
+			if !info.keys[k] {
+				continue
+			}
+			if known.Len() > 1 {
+				known.WriteByte(',')
+			}
+			key, err := json.Marshal(k)
+			if err != nil {
+				return nil, nil, err
+			}
+			known.Write(key)
+			known.WriteByte(':')
+			known.Write(raw)
+		}
+		known.WriteByte('}')
+		if err := json.Unmarshal(known.Bytes(), v); err != nil {
+			return nil, nil, err
+		}
+	}
 	for k, raw := range all {
 		if info.keys[k] {
 			continue
 		}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
 		var val any
-		if err := json.Unmarshal(raw, &val); err != nil {
+		if err := dec.Decode(&val); err != nil {
 			return nil, nil, fmt.Errorf("jsonx: decode extra %q: %w", k, err)
 		}
 		if extra == nil {
