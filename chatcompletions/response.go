@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/ChristopherDavenport/openresponses"
@@ -552,12 +554,13 @@ func (e *apiError) code() string {
 }
 
 // status is the status the error would have on a non-streamed response:
-// a numeric code in the HTTP error range is one (OpenRouter sends them),
-// and otherwise the code, then the type, names it. It is 0, leaving the
-// status to the error type, when neither is known.
+// a numeric code in the HTTP error range is one (OpenRouter sends them as
+// numbers, LiteLLM as strings), and otherwise the code, then the type,
+// names it. It is 0, leaving the status to the error type, when neither
+// is known.
 func (e *apiError) status() int {
-	if v, ok := e.Code.(float64); ok && v >= 400 && v < 600 && v == float64(int(v)) {
-		return int(v)
+	if n, err := strconv.Atoi(e.code()); err == nil && n >= 400 && n < 600 {
+		return n
 	}
 	if s, ok := errorStatus[e.code()]; ok {
 		return s
@@ -576,25 +579,75 @@ var overflowMessages = []string{
 	"exceeds the maximum number of tokens allowed", // Gemini's compatible endpoint
 }
 
+// The counts a "maximum context length" message carries: the window, and
+// either the input or the total requested and the output's share of it.
+var (
+	windowCount = regexp.MustCompile(`maximum context length is (\d+)`)
+	inputCount  = regexp.MustCompile(`(\d+) input tokens|resulted in (\d+) tokens|\((\d+) in the messages`)
+	totalCount  = regexp.MustCompile(`requested (?:about )?(\d+) tokens`)
+	outputCount = regexp.MustCompile(`(\d+) in the (?:completion|output)`)
+)
+
+// inputExceeds reads the counts in a lower-cased overflow message and
+// reports whether the input alone exceeds the window. known is false
+// when the message does not carry the counts.
+func inputExceeds(msg string) (exceeds, known bool) {
+	window, ok := firstCount(windowCount, msg)
+	if !ok {
+		return false, false
+	}
+	if input, ok := firstCount(inputCount, msg); ok {
+		return input > window, true
+	}
+	total, ok := firstCount(totalCount, msg)
+	if !ok {
+		return false, false
+	}
+	output, _ := firstCount(outputCount, msg)
+	return total-output > window, true
+}
+
+// firstCount returns the first group re matched in msg as a number.
+func firstCount(re *regexp.Regexp, msg string) (int, bool) {
+	m := re.FindStringSubmatch(msg)
+	for _, g := range m[min(1, len(m)):] {
+		if n, err := strconv.Atoi(g); err == nil {
+			return n, true
+		}
+	}
+	return 0, false
+}
+
 // contextOverflow reports whether the error refuses a request whose
 // input exceeds the model's context window: OpenAI's code, llama.cpp's
-// type, or one of overflowMessages in the message.
+// type, or one of overflowMessages in the message. A message whose
+// counts show that the input fits is not one, nor is one that refuses
+// the output limit without counts: the output limit, not the input, is
+// what has to change, and compacting would not help.
 func (e *apiError) contextOverflow() bool {
 	if e.code() == openresponses.CodeContextLengthExceeded || e.Type == "exceed_context_size_error" {
 		return true
 	}
 	msg := strings.ToLower(e.Message)
 	for _, phrase := range overflowMessages {
-		if strings.Contains(msg, phrase) {
-			return true
+		if !strings.Contains(msg, phrase) {
+			continue
 		}
+		if exceeds, known := inputExceeds(msg); known {
+			return exceeds
+		}
+		return !strings.Contains(msg, "max_tokens") && !strings.Contains(msg, "max_completion_tokens")
 	}
 	return false
 }
 
-// toError maps the envelope by status. A status of 0, from a stream
-// frame that names no known error, is a server_error whose status the
-// type decides.
+// toError maps the envelope by status as the root Client does, except
+// that a refusal of the adapter's credentials (401, 403) is
+// invalid_request as providers/PLAN.md requires. A status of 0, from a
+// stream frame that names no known error, leaves the status to the type:
+// invalid_request for an overflow, server_error otherwise. The
+// envelope's type, and a code the adapter replaces, are kept under the
+// adapter's slug.
 func (e *apiError) toError(status int, headers http.Header) *openresponses.Error {
 	code := e.code()
 	if code == "" {
@@ -607,19 +660,34 @@ func (e *apiError) toError(status int, headers http.Header) *openresponses.Error
 		code = "upstream_error"
 	}
 	var out *openresponses.Error
-	switch {
-	case status == http.StatusNotFound:
+	switch status {
+	case http.StatusNotFound:
 		out = openresponses.NotFound(code, e.Message, e.Param)
-	case status == http.StatusTooManyRequests:
+	case http.StatusTooManyRequests:
 		out = openresponses.TooManyRequests(code, e.Message)
-	case status >= 400 && status < 500 && e.contextOverflow():
-		out = openresponses.InvalidRequest(openresponses.CodeContextLengthExceeded, e.Message, e.Param)
-	case status >= 400 && status < 500:
-		out = openresponses.InvalidRequest(code, e.Message, e.Param)
+	case http.StatusBadRequest, http.StatusUnprocessableEntity, 0,
+		http.StatusUnauthorized, http.StatusForbidden:
+		switch {
+		case status != http.StatusUnauthorized && status != http.StatusForbidden && e.contextOverflow():
+			out = openresponses.InvalidRequest(openresponses.CodeContextLengthExceeded, e.Message, e.Param)
+		case status == 0:
+			out = openresponses.ServerError(code, e.Message)
+		default:
+			out = openresponses.InvalidRequest(code, e.Message, e.Param)
+		}
 	default:
 		out = openresponses.ServerError(code, e.Message)
 	}
 	out.StatusCode = status
+	if e.Type != "" {
+		out.Extra = map[string]any{memberType: e.Type}
+	}
+	if c := e.code(); c != "" && c != out.Code {
+		if out.Extra == nil {
+			out.Extra = map[string]any{}
+		}
+		out.Extra[memberCode] = c
+	}
 	for name, values := range headers {
 		if !failureHeader(name) {
 			continue
@@ -630,6 +698,13 @@ func (e *apiError) toError(status int, headers http.Header) *openresponses.Error
 	}
 	return out
 }
+
+// Members of an error under the adapter's slug: the upstream envelope's
+// type, and its code when the error's code replaces it.
+const (
+	memberType = "chatcompletions.type"
+	memberCode = "chatcompletions.code"
+)
 
 // mapError converts a non-2xx response. The status decides the type,
 // the envelope's code or type is the code, and the headers that describe

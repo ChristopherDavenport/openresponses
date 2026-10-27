@@ -308,6 +308,10 @@ func TestStreamErrorFrame(t *testing.T) {
 		{`{"error":{"message":"what"}}`, openresponses.ErrorTypeServerError, "upstream_error", 500},
 		{`{"error":{"message":"This model's maximum context length is 8192 tokens.","type":"invalid_request_error","code":"context_length_exceeded"}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, 400},
 		{`{"error":{"message":"This endpoint's maximum context length is 8192 tokens.","code":400}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, 400},
+		{`{"error":{"message":"This model's maximum context length is 4096 tokens."}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, 400},
+		{`{"error":{"message":"Your request timed out","code":408}}`, openresponses.ErrorTypeServerError, "408", 408},
+		{`{"error":{"message":"busy","code":"503"}}`, openresponses.ErrorTypeServerError, "503", 503},
+		{`{"error":{"message":"bad","code":"400"}}`, openresponses.ErrorTypeInvalidRequest, "400", 400},
 	}
 	for _, tc := range cases {
 		t.Run(tc.frame, func(t *testing.T) {
@@ -320,6 +324,27 @@ func TestStreamErrorFrame(t *testing.T) {
 				t.Fatalf("err = %s/%s %d, want %s/%s %d", oerr.Type, oerr.Code, oerr.HTTPStatus(), tc.typ, tc.code, tc.status)
 			}
 		})
+	}
+}
+
+// The envelope's type, and a code the adapter replaced, are kept under
+// the adapter's slug.
+func TestErrorKeepsUpstreamCodeAndType(t *testing.T) {
+	_, err := streamtest.Run(context.Background(), newAdapter(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(400)
+		fmt.Fprint(w, `{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}`)
+	})), hello())
+	oerr := openresponses.AsError(err)
+	if oerr.Code != openresponses.CodeContextLengthExceeded || oerr.Extra["chatcompletions.code"] != "400" || oerr.Extra["chatcompletions.type"] != "exceed_context_size_error" {
+		t.Fatalf("err = %+v", oerr)
+	}
+	_, err = streamtest.Run(context.Background(), newAdapter(t, serve(content("x"), `{"error":{"message":"bad","type":"invalid_request_error","code":"invalid_value"}}`)), hello())
+	oerr = openresponses.AsError(err)
+	if oerr.Code != "invalid_value" || oerr.Extra["chatcompletions.type"] != "invalid_request_error" {
+		t.Fatalf("err = %+v", oerr)
+	}
+	if _, replaced := oerr.Extra["chatcompletions.code"]; replaced {
+		t.Fatalf("code kept although not replaced: %+v", oerr.Extra)
 	}
 }
 
@@ -347,6 +372,17 @@ func TestMapError(t *testing.T) {
 		{"mistral overflow", 400, `{"object":"error","message":"Prompt contains 40000 tokens and 0 draft tokens, too large for model with 32768 maximum context length","type":"invalid_request_error","param":null,"code":null}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
 		{"claude overflow", 400, `{"error":{"message":"prompt is too long: 210000 tokens > 200000 maximum","type":"invalid_request_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "prompt is too long: 210000 tokens > 200000 maximum", "", ""},
 		{"gemini overflow", 400, `[{"error":{"code":400,"message":"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}]`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		{"vllm overflow by input", 400, `{"object":"error","message":"This model's maximum context length is 4096 tokens. However, your request has 5000 input tokens. Please reduce the length of the input messages.","type":"BadRequestError","param":null,"code":400}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		// A request whose input fits but whose output limit does not is
+		// not an overflow: compacting the input cannot help it.
+		{"vllm max_tokens too large", 400, `{"object":"error","message":"'max_tokens' or 'max_completion_tokens' is too large: 5000. This model's maximum context length is 4096 tokens and your request has 100 input tokens (5000 > 4096 - 100).","type":"BadRequestError","param":null,"code":400}`, nil, openresponses.ErrorTypeInvalidRequest, "http_400", "", "", ""},
+		{"vllm completion too large", 400, `{"object":"error","message":"This model's maximum context length is 4096 tokens. However, you requested 5100 tokens (100 in the messages, 5000 in the completion). Please reduce the length of the messages or completion.","type":"BadRequestError","param":null,"code":400}`, nil, openresponses.ErrorTypeInvalidRequest, "http_400", "", "", ""},
+		{"openrouter output too large", 400, `{"error":{"message":"This endpoint's maximum context length is 8192 tokens. However, you requested about 9000 tokens (8000 of text input, 1000 in the output). Please reduce the length of either one.","code":400}}`, nil, openresponses.ErrorTypeInvalidRequest, "400", "", "", ""},
+		{"deepseek overflow", 400, `{"error":{"message":"This model's maximum context length is 131072 tokens. However, you requested 140000 tokens (135000 in the messages, 5000 in the completion).","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		// The status decides the type as the root Client decides it, so a
+		// timeout stays retryable.
+		{"timeout", 408, `{"error":{"message":"Your request timed out","code":408}}`, nil, openresponses.ErrorTypeServerError, "408", "Your request timed out", "", ""},
+		{"unprocessable", 422, `{"error":{"message":"bad","type":"invalid_request_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, "invalid_request_error", "bad", "", ""},
 		{"plain text", 503, `upstream unavailable`, nil, openresponses.ErrorTypeServerError, "http_503", "upstream unavailable", "", ""},
 	}
 	for _, tc := range cases {

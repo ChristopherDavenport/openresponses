@@ -116,7 +116,17 @@ versions may break the API.
   `IsContextLengthExceeded` matches it. It recognises OpenAI's code,
   llama.cpp's `exceed_context_size_error` and the messages vLLM,
   DeepSeek, OpenRouter, Mistral and the Claude- and Gemini-compatible
-  endpoints send; providers/PLAN.md lists them.
+  endpoints send; providers/PLAN.md lists them. A message whose counts
+  show that the input fits, such as vLLM's refusal of a `max_tokens`
+  larger than the rest of the window, is not an overflow, since
+  compacting cannot fix it.
+- `chatcompletions` types an upstream HTTP error by its status as
+  `Client` does, apart from 401 and 403, and a mid-stream frame by the
+  status its code names, so a 408 is a retryable `server_error` rather
+  than `invalid_request`; 405, 409, 413 and other unlisted 4xx statuses
+  are `server_error` too. The envelope's `type` is kept as the
+  `chatcompletions.type` member of the error, and a code the adapter
+  replaces as `chatcompletions.code`.
 - `chatcompletions` reports OpenRouter's cache writes
   (`prompt_tokens_details.cache_write_tokens`) as
   `openresponses-experimental.cache_write_tokens`, reads DeepSeek's

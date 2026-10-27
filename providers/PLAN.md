@@ -348,8 +348,8 @@ the standard library and reuses `Client` for address, auth and
 transport. It covers the long tail (DeepSeek, Mistral, Groq, Together,
 Fireworks, Cerebras, xAI, Perplexity, llama.cpp, LiteLLM, Vertex's
 OpenAI-compatible endpoint, Azure's legacy path) with one
-implementation. The slug is `chatcompletions.`, though nothing uses it
-yet: the protocol has no extension blocks to carry.
+implementation. The slug is `chatcompletions.`. The protocol has no
+extension blocks to carry, so only the error members below use it.
 
 Where it differs from the SDK-backed adapters:
 
@@ -387,24 +387,41 @@ Where it differs from the SDK-backed adapters:
   field of the message that made them.
 - Tool calls stream by index and are opened when the name is known
   (the first delta everywhere in practice); a call resuming after a
-  later one started is an upstream error. A mid-stream `{"error": …}`
-  frame fails the response with the type and status its `code`, else
-  its `type`, has on a non-streamed response: OpenAI's names
-  (`rate_limit_exceeded` and `rate_limit_error` 429,
+  later one started is an upstream error.
+- An HTTP error's status decides its type as `Client` decides it for an
+  Open Responses upstream: 400 and 422 are `invalid_request`, 404
+  `not_found`, 429 `too_many_requests`, and any other status
+  `server_error`, so a 408 stays retryable. The exception is 401 and
+  403, which are `invalid_request` as the Errors section requires. A
+  mid-stream `{"error": …}` frame fails the response with the status
+  its `code`, else its `type`, has on a non-streamed response, and that
+  status's type: a code from 400 to 599, as a number (OpenRouter) or a
+  string (LiteLLM), is the status itself, and OpenAI's names map as
+  OpenAI sends them (`rate_limit_exceeded` and `rate_limit_error` 429,
   `invalid_request_error` 400, `authentication_error` 401,
   `permission_error` 403, `server_error` 500, and Claude-compatible
-  `overloaded_error` 529), or a numeric code from 400 to 599, which
-  OpenRouter sends as the HTTP status. A frame naming neither is a
-  `server_error`. A 4xx refusal, or a frame mapped to one, is a context
-  overflow (`context_length_exceeded`) when its code is
-  `context_length_exceeded` (OpenAI), its type is
+  `overloaded_error` 529). A frame naming neither is a `server_error`.
+- A 400 or 422 refusal, or a frame naming neither status nor a known
+  error, is a context overflow (`context_length_exceeded`) when its code
+  is `context_length_exceeded` (OpenAI), its type is
   `exceed_context_size_error` (llama.cpp), or its message contains,
   ignoring case, "maximum context length" (OpenAI, vLLM, DeepSeek,
   OpenRouter), "exceeds the available context size" (llama.cpp), "too
   large for model with" (Mistral), "prompt is too long" (Claude's
   compatible endpoint) or "exceeds the maximum number of tokens allowed"
-  (Gemini's). Errors keep the envelope's `code`, `type`,
-  `param` and the failure headers.
+  (Gemini's). An overflow is the input alone exceeding the window, so a
+  message carrying counts is one only when they say so: the window from
+  "maximum context length is N", and the input from "N input tokens",
+  "resulted in N tokens" or "(N in the messages", else the total from
+  "requested [about] N tokens" less "N in the completion" or "N in the
+  output". A message without counts that names `max_tokens` or
+  `max_completion_tokens` refuses the output limit and is not one.
+- The error's code is the envelope's `code`, else its `type`, else
+  `http_<status>` (`upstream_error` for a frame). Its `param` and the
+  failure headers are kept. The envelope's `type` is kept as the
+  error's `chatcompletions.type` member, and an envelope `code` the
+  adapter replaces, as for an overflow, as `chatcompletions.code`, in
+  its string form.
 - Usage maps `prompt_tokens`, `completion_tokens`, `cached_tokens` and
   `reasoning_tokens`. OpenRouter's `prompt_tokens_details.cache_write_tokens`
   becomes `openresponses-experimental.cache_write_tokens`
