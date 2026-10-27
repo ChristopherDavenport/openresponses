@@ -111,6 +111,12 @@ versions may break the API.
   `invalid_request`) or OpenRouter's numeric status code. Every such
   frame was a 500 `server_error`, so a rate limit mid-stream read as a
   server failure.
+- `chatcompletions` reports a context overflow as `invalid_request` with
+  code `context_length_exceeded` whatever the upstream calls it, so
+  `IsContextLengthExceeded` matches it. It recognises OpenAI's code,
+  llama.cpp's `exceed_context_size_error` and the messages vLLM,
+  DeepSeek, OpenRouter, Mistral and the Claude- and Gemini-compatible
+  endpoints send; providers/PLAN.md lists them.
 
 ## v0.0.16 - 2026-10-26
 

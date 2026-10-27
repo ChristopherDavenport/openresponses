@@ -500,6 +500,33 @@ func (e *apiError) status() int {
 	return errorStatus[e.Type]
 }
 
+// overflowMessages are the phrases, in lower case, by which upstreams
+// that send no code of their own for it refuse a request whose input
+// exceeds the model's context window.
+var overflowMessages = []string{
+	"maximum context length",                       // OpenAI, vLLM, DeepSeek, OpenRouter
+	"exceeds the available context size",           // llama.cpp
+	"too large for model with",                     // Mistral
+	"prompt is too long",                           // Claude's compatible endpoint
+	"exceeds the maximum number of tokens allowed", // Gemini's compatible endpoint
+}
+
+// contextOverflow reports whether the error refuses a request whose
+// input exceeds the model's context window: OpenAI's code, llama.cpp's
+// type, or one of overflowMessages in the message.
+func (e *apiError) contextOverflow() bool {
+	if e.code() == openresponses.CodeContextLengthExceeded || e.Type == "exceed_context_size_error" {
+		return true
+	}
+	msg := strings.ToLower(e.Message)
+	for _, phrase := range overflowMessages {
+		if strings.Contains(msg, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 // toError maps the envelope by status. A status of 0, from a stream
 // frame that names no known error, is a server_error whose status the
 // type decides.
@@ -520,6 +547,8 @@ func (e *apiError) toError(status int, headers http.Header) *openresponses.Error
 		out = openresponses.NotFound(code, e.Message, e.Param)
 	case status == http.StatusTooManyRequests:
 		out = openresponses.TooManyRequests(code, e.Message)
+	case status >= 400 && status < 500 && e.contextOverflow():
+		out = openresponses.InvalidRequest(openresponses.CodeContextLengthExceeded, e.Message, e.Param)
 	case status >= 400 && status < 500:
 		out = openresponses.InvalidRequest(code, e.Message, e.Param)
 	default:

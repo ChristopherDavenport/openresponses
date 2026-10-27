@@ -275,6 +275,8 @@ func TestStreamErrorFrame(t *testing.T) {
 		{`{"error":{"message":"upstream","code":502}}`, openresponses.ErrorTypeServerError, "502", 502},
 		{`{"error":{"message":"slow","code":429}}`, openresponses.ErrorTypeTooManyRequests, "429", 429},
 		{`{"error":{"message":"what"}}`, openresponses.ErrorTypeServerError, "upstream_error", 500},
+		{`{"error":{"message":"This model's maximum context length is 8192 tokens.","type":"invalid_request_error","code":"context_length_exceeded"}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, 400},
+		{`{"error":{"message":"This endpoint's maximum context length is 8192 tokens.","code":400}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, 400},
 	}
 	for _, tc := range cases {
 		t.Run(tc.frame, func(t *testing.T) {
@@ -308,6 +310,12 @@ func TestMapError(t *testing.T) {
 		{"unauthorized", 401, `{"error":{"message":"key","type":"authentication_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, "authentication_error", "key", "", ""},
 		{"forbidden", 403, `{"error":{"message":"model not allowed","type":"permission_error","code":"model_not_allowed"}}`, nil, openresponses.ErrorTypeInvalidRequest, "model_not_allowed", "model not allowed", "", ""},
 		{"not found", 404, `{"error":{"message":"no model","code":"model_not_found"}}`, nil, openresponses.ErrorTypeNotFound, "model_not_found", "no model", "", ""},
+		{"openai overflow", 400, `{"error":{"message":"This model's maximum context length is 128000 tokens.","type":"invalid_request_error","param":"messages","code":"context_length_exceeded"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "This model's maximum context length is 128000 tokens.", "messages", ""},
+		{"vllm overflow", 400, `{"object":"error","message":"This model's maximum context length is 4096 tokens. However, you requested 5000 tokens.","type":"BadRequestError","param":null,"code":400}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		{"llama.cpp overflow", 400, `{"error":{"code":400,"message":"the request exceeds the available context size, try increasing it","type":"exceed_context_size_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "the request exceeds the available context size, try increasing it", "", ""},
+		{"mistral overflow", 400, `{"object":"error","message":"Prompt contains 40000 tokens and 0 draft tokens, too large for model with 32768 maximum context length","type":"invalid_request_error","param":null,"code":null}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
+		{"claude overflow", 400, `{"error":{"message":"prompt is too long: 210000 tokens > 200000 maximum","type":"invalid_request_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "prompt is too long: 210000 tokens > 200000 maximum", "", ""},
+		{"gemini overflow", 400, `[{"error":{"code":400,"message":"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).","status":"INVALID_ARGUMENT"}}]`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "", "", ""},
 		{"plain text", 503, `upstream unavailable`, nil, openresponses.ErrorTypeServerError, "http_503", "upstream unavailable", "", ""},
 	}
 	for _, tc := range cases {
@@ -324,7 +332,7 @@ func TestMapError(t *testing.T) {
 			if !errors.As(err, &oerr) {
 				t.Fatalf("err = %v", err)
 			}
-			if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.Message != tc.message || oerr.Param != tc.param || oerr.HTTPStatus() != tc.status {
+			if oerr.Type != tc.typ || oerr.Code != tc.code || (tc.message != "" && oerr.Message != tc.message) || oerr.Param != tc.param || oerr.HTTPStatus() != tc.status {
 				t.Fatalf("err = %+v", oerr)
 			}
 			if got := oerr.Headers.Get("Retry-After"); got != tc.retry {

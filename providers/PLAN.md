@@ -395,7 +395,15 @@ Where it differs from the SDK-backed adapters:
   `permission_error` 403, `server_error` 500, and Claude-compatible
   `overloaded_error` 529), or a numeric code from 400 to 599, which
   OpenRouter sends as the HTTP status. A frame naming neither is a
-  `server_error`. Errors keep the envelope's `code`, `type`,
+  `server_error`. A 4xx refusal, or a frame mapped to one, is a context
+  overflow (`context_length_exceeded`) when its code is
+  `context_length_exceeded` (OpenAI), its type is
+  `exceed_context_size_error` (llama.cpp), or its message contains,
+  ignoring case, "maximum context length" (OpenAI, vLLM, DeepSeek,
+  OpenRouter), "exceeds the available context size" (llama.cpp), "too
+  large for model with" (Mistral), "prompt is too long" (Claude's
+  compatible endpoint) or "exceeds the maximum number of tokens allowed"
+  (Gemini's). Errors keep the envelope's `code`, `type`,
   `param` and the failure headers.
 - The SSE reader moved to `internal/sse` so the root package and this
   one share it.
