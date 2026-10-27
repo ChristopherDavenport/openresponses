@@ -46,6 +46,13 @@ versions may break the API.
   model's context window. `ContextLengthExceeded` builds the error, and
   `IsContextLengthExceeded`, beside `IsRateLimited`, recognises it by
   code, so a harness that compacts on overflow has one thing to match.
+- `ItemID(Item)` returns an item's own `id` member and `CallID(Item)` its
+  `call_id` member, for every item type, extension items included: an
+  `UnknownItem`'s `call_id` is read from its raw JSON and a registered
+  extension type's from its encoding. An `item_reference` has no id of
+  its own, so `ItemID` returns "" for it. A consumer that pairs calls
+  with outputs or tracks items by id no longer needs a type switch that
+  misses extension calls.
 - `NewResponse` echoes the request's reasoning effort and summary
   without its `Extra` members. A response carries an extension member of
   `reasoning` only when the adapter honoured it, which the adapter

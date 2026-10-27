@@ -172,3 +172,69 @@ func UnmarshalAnnotation(data []byte) (Annotation, error) {
 	}
 	return &u, nil
 }
+
+// ItemID returns the item's own id member and [CallID] its call_id
+// member, reading extension items from their raw JSON; an
+// item_reference has no id of its own. ItemID returns "" for an
+// [ItemReference], whose id names another item, and for an item without
+// an id.
+func ItemID(item Item) string {
+	switch v := item.(type) {
+	case nil, *ItemReference:
+		return ""
+	case *Message:
+		return v.ID
+	case *FunctionCall:
+		return v.ID
+	case *FunctionCallOutput:
+		return v.ID
+	case *ReasoningItem:
+		return v.ID
+	case *Compaction:
+		return v.ID
+	case *UnknownItem:
+		return v.ID
+	}
+	return encodedMember(item, "id")
+}
+
+// CallID returns the item's call_id member, which pairs a tool call with
+// its output, or "" when the item has none. An [UnknownItem]'s call_id
+// is read from Raw, and a registered extension type's from its encoding.
+func CallID(item Item) string {
+	switch v := item.(type) {
+	case nil, *Message, *ReasoningItem, *Compaction, *ItemReference:
+		return ""
+	case *FunctionCall:
+		return v.CallID
+	case *FunctionCallOutput:
+		return v.CallID
+	case *UnknownItem:
+		return stringMember(v.Raw, "call_id")
+	}
+	return encodedMember(item, "call_id")
+}
+
+// encodedMember returns the string member key of item's wire form, or ""
+// when the item does not encode or the member is absent or not a string.
+func encodedMember(item Item, key string) string {
+	raw, err := json.Marshal(item)
+	if err != nil {
+		return ""
+	}
+	return stringMember(raw, key)
+}
+
+// stringMember returns the string member key of the JSON object raw, or
+// "" when raw is not an object or the member is absent or not a string.
+func stringMember(raw []byte, key string) string {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(members[key], &s) != nil {
+		return ""
+	}
+	return s
+}

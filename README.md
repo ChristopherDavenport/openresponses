@@ -299,7 +299,7 @@ alone; `github.com/coder/websocket` is reachable only through the
 |---|---|
 | `enums.go` | statuses, roles, effort levels and wire type constants |
 | `items.go`, `content.go`, `tools.go` | items, content parts, annotations, tools, `ToolChoice`, `TextFormat` |
-| `registry.go` | type registries and `Unmarshal*` dispatch |
+| `registry.go` | type registries and `Unmarshal*` dispatch; `ItemID` returns the item's own `id` member and `CallID` its `call_id` member, reading extension items from their raw JSON; an `item_reference` has no id of its own |
 | `request.go`, `response.go` | `Request`, `CompactRequest`, `Response`, `CompactResponse`, `Validate` |
 | `errors.go` | `Error`, `ErrorPayload`, error types and codes |
 | `extensions.go` | the shared extensions of `docs/extensions.md`: member names, accessors, `Info` |
