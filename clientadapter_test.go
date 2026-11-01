@@ -485,3 +485,22 @@ func TestClientAdapterForeignAnnotation(t *testing.T) {
 		})
 	}
 }
+
+// TestClientAdapterEmptiedOutput covers a function output whose every
+// part is left out: it is still sent, since its call needs an answer, as
+// the empty string rather than an empty array, the form every upstream
+// takes.
+func TestClientAdapterEmptiedOutput(t *testing.T) {
+	client, seen := captureUpstream(t)
+	_, _ = client.AsAdapter(WithProviderSlugs()).Create(testContext(t), Request{Model: "m", Input: Items{
+		&FunctionCall{CallID: "c", Name: "f", Arguments: "{}"},
+		&FunctionCallOutput{CallID: "c", Output: FunctionCallOutputData{Parts: Contents{&UnknownContent{Type: "gemini.thought", Raw: json.RawMessage(`{"type":"gemini.thought"}`)}}}},
+	}})
+	var items []map[string]json.RawMessage
+	if len(*seen) != 1 || json.Unmarshal((*seen)[0], &items) != nil || len(items) != 2 {
+		t.Fatalf("upstream saw %s", *seen)
+	}
+	if out := string(items[1]["output"]); out != `""` {
+		t.Fatalf("output = %s, want \"\"", out)
+	}
+}

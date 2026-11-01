@@ -161,9 +161,13 @@ func (a *ClientAdapter) prepare(input Items) (Items, error) {
 		case *FunctionCallOutput:
 			if kept, changed := a.keep(it.Output.Parts); changed {
 				// The output is sent without the part: its call needs an
-				// answer.
+				// answer. With no part left it is the empty string, which
+				// every upstream takes, rather than an empty array.
 				cp := *it
 				cp.Output.Parts = kept
+				if len(kept) == 0 {
+					cp.Output = FunctionCallOutputData{}
+				}
 				item = &cp
 			}
 		}
