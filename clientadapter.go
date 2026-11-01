@@ -34,16 +34,17 @@ import (
 // runs, so the upstream server's own store is bypassed and the proxy
 // owns the conversation it proxies.
 //
-// Two rules of docs/extensions.md apply to the input before it is
+// Rules of docs/extensions.md apply to the request before it is
 // forwarded, as they do in an adapter that maps onto a provider. Media
 // whose URL is a sidecar: reference is always refused (section 1.7).
 // Once [WithProviderSlugs] names the providers the upstream accepts, an
 // input item or content part under any other provider's slug is left
-// out, as is a reasoning item such a provider issued (sections 1.6 and
-// 4), and a request member or tool under such a slug is refused (section
-// 1.5). Without it the adapter cannot know what stands behind the
-// upstream and forwards every item, member and tool as given. Items under a slug that names no
-// provider, and shared ones, are forwarded unchanged either way. The
+// out, as are a reasoning item such a provider issued and an annotation
+// on output_text under such a slug (sections 1.6 and 4), and a request
+// member or tool under such a slug is refused (section 1.5). Without it
+// the adapter cannot know what stands behind the upstream and forwards
+// every item, member and tool as given. Items under a slug that names
+// no provider, and shared ones, are forwarded unchanged either way. The
 // request the caller passed is never changed.
 type ClientAdapter struct {
 	Client *Client
@@ -172,16 +173,44 @@ func (a *ClientAdapter) prepare(input Items) (Items, error) {
 }
 
 // keep returns contents without the parts [foreignType] reports, and
-// whether any was left out.
+// output_text without such annotations, and whether anything was left
+// out. A part it changes is a copy.
 func (a *ClientAdapter) keep(contents Contents) (Contents, bool) {
 	kept := Contents{}
+	changed := false
 	for _, c := range contents {
-		if u, ok := c.(*UnknownContent); ok && a.foreignType(u.Type) {
-			continue
+		switch c := c.(type) {
+		case *UnknownContent:
+			if a.foreignType(c.Type) {
+				changed = true
+				continue
+			}
+		case *OutputText:
+			if anns := a.keepAnnotations(c.Annotations); len(anns) != len(c.Annotations) {
+				cp := *c
+				cp.Annotations = anns
+				kept = append(kept, &cp)
+				changed = true
+				continue
+			}
 		}
 		kept = append(kept, c)
 	}
-	return kept, len(kept) != len(contents)
+	return kept, changed
+}
+
+// keepAnnotations returns annotations without those under a provider's
+// slug the upstream does not accept, such as Claude's citation
+// locations, which another upstream refuses as an unknown type.
+func (a *ClientAdapter) keepAnnotations(anns Annotations) Annotations {
+	kept := Annotations{}
+	for _, ann := range anns {
+		if a.foreignType(ann.AnnotationType()) {
+			continue
+		}
+		kept = append(kept, ann)
+	}
+	return kept
 }
 
 // sidecarItem refuses a sidecar: reference in the media of a message or

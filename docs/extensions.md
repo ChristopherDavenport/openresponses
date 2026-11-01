@@ -191,7 +191,9 @@ Claude's signed reasoning and its `anthropic.` blocks back (section 4).
 A configured pass-through:
 
 - MUST leave out an input item or content part under a provider's slug
-  it was not given, as above, and a reasoning item whose
+  it was not given, as above, an annotation on `output_text` under such
+  a slug (Claude's citation locations, which another upstream refuses as
+  an unknown type), keeping the part, and a reasoning item whose
   `openresponses-experimental.issuer` names such a provider, as section
   4's second reader rule says. It compares the issuer's `<issuer>`
   part, and leaves the comparison of the whole string to the adapter

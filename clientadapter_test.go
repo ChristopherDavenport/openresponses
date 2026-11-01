@@ -426,3 +426,60 @@ func TestClientAdapterProviderMembers(t *testing.T) {
 		}
 	})
 }
+
+// TestClientAdapterForeignAnnotation covers an annotation on output_text
+// under a provider's slug the upstream does not accept: it is left out
+// with the part kept, as section 1.6 leaves out such a part. Others stay,
+// and an unconfigured adapter keeps them all.
+func TestClientAdapterForeignAnnotation(t *testing.T) {
+	ann := func(typ string) Annotation {
+		return &UnknownAnnotation{Type: typ, Raw: json.RawMessage(`{"type":"` + typ + `"}`)}
+	}
+	input := func() Items {
+		return Items{&Message{Role: RoleAssistant, Content: Contents{
+			&OutputText{Text: "a", Annotations: Annotations{ann("anthropic.char_location"), ann("gemini.grounding"), ann("acme.note")}},
+			&OutputText{Text: "b", Annotations: Annotations{ann("anthropic.char_location")}},
+		}}}
+	}
+	cases := []struct {
+		name string
+		opts []AdapterOption
+		want string
+	}{
+		{"gemini", []AdapterOption{WithProviderSlugs("gemini")}, `[["gemini.grounding","acme.note"],[]]`},
+		{"unconfigured", nil, `[["anthropic.char_location","gemini.grounding","acme.note"],["anthropic.char_location"]]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, seen := captureUpstream(t)
+			in := input()
+			_, _ = client.AsAdapter(tc.opts...).Create(testContext(t), Request{Model: "m", Input: in})
+			var items []struct {
+				Content []struct {
+					Text        string `json:"text"`
+					Annotations []struct {
+						Type string `json:"type"`
+					} `json:"annotations"`
+				} `json:"content"`
+			}
+			if len(*seen) != 1 || json.Unmarshal((*seen)[0], &items) != nil || len(items) != 1 {
+				t.Fatalf("upstream saw %s", *seen)
+			}
+			got := [][]string{}
+			for _, c := range items[0].Content {
+				types := []string{}
+				for _, a := range c.Annotations {
+					types = append(types, a.Type)
+				}
+				got = append(got, types)
+			}
+			out, _ := json.Marshal(got)
+			if string(out) != tc.want {
+				t.Fatalf("annotations = %s, want %s", out, tc.want)
+			}
+			if n := len(in[0].(*Message).Content[0].(*OutputText).Annotations); n != 3 {
+				t.Fatalf("caller's annotations changed: %d left", n)
+			}
+		})
+	}
+}

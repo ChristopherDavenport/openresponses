@@ -30,7 +30,8 @@ versions may break the API.
   `sidecar:` URL with `invalid_request` naming the field, before
   anything reaches the upstream. The new `WithProviderSlugs` option
   names the providers its upstream accepts, and once given, an item,
-  content part or reasoning item under any other provider's slug
+  content part, reasoning item or `output_text` annotation under any
+  other provider's slug
   (`anthropic`, `gemini`, `chatcompletions`) is left out;
   `WithProviderSlugs()` with no slugs, for an upstream that is a
   provider's own API such as OpenAI or OpenRouter, leaves out every
