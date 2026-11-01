@@ -141,8 +141,18 @@ provider and MUST NOT refuse the request for it. It leaves the item
 out, and its README says so. Refusal stays the rule for request members
 under another provider's slug (1.5).
 
+An item that carries content rather than a signature, such as a code
+execution result or a web search result, is part of what the model was
+told, and leaving it out changes what the next model is asked. For such
+an item an adapter MAY send a text rendering of its content in its
+place, as its provider's own text, instead of leaving it out. Its README
+says which items it renders and how, and which it leaves out. An item
+that carries only a signature or redacted reasoning has nothing to
+render and is left out.
+
 This is section 4's second reader rule applied to whole items: there an
-adapter leaves out a reasoning item another issuer signed. The details:
+adapter leaves out a reasoning item another issuer signed, or sends its
+summary as text. The details:
 
 - The rule holds wherever the part sits: in a message of any role and
   in a function call output.
@@ -153,9 +163,9 @@ adapter leaves out a reasoning item another issuer signed. The details:
   and not out of the request it was given. The caller's input, a stored
   response and a session record keep the item as 1.3 requires, so a
   later request to the provider that wrote it sends it again.
-- Nothing in a response says what was left out; the specification has
-  no member for it. The README is where a caller learns which items an
-  adapter leaves out.
+- Nothing in a response says what was left out or rendered; the
+  specification has no member for it. The README is where a caller
+  learns which items an adapter leaves out and which it renders.
 - An item under the adapter's own slug is its provider's and is sent,
   or refused when it is malformed. An item under a slug that names no
   provider the adapter knows of (`acme.`, a harness's slug) is not

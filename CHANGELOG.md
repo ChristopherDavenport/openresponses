@@ -9,7 +9,10 @@ versions may break the API.
 
 - docs/extensions.md section 1.6: an adapter leaves out an input item
   or content part whose type carries another provider's slug, rather
-  than sending it or refusing the request (agentturn#285). It is section
+  than sending it or refusing the request (agentturn#285). An adapter
+  MAY instead send a text rendering of an item that carries content, such
+  as a code execution or web search result, and its README says which
+  it does; none of this library's adapters renders one yet. It is section
   4's rule for reasoning another issuer signed, applied to whole items,
   so a conversation that moves between providers no longer fails on the
   first request after the move. Tools and request members under another
