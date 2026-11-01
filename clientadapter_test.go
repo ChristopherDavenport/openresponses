@@ -373,3 +373,56 @@ func TestClientAdapterForeignSlug(t *testing.T) {
 		}
 	}
 }
+
+// TestClientAdapterProviderMembers pins docs/extensions.md section 1.5
+// for a pass-through: once configured, a request member or tool under a
+// provider's slug the upstream does not accept is refused naming it,
+// and nothing is sent. Its own providers' members and tools, and any
+// other member, are forwarded; unconfigured, everything is.
+func TestClientAdapterProviderMembers(t *testing.T) {
+	tool := func(typ string) Tools {
+		return Tools{&UnknownTool{Type: typ, Raw: json.RawMessage(`{"type":"` + typ + `"}`)}}
+	}
+	cases := []struct {
+		name  string
+		opts  []AdapterOption
+		req   Request
+		param string // "" when the request is forwarded
+	}{
+		{"other provider's member", []AdapterOption{WithProviderSlugs("anthropic")}, Request{Extra: map[string]any{"gemini.cached_content": "c"}}, "gemini.cached_content"},
+		{"member when accepting none", []AdapterOption{WithProviderSlugs()}, Request{Extra: map[string]any{"anthropic.top_k": 5}}, "anthropic.top_k"},
+		{"other provider's tool", []AdapterOption{WithProviderSlugs("anthropic")}, Request{Tools: tool("gemini.google_search")}, "tools[0].type"},
+		{"own member", []AdapterOption{WithProviderSlugs("anthropic")}, Request{Extra: map[string]any{"anthropic.top_k": 5}}, ""},
+		{"own tool", []AdapterOption{WithProviderSlugs("anthropic")}, Request{Tools: tool("anthropic.web_search_20260209")}, ""},
+		{"member of no provider", []AdapterOption{WithProviderSlugs()}, Request{Extra: map[string]any{"acme.trace": "t", "openresponses-experimental.x": 1}}, ""},
+		{"unconfigured", nil, Request{Extra: map[string]any{"gemini.cached_content": "c"}, Tools: tool("gemini.google_search")}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, seen := captureUpstream(t)
+			tc.req.Model = "m"
+			_, err := client.AsAdapter(tc.opts...).Create(testContext(t), tc.req)
+			if tc.param == "" {
+				if len(*seen) != 1 {
+					t.Fatalf("not forwarded: %v", err)
+				}
+				return
+			}
+			var oerr *Error
+			if !errors.As(err, &oerr) || oerr.Type != ErrorTypeInvalidRequest || oerr.Code != CodeUnsupportedParameter || oerr.Param != tc.param {
+				t.Fatalf("err = %v, want invalid_request/unsupported_parameter on %s", err, tc.param)
+			}
+			if len(*seen) != 0 {
+				t.Fatal("refused request reached the upstream")
+			}
+		})
+	}
+	t.Run("Compact", func(t *testing.T) {
+		client, seen := captureUpstream(t)
+		_, err := client.AsAdapter(WithProviderSlugs("anthropic")).Compact(testContext(t), CompactRequest{Model: "m", Extra: map[string]any{"gemini.x": 1}})
+		var oerr *Error
+		if !errors.As(err, &oerr) || oerr.Param != "gemini.x" || len(*seen) != 0 {
+			t.Fatalf("err = %v, seen %d", err, len(*seen))
+		}
+	})
+}

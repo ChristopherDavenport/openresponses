@@ -196,6 +196,10 @@ A configured pass-through:
   4's second reader rule says. It compares the issuer's `<issuer>`
   part, and leaves the comparison of the whole string to the adapter
   behind the upstream.
+- MUST refuse a request member or tool under a provider's slug it was
+  not given, as 1.5 says, with `param` naming the member or the tool's
+  `type`, before anything reaches the upstream. Unconfigured, it
+  forwards them.
 - Forwards unchanged an item under a slug that names no provider, a
   shared one, and a reasoning item that names no issuer. Refusing those
   would be deciding for an upstream it cannot see: the adapter that maps

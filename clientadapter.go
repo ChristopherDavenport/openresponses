@@ -3,6 +3,7 @@ package openresponses
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 )
@@ -39,8 +40,9 @@ import (
 // Once [WithProviderSlugs] names the providers the upstream accepts, an
 // input item or content part under any other provider's slug is left
 // out, as is a reasoning item such a provider issued (sections 1.6 and
-// 4). Without it the adapter cannot know what stands behind the upstream
-// and forwards every item as given. Items under a slug that names no
+// 4), and a request member or tool under such a slug is refused (section
+// 1.5). Without it the adapter cannot know what stands behind the
+// upstream and forwards every item, member and tool as given. Items under a slug that names no
 // provider, and shared ones, are forwarded unchanged either way. The
 // request the caller passed is never changed.
 type ClientAdapter struct {
@@ -102,6 +104,27 @@ func (a *ClientAdapter) foreignType(typ string) bool {
 func (a *ClientAdapter) foreignIssuer(issuer string) bool {
 	name, _, _ := strings.Cut(issuer, "/")
 	return issuer != "" && a.foreign(name)
+}
+
+// checkMembers refuses a request member or tool under the slug of a
+// provider the upstream does not accept, as docs/extensions.md section
+// 1.5 refuses a setting meant for another provider. Members in sorted
+// order, so the same request is refused for the same member.
+func (a *ClientAdapter) checkMembers(extra map[string]any, tools Tools) error {
+	for _, key := range slices.Sorted(maps.Keys(extra)) {
+		if a.foreignType(key) {
+			return InvalidRequest(CodeUnsupportedParameter,
+				key+" is a setting for a provider the upstream does not accept", key)
+		}
+	}
+	for i, t := range tools {
+		if a.foreignType(t.ToolType()) {
+			param := fmt.Sprintf("tools[%d].type", i)
+			return InvalidRequest(CodeUnsupportedParameter,
+				t.ToolType()+" is a tool of a provider the upstream does not accept", param)
+		}
+	}
+	return nil
 }
 
 // prepare returns the input to forward: the input with what [foreignType]
@@ -205,6 +228,9 @@ func (c *Client) AsAdapter(opts ...AdapterOption) *ClientAdapter {
 
 // Create forwards the request.
 func (a *ClientAdapter) Create(ctx context.Context, req Request) (*Response, error) {
+	if err := a.checkMembers(req.Extra, req.Tools); err != nil {
+		return nil, err
+	}
 	input, err := a.prepare(req.Input)
 	if err != nil {
 		return nil, err
@@ -215,6 +241,9 @@ func (a *ClientAdapter) Create(ctx context.Context, req Request) (*Response, err
 
 // Compact forwards the request.
 func (a *ClientAdapter) Compact(ctx context.Context, req CompactRequest) (*CompactResponse, error) {
+	if err := a.checkMembers(req.Extra, nil); err != nil {
+		return nil, err
+	}
 	input, err := a.prepare(req.Input)
 	if err != nil {
 		return nil, err
@@ -228,6 +257,9 @@ func (a *ClientAdapter) Compact(ctx context.Context, req CompactRequest) (*Compa
 // from a peer gets (see [Error.Headers]): its payload keeps only the
 // headers that describe a failure, and no other spelling of headers.
 func (a *ClientAdapter) CreateStream(ctx context.Context, req Request, sink EventSink) error {
+	if err := a.checkMembers(req.Extra, req.Tools); err != nil {
+		return err
+	}
 	input, err := a.prepare(req.Input)
 	if err != nil {
 		return err

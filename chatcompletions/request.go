@@ -3,6 +3,7 @@ package chatcompletions
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -156,6 +157,15 @@ func (a *Adapter) encodeRequest(req openresponses.Request) (*body, error) {
 		// here means it has none, and the endpoint keeps no state.
 		return nil, openresponses.PreviousResponseNotFound(req.PreviousResponseID)
 	}
+	// A member under another provider's slug is a setting for a provider
+	// this protocol cannot honour (docs/extensions.md section 1.5), with
+	// or without WithExtra.
+	for _, key := range slices.Sorted(maps.Keys(req.Extra)) {
+		if foreign(key) {
+			return nil, openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
+				fmt.Sprintf("%s is a setting for another provider, which the Chat Completions protocol cannot honour", key), key)
+		}
+	}
 	b := &body{
 		Model:          req.Model,
 		N:              1,
@@ -241,7 +251,8 @@ func invalid(param, message string) *openresponses.Error {
 }
 
 // providerSlugs are the slugs of the other adapters in this repository.
-// An input item or content part under one is that provider's own.
+// An input item or content part under one is that provider's own, and a
+// request member under one is a setting for that provider.
 var providerSlugs = []string{"anthropic.", "gemini."}
 
 // foreign reports whether an item or content part type carries another

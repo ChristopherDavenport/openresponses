@@ -338,6 +338,8 @@ func TestEncodeErrors(t *testing.T) {
 		{"part of no provider", openresponses.Request{Input: openresponses.Items{openresponses.UserMessage(&openresponses.InputText{Text: "a"}, &openresponses.UnknownContent{Type: "acme.thing"})}}, openresponses.CodeUnsupportedParameter, "input[0].content[1].type"},
 		{"system image after a foreign part", openresponses.Request{Input: openresponses.Items{&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{&openresponses.UnknownContent{Type: "gemini.thought"}, &openresponses.InputImage{ImageURL: "https://x/a.png"}}}}}, openresponses.CodeUnsupportedParameter, "input[0].content[1].type"},
 		{"previous response", openresponses.Request{PreviousResponseID: "resp_1"}, openresponses.CodePreviousResponseNotFound, "previous_response_id"},
+		{"another provider's member", openresponses.Request{Extra: map[string]any{"anthropic.top_k": 5}}, openresponses.CodeUnsupportedParameter, "anthropic.top_k"},
+		{"another provider's member, sorted first", openresponses.Request{Extra: map[string]any{"top_k": 5, "gemini.b": 1, "anthropic.a": 1}}, openresponses.CodeUnsupportedParameter, "anthropic.a"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -409,5 +411,17 @@ func TestEncodeSidecarMedia(t *testing.T) {
 				t.Fatalf("err = %s %q, want invalid_request naming the sidecar: reference", oerr.Type, oerr.Message)
 			}
 		})
+	}
+}
+
+// TestEncodeProviderMemberWithExtra pins docs/extensions.md section 1.5:
+// WithExtra forwards unknown members, but not one under another
+// provider's slug, which is refused.
+func TestEncodeProviderMemberWithExtra(t *testing.T) {
+	_, err := testAdapter(WithExtra()).encodeRequest(openresponses.Request{Extra: map[string]any{"gemini.cached_content": "c", "top_k": 5}})
+	wantErr(t, err, openresponses.CodeUnsupportedParameter, "gemini.cached_content")
+	body := wire(t, testAdapter(WithExtra()), openresponses.Request{Extra: map[string]any{"top_k": 5, "acme.trace": "t"}})
+	if body["top_k"] != float64(5) || body["acme.trace"] != "t" {
+		t.Fatalf("body = %v", body)
 	}
 }

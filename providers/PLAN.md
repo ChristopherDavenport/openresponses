@@ -467,7 +467,9 @@ Where it differs from the SDK-backed adapters:
 - `max_output_tokens` is sent as `max_tokens` unless
   `WithMaxTokensField` says `max_completion_tokens`; providers split.
 - `WithExtra` forwards `Request.Extra` for provider parameters
-  (`top_k`, routing), never overriding a mapped key. Off by default.
+  (`top_k`, routing), never overriding a mapped key. Off by default. A
+  member under `anthropic.` or `gemini.` is `invalid_request` naming it,
+  with or without the option (rule 8).
 - Function outputs are one `tool` message each. A
   `function_call_output` with image or file parts is sent as a `tool`
   message holding its text parts (or the text `[see next message]` when

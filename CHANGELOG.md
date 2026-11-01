@@ -16,7 +16,9 @@ versions may break the API.
   4's rule for reasoning another issuer signed, applied to whole items,
   so a conversation that moves between providers no longer fails on the
   first request after the move. Tools and request members under another
-  provider's slug are still refused (section 1.5).
+  provider's slug are not items: section 1.5 refuses them, which the
+  Claude and Gemini adapters already did, `chatcompletions` now does,
+  and a configured `ClientAdapter` does (below).
 - docs/extensions.md section 1.7: a `sidecar:` media URL, a session
   store's reference to a blob, is the writer's to resolve before sending
   (agentturn#284). An adapter refuses one in `image_url`, `file_url`,
@@ -37,9 +39,16 @@ versions may break the API.
   needs Claude's signed reasoning back, and should say
   `WithProviderSlugs("anthropic")` if it sets the option at all. Items
   under other slugs, shared ones and unstamped reasoning are forwarded
-  either way. `AsAdapter` now takes options
+  either way. Once configured it also refuses, before sending, a request
+  member or tool under a provider's slug it was not given, with
+  `invalid_request`, code `unsupported_parameter` and `param` naming it
+  (section 1.5); unconfigured, it forwards them as before. `AsAdapter` now takes options
   (`AsAdapter(opts ...AdapterOption)`); existing calls compile
   unchanged.
+- `chatcompletions` follows section 1.5. Behaviour change: a request
+  member under `anthropic.` or `gemini.` is `invalid_request` with code
+  `unsupported_parameter` and `param` naming it. It was dropped, or
+  forwarded into the body under `WithExtra`.
 - `chatcompletions` applies both. Behaviour change: an `anthropic.*` or
   `gemini.*` item or content part was `invalid_request`; it is now left
   out, and a message left with no content is not sent. A `sidecar:`

@@ -61,9 +61,11 @@ func WithReasoningReplay(field string) Option {
 
 // WithExtra forwards the request's unknown top-level keys (Extra) into
 // the Chat Completions body, for provider parameters such as top_k or
-// routing preferences. Keys the mapping sets are never overridden. Any
-// key a client sends then reaches the provider, so a server that does
-// not trust its clients should filter Extra first.
+// routing preferences. Keys the mapping sets are never overridden. A key
+// under another provider's slug (anthropic., gemini.) is refused with or
+// without this option (docs/extensions.md section 1.5). Any other key a
+// client sends then reaches the provider, so a server that does not
+// trust its clients should filter Extra first.
 func WithExtra() Option {
 	return func(a *Adapter) { a.forwardExtra = true }
 }
