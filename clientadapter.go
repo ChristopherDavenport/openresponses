@@ -1,6 +1,11 @@
 package openresponses
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"slices"
+	"strings"
+)
 
 // ClientAdapter serves a remote Open Responses server as an [Adapter], so
 // a [Client] composes with local backends: behind a [Handler] it is a
@@ -27,24 +32,186 @@ import "context"
 // stored history and clears previous_response_id before this adapter
 // runs, so the upstream server's own store is bypassed and the proxy
 // owns the conversation it proxies.
+//
+// Two rules of docs/extensions.md apply to the input before it is
+// forwarded, as they do in an adapter that maps onto a provider. Media
+// whose URL is a sidecar: reference is refused (section 1.7). And since
+// the upstream stands in for a provider, an input item or content part
+// under a provider's slug other than those [WithProviderSlugs] names is
+// left out, as is a reasoning item such a provider issued (sections 1.6
+// and 4); with no slug named, every provider's is. Items under a slug
+// that names no provider, and shared ones, are forwarded unchanged. The
+// request the caller passed is never changed.
 type ClientAdapter struct {
 	Client *Client
+
+	// providers are the slugs the upstream accepts, without the dot.
+	providers []string
 }
 
 var _ Adapter = (*ClientAdapter)(nil)
 
+// AdapterOption configures a [ClientAdapter].
+type AdapterOption func(*ClientAdapter)
+
+// WithProviderSlugs names the providers whose extension items the
+// upstream accepts, by slug ("anthropic", or "anthropic." with the dot):
+// an Open Responses server over the Claude adapter takes "anthropic",
+// and a server that routes each model to its own adapter takes the slug
+// of each, since the adapter it routes to applies docs/extensions.md
+// section 1.6 itself. Items, content parts and reasoning under any other
+// provider's slug are left out. Without this option every provider's
+// are, which is right for an upstream that is a provider's own API.
+func WithProviderSlugs(slugs ...string) AdapterOption {
+	return func(a *ClientAdapter) {
+		for _, s := range slugs {
+			a.providers = append(a.providers, strings.TrimSuffix(s, "."))
+		}
+	}
+}
+
+// providerSlugs are the providers this library has adapters for, the
+// slugs docs/extensions.md section 1.6 calls provider slugs.
+var providerSlugs = []string{"anthropic", "gemini", "chatcompletions"}
+
+// foreign reports whether name, a slug without its dot, names a provider
+// other than those the upstream accepts.
+func (a *ClientAdapter) foreign(name string) bool {
+	return slices.Contains(providerSlugs, name) && !slices.Contains(a.providers, name)
+}
+
+// foreignType reports whether an item or content part type carries the
+// slug of a provider the upstream does not accept.
+func (a *ClientAdapter) foreignType(typ string) bool {
+	name, _, ok := strings.Cut(typ, ".")
+	return ok && a.foreign(name)
+}
+
+// foreignIssuer reports whether a reasoning item was issued by a
+// provider the upstream does not accept: <issuer> or <issuer>/<variant>
+// (section 4). An item with no issuer is of unknown origin and is
+// forwarded, as an upstream that does not stamp its items needs.
+func (a *ClientAdapter) foreignIssuer(issuer string) bool {
+	name, _, _ := strings.Cut(issuer, "/")
+	return issuer != "" && a.foreign(name)
+}
+
+// prepare returns the input to forward: the input with what [foreignType]
+// and [foreignIssuer] report left out, and a message left with no
+// content left out with it. It refuses a sidecar: reference first. The
+// items it changes are copies; input is not changed.
+func (a *ClientAdapter) prepare(input Items) (Items, error) {
+	for i, item := range input {
+		if err := sidecarItem(item, fmt.Sprintf("input[%d]", i)); err != nil {
+			return nil, err
+		}
+	}
+	var out Items
+	for _, item := range input {
+		switch it := item.(type) {
+		case *UnknownItem:
+			if a.foreignType(it.Type) {
+				continue
+			}
+		case *ReasoningItem:
+			if a.foreignIssuer(it.Issuer()) {
+				continue
+			}
+		case *Message:
+			if kept, changed := a.keep(it.Content); changed {
+				if len(kept) == 0 {
+					continue
+				}
+				cp := *it
+				cp.Content = kept
+				item = &cp
+			}
+		case *FunctionCallOutput:
+			if kept, changed := a.keep(it.Output.Parts); changed {
+				// The output is sent without the part: its call needs an
+				// answer.
+				cp := *it
+				cp.Output.Parts = kept
+				item = &cp
+			}
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+// keep returns contents without the parts [foreignType] reports, and
+// whether any was left out.
+func (a *ClientAdapter) keep(contents Contents) (Contents, bool) {
+	kept := Contents{}
+	for _, c := range contents {
+		if u, ok := c.(*UnknownContent); ok && a.foreignType(u.Type) {
+			continue
+		}
+		kept = append(kept, c)
+	}
+	return kept, len(kept) != len(contents)
+}
+
+// sidecarItem refuses a sidecar: reference in the media of a message or
+// a function output (docs/extensions.md section 1.7). The reference
+// names a blob in a session store, which the writer resolves before it
+// sends; no upstream can fetch it.
+func sidecarItem(item Item, p string) error {
+	var contents Contents
+	switch it := item.(type) {
+	case *Message:
+		contents, p = it.Content, p+".content"
+	case *FunctionCallOutput:
+		contents, p = it.Output.Parts, p+".output"
+	}
+	for j, c := range contents {
+		pp := fmt.Sprintf("%s[%d]", p, j)
+		var fields [][2]string
+		switch c := c.(type) {
+		case *InputImage:
+			fields = [][2]string{{"image_url", c.ImageURL}}
+		case *InputFile:
+			fields = [][2]string{{"file_url", c.FileURL}, {"file_data", c.FileData}}
+		case *InputVideo:
+			fields = [][2]string{{"video_url", c.VideoURL}}
+		}
+		for _, f := range fields {
+			if len(f[1]) >= len("sidecar:") && strings.EqualFold(f[1][:len("sidecar:")], "sidecar:") {
+				param := pp + "." + f[0]
+				return InvalidRequest(CodeInvalidValue, param+" is a sidecar: reference to a session store's blob; the writer resolves it to the media's bytes before sending, and the adapter never forwards it", param)
+			}
+		}
+	}
+	return nil
+}
+
 // AsAdapter returns the client as an [Adapter]. See [ClientAdapter].
-func (c *Client) AsAdapter() *ClientAdapter {
-	return &ClientAdapter{Client: c}
+func (c *Client) AsAdapter(opts ...AdapterOption) *ClientAdapter {
+	a := &ClientAdapter{Client: c}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 // Create forwards the request.
 func (a *ClientAdapter) Create(ctx context.Context, req Request) (*Response, error) {
+	input, err := a.prepare(req.Input)
+	if err != nil {
+		return nil, err
+	}
+	req.Input = input
 	return a.Client.Create(ctx, req)
 }
 
 // Compact forwards the request.
 func (a *ClientAdapter) Compact(ctx context.Context, req CompactRequest) (*CompactResponse, error) {
+	input, err := a.prepare(req.Input)
+	if err != nil {
+		return nil, err
+	}
+	req.Input = input
 	return a.Client.Compact(ctx, req)
 }
 
@@ -53,6 +220,11 @@ func (a *ClientAdapter) Compact(ctx context.Context, req CompactRequest) (*Compa
 // from a peer gets (see [Error.Headers]): its payload keeps only the
 // headers that describe a failure, and no other spelling of headers.
 func (a *ClientAdapter) CreateStream(ctx context.Context, req Request, sink EventSink) error {
+	input, err := a.prepare(req.Input)
+	if err != nil {
+		return err
+	}
+	req.Input = input
 	stream, err := a.Client.CreateStream(ctx, req)
 	if err != nil {
 		return err

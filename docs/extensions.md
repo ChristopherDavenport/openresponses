@@ -161,12 +161,35 @@ adapter leaves out a reasoning item another issuer signed. The details:
   provider the adapter knows of (`acme.`, a harness's slug) is not
   covered: the adapter cannot tell whether it carries meaning the
   provider must see, and refuses it as PLAN rule 3 says.
-- A client that forwards to an Open Responses upstream does not know
-  which provider stands behind it, and forwards such items unchanged;
-  the adapter that maps onto the provider applies the rule.
+
+**Pass-through adapters.** An adapter that speaks Open Responses to an
+upstream has no provider of its own: its provider is whatever stands
+behind the upstream, which the request does not say. Whoever configures
+the adapter therefore names the provider slug, or slugs, the upstream
+accepts. An upstream that is an Open Responses server over one
+provider's adapter accepts that provider's slug. A server that routes
+each model to its own adapter accepts the slug of each, since the
+adapter it routes to applies this rule again. A pass-through:
+
+- MUST leave out an input item or content part under any other
+  provider's slug, as above, and a reasoning item whose
+  `openresponses-experimental.issuer` names such a provider, as section
+  4's second reader rule says. It compares the issuer's `<issuer>`
+  part, and leaves the comparison of the whole string to the adapter
+  behind the upstream.
+- With no slug named, MUST treat every provider's slug as another's.
+  That is right for an upstream that is a provider's own API, which
+  defines no item under this library's slugs.
+- Forwards unchanged an item under a slug that names no provider, a
+  shared one, and a reasoning item that names no issuer. Refusing those
+  would be deciding for an upstream it cannot see: the adapter that maps
+  onto a provider decides, as above, and an upstream that does not stamp
+  its reasoning items needs its own back.
 
 In this library the provider slugs are those of its three adapters:
-`anthropic.`, `gemini.` and `chatcompletions.`.
+`anthropic.`, `gemini.` and `chatcompletions.`. The pass-through is
+`ClientAdapter`, and `WithProviderSlugs` names the slugs its upstream
+accepts.
 
 ### 1.7 Media held in a session store
 
@@ -210,7 +233,7 @@ belong in this document.
 | Extension | Written by | Read by |
 | --- | --- | --- |
 | `openresponses-experimental.effort` | clients (agentturn, dax) | `providers/anthropic` |
-| `openresponses-experimental.issuer` | `providers/anthropic`, `providers/gemini` | both, on input; agentturn (#286, #242) |
+| `openresponses-experimental.issuer` | `providers/anthropic`, `providers/gemini` | both, and `ClientAdapter`, on input; agentturn (#286, #242) |
 | `openresponses-experimental.cache_write_tokens`, `openresponses-experimental.cache_write_tokens_by_ttl` | `providers/anthropic` | agenteval (#68), any price table |
 | `context_length_exceeded` | all three adapters | agentturn's compaction |
 | `openresponses-experimental.model_info` | the handler (from an adapter), the Responses client's vendor mappings | dax, agentturn's compaction budget, agentkit's effort floor, effort fitting |
@@ -320,7 +343,10 @@ its thinking blocks within a tool loop. It treats an item as foreign
 when it carries another issuer, any value other than exactly
 `anthropic`, or when its `encrypted_content` is empty, and leaves it
 out. The Gemini adapter treats an item with no member as foreign; its
-README says what it sends in its place.
+README says what it sends in its place. A pass-through adapter, which
+forwards to an Open Responses upstream, applies rule 2 by the provider
+slugs it is configured with, and forwards an item with no member, as
+1.6 says.
 
 **Replaces** the per-adapter stamps proposed in the review of #56
 (`anthropic.signature: true`, `gemini.signature: true`), which said the

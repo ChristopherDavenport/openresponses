@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 )
 
@@ -177,4 +178,191 @@ func TestClientAdapterFiltersForwardedErrorHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSameJSON(t, []byte(`{"type":"too_many_requests","code":"c","message":"m","param":null,"headers":{"Retry-After":"3"},"x:hint":"kept"}`), out)
+}
+
+// captureUpstream serves a server that records the input of every
+// request it receives and refuses each one, and returns a client of it
+// and the inputs it saw.
+func captureUpstream(t *testing.T) (*Client, *[]json.RawMessage) {
+	t.Helper()
+	var seen []json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Input json.RawMessage `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		seen = append(seen, body.Input)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"type":"invalid_request","code":"seen","message":"seen","param":null}}`)
+	}))
+	t.Cleanup(srv.Close)
+	return NewClient(srv.URL), &seen
+}
+
+// adapterCalls runs input through each of a ClientAdapter's three
+// methods.
+var adapterCalls = []struct {
+	name string
+	call func(ctx context.Context, a *ClientAdapter, input Items) error
+}{
+	{"Create", func(ctx context.Context, a *ClientAdapter, input Items) error {
+		_, err := a.Create(ctx, Request{Model: "m", Input: input})
+		return err
+	}},
+	{"CreateStream", func(ctx context.Context, a *ClientAdapter, input Items) error {
+		return a.CreateStream(ctx, Request{Model: "m", Input: input}, EventSinkFunc(func(StreamEvent) error { return nil }))
+	}},
+	{"Compact", func(ctx context.Context, a *ClientAdapter, input Items) error {
+		_, err := a.Compact(ctx, CompactRequest{Model: "m", Input: input})
+		return err
+	}},
+}
+
+// TestClientAdapterSidecarMedia pins docs/extensions.md section 1.7 for a
+// pass-through: a sidecar: reference is refused naming the field, before
+// anything reaches the upstream, whatever slugs the adapter accepts.
+func TestClientAdapterSidecarMedia(t *testing.T) {
+	const ref = "sidecar:sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	output := func(c Content) Item {
+		return &FunctionCallOutput{CallID: "c", Output: FunctionCallOutputData{Parts: Contents{&InputText{Text: "x"}, c}}}
+	}
+	cases := []struct {
+		name  string
+		item  Item
+		param string
+	}{
+		{"image_url", UserMessage(&InputImage{ImageURL: ref}), "input[1].content[0].image_url"},
+		{"file_url", UserMessage(&InputFile{FileURL: ref}), "input[1].content[0].file_url"},
+		{"file_data", UserMessage(&InputFile{Filename: "a.pdf", FileData: ref}), "input[1].content[0].file_data"},
+		{"video_url", UserMessage(&InputVideo{VideoURL: ref}), "input[1].content[0].video_url"},
+		{"upper-case scheme", UserMessage(&InputImage{ImageURL: "SIDECAR:sha256:00"}), "input[1].content[0].image_url"},
+		{"tool output image", output(&InputImage{ImageURL: ref}), "input[1].output[1].image_url"},
+		{"tool output file", output(&InputFile{Filename: "a.pdf", FileData: ref}), "input[1].output[1].file_data"},
+	}
+	for _, call := range adapterCalls {
+		for _, tc := range cases {
+			t.Run(call.name+"/"+tc.name, func(t *testing.T) {
+				client, seen := captureUpstream(t)
+				err := call.call(testContext(t), client.AsAdapter(WithProviderSlugs("anthropic")), Items{UserText("hi"), tc.item})
+				var oerr *Error
+				if !errors.As(err, &oerr) || oerr.Type != ErrorTypeInvalidRequest || oerr.Code != CodeInvalidValue || oerr.Param != tc.param || !contains(oerr.Message, "sidecar:") {
+					t.Fatalf("err = %v, want invalid_request/invalid_value on %s naming the sidecar: reference", err, tc.param)
+				}
+				if len(*seen) != 0 {
+					t.Fatalf("upstream received %s", (*seen)[0])
+				}
+			})
+		}
+	}
+}
+
+// TestClientAdapterForeignSlug pins docs/extensions.md section 1.6 (and
+// section 4's rule 2) for a pass-through: the caller names the slugs its
+// upstream accepts, and items, content parts and reasoning under any
+// other provider's slug are left out. Without the option every
+// provider's are. Shared and non-provider slugs pass unchanged, and the
+// caller's input is not changed.
+func TestClientAdapterForeignSlug(t *testing.T) {
+	part := func(typ string) Content {
+		return &UnknownContent{Type: typ, Raw: json.RawMessage(`{"type":"` + typ + `"}`)}
+	}
+	item := func(typ string) Item { return &UnknownItem{Type: typ, Raw: json.RawMessage(`{"type":"` + typ + `"}`)} }
+	reasoning := func(issuer string) Item {
+		r := &ReasoningItem{ID: "rs_" + issuer, Summary: Contents{}, EncryptedContent: "c2ln"}
+		r.SetIssuer(issuer)
+		return r
+	}
+	input := func() Items {
+		return Items{
+			UserMessage(&InputText{Text: "hi"}, part("anthropic.tool_reference"), part("gemini.thought")),
+			item("anthropic.redacted_thinking"),
+			item("gemini.executable_code"),
+			item("chatcompletions.note"),
+			item("acme.thing"),
+			item("openresponses-experimental.note"),
+			reasoning("anthropic"),
+			reasoning("anthropic/other"),
+			reasoning("gemini"),
+			reasoning(""),
+			&FunctionCallOutput{CallID: "c", Output: FunctionCallOutputData{Parts: Contents{&InputText{Text: "1"}, part("gemini.code_execution_result")}}},
+			UserMessage(part("gemini.thought")),
+		}
+	}
+	// summary names each item the upstream received: its type, a
+	// reasoning item's issuer, and the types of a message's or an
+	// output's parts.
+	summary := func(t *testing.T, raw json.RawMessage) []string {
+		t.Helper()
+		var items []struct {
+			Type    string `json:"type"`
+			Issuer  string `json:"openresponses-experimental.issuer"`
+			Content []struct {
+				Type string `json:"type"`
+			} `json:"content"`
+			Output json.RawMessage `json:"output"`
+		}
+		if err := json.Unmarshal(raw, &items); err != nil {
+			t.Fatalf("input %s: %v", raw, err)
+		}
+		var out []string
+		for _, it := range items {
+			s := it.Type
+			if it.Issuer != "" {
+				s += "@" + it.Issuer
+			}
+			for _, c := range it.Content {
+				s += " " + c.Type
+			}
+			var parts []struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(it.Output, &parts) == nil {
+				for _, p := range parts {
+					s += " " + p.Type
+				}
+			}
+			out = append(out, s)
+		}
+		return out
+	}
+	cases := []struct {
+		name  string
+		slugs []string
+		want  []string
+	}{
+		{"no option", nil, []string{
+			"message input_text", "acme.thing", "openresponses-experimental.note", "reasoning",
+			"function_call_output input_text",
+		}},
+		{"anthropic", []string{"anthropic"}, []string{
+			"message input_text anthropic.tool_reference", "anthropic.redacted_thinking", "acme.thing", "openresponses-experimental.note",
+			"reasoning@anthropic", "reasoning@anthropic/other", "reasoning", "function_call_output input_text",
+		}},
+		{"a router for both", []string{"anthropic.", "gemini"}, []string{
+			"message input_text anthropic.tool_reference gemini.thought", "anthropic.redacted_thinking", "gemini.executable_code",
+			"acme.thing", "openresponses-experimental.note",
+			"reasoning@anthropic", "reasoning@anthropic/other", "reasoning@gemini", "reasoning",
+			"function_call_output input_text gemini.code_execution_result", "message gemini.thought",
+		}},
+	}
+	for _, call := range adapterCalls {
+		for _, tc := range cases {
+			t.Run(call.name+"/"+tc.name, func(t *testing.T) {
+				client, seen := captureUpstream(t)
+				in := input()
+				before, _ := json.Marshal(in)
+				_ = call.call(testContext(t), client.AsAdapter(WithProviderSlugs(tc.slugs...)), in)
+				if len(*seen) != 1 {
+					t.Fatalf("upstream saw %d requests", len(*seen))
+				}
+				if got := summary(t, (*seen)[0]); !slices.Equal(got, tc.want) {
+					t.Fatalf("upstream input =\n%q\nwant\n%q", got, tc.want)
+				}
+				if after, _ := json.Marshal(in); string(after) != string(before) {
+					t.Fatalf("caller's input changed:\n%s\n%s", before, after)
+				}
+			})
+		}
+	}
 }

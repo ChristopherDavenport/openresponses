@@ -20,6 +20,17 @@ versions may break the API.
   `file_data` or `video_url` with `invalid_request`, code
   `invalid_value`, naming the field, and never passes it on to be
   fetched.
+- `ClientAdapter` applies both, as a pass-through (section 1.6,
+  "Pass-through adapters"). Behaviour change: it forwarded every item
+  unchanged. It now refuses a `sidecar:` URL with `invalid_request`
+  naming the field, before anything reaches the upstream, and leaves out
+  an item, content part or reasoning item under a provider's slug
+  (`anthropic`, `gemini`, `chatcompletions`) other than those the new
+  `WithProviderSlugs` option names; with no option, every provider's.
+  Items under other slugs, shared ones and unstamped reasoning are
+  forwarded as before. `AsAdapter` now takes options
+  (`AsAdapter(opts ...AdapterOption)`); existing calls compile
+  unchanged.
 - `chatcompletions` applies both. Behaviour change: an `anthropic.*` or
   `gemini.*` item or content part was `invalid_request`; it is now left
   out, and a message left with no content is not sent. A `sidecar:`
