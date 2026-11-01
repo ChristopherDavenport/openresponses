@@ -216,12 +216,13 @@ func TestEncodeInputErrors(t *testing.T) {
 		{"video", openresponses.Items{openresponses.UserMessage(&openresponses.InputVideo{VideoURL: "https://example.com/v.mp4"})}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
 		{"compaction", openresponses.Items{&openresponses.Compaction{EncryptedContent: "x"}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"item reference", openresponses.Items{&openresponses.ItemReference{ID: "msg_1"}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
-		{"foreign item", openresponses.Items{&openresponses.UnknownItem{Type: "gemini.executable_code", Raw: json.RawMessage(`{"type":"gemini.executable_code"}`)}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
+		{"item of no provider", openresponses.Items{&openresponses.UnknownItem{Type: "acme.thing", Raw: json.RawMessage(`{"type":"acme.thing"}`)}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
 		{"extension without block", openresponses.Items{&openresponses.UnknownItem{Type: "anthropic.server_tool_use", Raw: json.RawMessage(`{"type":"anthropic.server_tool_use"}`)}}, openresponses.CodeInvalidValue, "input[0]"},
-		{"foreign part", openresponses.Items{openresponses.UserMessage(&openresponses.UnknownContent{Type: "gemini.thought", Raw: json.RawMessage(`{"type":"gemini.thought","part":{}}`)})}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
+		{"part of no provider", openresponses.Items{openresponses.UserMessage(&openresponses.UnknownContent{Type: "acme.thing", Raw: json.RawMessage(`{"type":"acme.thing"}`)})}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
 		{"part without block", openresponses.Items{&openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{&openresponses.UnknownContent{Type: "anthropic.tool_reference", Raw: json.RawMessage(`{"type":"anthropic.tool_reference"}`)}}}}}, openresponses.CodeInvalidValue, "input[0].output[0]"},
 		{"part in the system prompt", openresponses.Items{&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{&openresponses.UnknownContent{Type: "anthropic.tool_reference", Raw: json.RawMessage(`{"type":"anthropic.tool_reference","block":{"type":"tool_reference","tool_name":"x"}}`)}}}}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
 		{"system image", openresponses.Items{&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{&openresponses.InputImage{ImageURL: "data:image/png;base64,aGk="}}}}, openresponses.CodeUnsupportedParameter, "input[0].content[0].type"},
+		{"system image after a foreign part", openresponses.Items{&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{&openresponses.UnknownContent{Type: "gemini.thought", Raw: json.RawMessage(`{"type":"gemini.thought"}`)}, &openresponses.InputImage{ImageURL: "data:image/png;base64,aGk="}}}}, openresponses.CodeUnsupportedParameter, "input[0].content[1].type"},
 		{"bare base64 without filename", openresponses.Items{openresponses.UserMessage(&openresponses.InputFile{FileData: "aGk="})}, openresponses.CodeInvalidValue, "input[0].content[0].filename"},
 		{"unsupported file type", openresponses.Items{openresponses.UserMessage(&openresponses.InputFile{Filename: "a.zip", FileData: "aGk="})}, openresponses.CodeInvalidValue, "input[0].content[0].file_data"},
 		{"not a url", openresponses.Items{openresponses.UserMessage(&openresponses.InputImage{ImageURL: "cat.png"})}, openresponses.CodeInvalidValue, "input[0].content[0].image_url"},
@@ -758,5 +759,79 @@ func TestEncodeToolResultsFirst(t *testing.T) {
 	}
 	if strings.Join(kinds, ",") != "toolu_1,toolu_2,reminder,and" {
 		t.Fatalf("user turn = %v", kinds)
+	}
+}
+
+// TestEncodeForeignSlug pins docs/extensions.md section 1.6: an item or
+// content part under another provider's slug is left out, wherever it
+// sits, and the request is sent without it rather than refused.
+func TestEncodeForeignSlug(t *testing.T) {
+	item := func(typ string) *openresponses.UnknownItem {
+		return &openresponses.UnknownItem{Type: typ, Raw: json.RawMessage(`{"type":"` + typ + `","part":{"executableCode":{"code":"1"}}}`)}
+	}
+	part := func(typ string) *openresponses.UnknownContent {
+		return &openresponses.UnknownContent{Type: typ, Raw: json.RawMessage(`{"type":"` + typ + `"}`)}
+	}
+	p, err := encodeRequest(openresponses.Request{Input: openresponses.Items{
+		&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{part("gemini.thought")}},
+		openresponses.UserMessage(&openresponses.InputText{Text: "Run it"}, part("gemini.thought")),
+		item("gemini.executable_code"),
+		&openresponses.FunctionCall{CallID: "toolu_1", Name: "run", Arguments: `{}`},
+		item("chatcompletions.note"),
+		&openresponses.FunctionCallOutput{CallID: "toolu_1", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{
+			&openresponses.InputText{Text: "1"}, part("gemini.code_execution_result"),
+		}}},
+		openresponses.UserMessage(part("chatcompletions.thing")),
+		openresponses.AssistantText("Done"),
+	}}, defaults)
+	if err != nil {
+		t.Fatalf("encodeRequest: %v", err)
+	}
+	body := wire(t, p)
+	if _, ok := body["system"]; ok {
+		t.Fatalf("system = %v, want none", body["system"])
+	}
+	got, err := json.Marshal(body["messages"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"content":[{"text":"Run it","type":"text"}],"role":"user"},` +
+		`{"content":[{"id":"toolu_1","input":{},"name":"run","type":"tool_use"}],"role":"assistant"},` +
+		`{"content":[{"content":[{"text":"1","type":"text"}],"tool_use_id":"toolu_1","type":"tool_result"}],"role":"user"},` +
+		`{"content":[{"text":"Done","type":"text"}],"role":"assistant"}]`
+	if string(got) != want {
+		t.Fatalf("messages =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestEncodeSidecarMedia pins docs/extensions.md section 1.7: a sidecar:
+// reference in any media field is refused, naming the field, and never
+// sent for Claude to fetch.
+func TestEncodeSidecarMedia(t *testing.T) {
+	const ref = "sidecar:sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	output := func(c openresponses.Content) openresponses.Item {
+		return &openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{c}}}
+	}
+	cases := []struct {
+		name  string
+		item  openresponses.Item
+		param string
+	}{
+		{"image_url", openresponses.UserMessage(&openresponses.InputImage{ImageURL: ref}), "input[0].content[0].image_url"},
+		{"file_url", openresponses.UserMessage(&openresponses.InputFile{Filename: "a.pdf", FileURL: ref}), "input[0].content[0].file_url"},
+		{"file_data", openresponses.UserMessage(&openresponses.InputFile{Filename: "a.pdf", FileData: ref}), "input[0].content[0].file_data"},
+		{"upper-case scheme", openresponses.UserMessage(&openresponses.InputImage{ImageURL: "SIDECAR:sha256:00"}), "input[0].content[0].image_url"},
+		{"tool output image", output(&openresponses.InputImage{ImageURL: ref}), "input[0].output[0].image_url"},
+		{"tool output file", output(&openresponses.InputFile{Filename: "a.pdf", FileData: ref}), "input[0].output[0].file_data"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := encodeRequest(openresponses.Request{Input: openresponses.Items{tc.item}}, defaults)
+			wantErr(t, err, openresponses.CodeInvalidValue, tc.param)
+			var oerr *openresponses.Error
+			if errorsAs(err, &oerr); oerr.Type != openresponses.ErrorTypeInvalidRequest || !strings.Contains(oerr.Message, "sidecar:") {
+				t.Fatalf("err = %s %q, want invalid_request naming the sidecar: reference", oerr.Type, oerr.Message)
+			}
+		})
 	}
 }

@@ -11,11 +11,14 @@
 //
 // Requests map onto one POST to {base}/chat/completions and its stream
 // maps back onto Open Responses items. Fields the protocol has no
-// equivalent for are rejected rather than dropped, with two documented
-// exceptions the protocol itself imposes: reasoning has no standard
-// field, so reasoning items are replayed only into the field
-// [WithReasoningReplay] names, and reasoning.summary has no effect. The
-// README lists everything else. Compaction is not supported.
+// equivalent for are rejected rather than dropped, with three documented
+// exceptions: reasoning has no standard field, so reasoning items are
+// replayed only into the field [WithReasoningReplay] names;
+// reasoning.summary has no effect; and an input item or content part
+// under another provider's slug (anthropic., gemini.) is left out, as
+// docs/extensions.md section 1.6 says. An image or file whose URL is a
+// sidecar: reference is refused (section 1.7). providers/PLAN.md lists
+// everything else. Compaction is not supported.
 package chatcompletions
 
 import (

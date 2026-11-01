@@ -3,6 +3,7 @@ package chatcompletions
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/ChristopherDavenport/openresponses"
@@ -239,6 +240,56 @@ func invalid(param, message string) *openresponses.Error {
 	return openresponses.InvalidRequest(openresponses.CodeInvalidValue, message, param)
 }
 
+// providerSlugs are the slugs of the other adapters in this repository.
+// An input item or content part under one is that provider's own.
+var providerSlugs = []string{"anthropic.", "gemini."}
+
+// foreign reports whether an item or content part type carries another
+// provider's slug (docs/extensions.md section 1.6). Such an item is that
+// provider's record of its own output, which no Chat Completions model
+// can read, and it is left out of the request rather than refused: a
+// transcript that moves between providers keeps it for the provider it
+// came from.
+func foreign(typ string) bool {
+	for _, s := range providerSlugs {
+		if strings.HasPrefix(typ, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// foreignPart reports whether c is a content part [foreign] leaves out.
+func foreignPart(c openresponses.Content) bool {
+	u, ok := c.(*openresponses.UnknownContent)
+	return ok && foreign(u.Type)
+}
+
+// leftOut reports whether item is left out of the request whole: an
+// item under another provider's slug, or a message whose every part is.
+// A message that had no content to begin with is sent as it was.
+func leftOut(item openresponses.Item) bool {
+	switch it := item.(type) {
+	case *openresponses.UnknownItem:
+		return foreign(it.Type)
+	case *openresponses.Message:
+		return len(it.Content) > 0 && !slices.ContainsFunc(it.Content, func(c openresponses.Content) bool { return !foreignPart(c) })
+	}
+	return false
+}
+
+// sidecar returns the error for a media field holding a sidecar:
+// reference, or nil (docs/extensions.md section 1.7). The reference
+// names a blob in a session store, which the writer resolves before it
+// sends; passed on, it would be a URL the provider tries and fails to
+// fetch.
+func sidecar(param, value string) *openresponses.Error {
+	if len(value) < len("sidecar:") || !strings.EqualFold(value[:len("sidecar:")], "sidecar:") {
+		return nil
+	}
+	return invalid(param, fmt.Sprintf("%s is a sidecar: reference to a session store's blob; the writer resolves it to the media's bytes before sending, and the adapter never fetches it", param))
+}
+
 // encodeToolChoice maps the choice onto the protocol's own forms, which
 // include allowed_tools.
 func encodeToolChoice(c openresponses.ToolChoice) any {
@@ -289,6 +340,11 @@ func (a *Adapter) encodeInput(req openresponses.Request) ([]message, error) {
 	}
 	for i, item := range req.Input {
 		p := fmt.Sprintf("input[%d]", i)
+		if leftOut(item) {
+			// Before the flush, so a left-out item between two function
+			// outputs does not split their run.
+			continue
+		}
 		if _, ok := item.(*openresponses.FunctionCallOutput); !ok {
 			flush()
 		}
@@ -310,6 +366,9 @@ func (a *Adapter) encodeInput(req openresponses.Request) ([]message, error) {
 			case openresponses.RoleAssistant:
 				m := assistant()
 				for j, c := range it.Content {
+					if foreignPart(c) {
+						continue
+					}
 					switch c := c.(type) {
 					case *openresponses.OutputText:
 						appendText(m, c.Text)
@@ -374,6 +433,9 @@ func encodeOutput(out openresponses.FunctionCallOutputData, p string) (string, [
 	var media []part
 	for j, c := range out.Parts {
 		pp := fmt.Sprintf("%s[%d]", p, j)
+		if foreignPart(c) {
+			continue
+		}
 		switch c := c.(type) {
 		case *openresponses.InputText:
 			text.WriteString(c.Text)
@@ -418,6 +480,9 @@ func appendText(m *message, text string) {
 func textOnly(contents openresponses.Contents, p string) (string, error) {
 	var out strings.Builder
 	for j, c := range contents {
+		if foreignPart(c) {
+			continue
+		}
 		switch c := c.(type) {
 		case *openresponses.InputText:
 			out.WriteString(c.Text)
@@ -433,16 +498,15 @@ func textOnly(contents openresponses.Contents, p string) (string, error) {
 }
 
 // encodeParts maps user content: a bare string when it is one text part,
-// otherwise an array of text, image_url and file parts.
+// otherwise an array of text, image_url and file parts. A part under
+// another provider's slug is left out (see [foreign]).
 func encodeParts(contents openresponses.Contents, p string) (any, error) {
-	if len(contents) == 1 {
-		if t, ok := contents[0].(*openresponses.InputText); ok {
-			return t.Text, nil
-		}
-	}
 	parts := make([]part, 0, len(contents))
 	for j, c := range contents {
 		pp := fmt.Sprintf("%s[%d]", p, j)
+		if foreignPart(c) {
+			continue
+		}
 		if t, ok := c.(*openresponses.InputText); ok {
 			parts = append(parts, part{Type: "text", Text: t.Text})
 			continue
@@ -453,6 +517,9 @@ func encodeParts(contents openresponses.Contents, p string) (any, error) {
 		}
 		parts = append(parts, mp)
 	}
+	if len(parts) == 1 && parts[0].Type == "text" {
+		return parts[0].Text, nil
+	}
 	return parts, nil
 }
 
@@ -460,6 +527,9 @@ func encodeParts(contents openresponses.Contents, p string) (any, error) {
 func encodeMedia(c openresponses.Content, pp string) (part, error) {
 	switch c := c.(type) {
 	case *openresponses.InputImage:
+		if err := sidecar(pp+".image_url", c.ImageURL); err != nil {
+			return part{}, err
+		}
 		if c.FileID != "" {
 			return part{}, unsupported(pp + ".file_id")
 		}
@@ -472,6 +542,12 @@ func encodeMedia(c openresponses.Content, pp string) (part, error) {
 		}
 		return part{Type: "image_url", ImageURL: img}, nil
 	case *openresponses.InputFile:
+		if err := sidecar(pp+".file_url", c.FileURL); err != nil {
+			return part{}, err
+		}
+		if err := sidecar(pp+".file_data", c.FileData); err != nil {
+			return part{}, err
+		}
 		switch {
 		case c.FileURL != "":
 			return part{}, unsupported(pp + ".file_url")

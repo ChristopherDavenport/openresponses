@@ -54,8 +54,29 @@ func encodeRequest(req openresponses.Request, cfg config) (sdk.MessageNewParams,
 
 // providerSlugs are the slugs of the other adapters in this repository.
 // A request member under one is a setting for a provider this adapter
-// cannot honour.
+// cannot honour, and an input item or content part under one is that
+// provider's own (see [foreign]).
 var providerSlugs = []string{"gemini.", "chatcompletions."}
+
+// foreign reports whether an item or content part type carries another
+// provider's slug (docs/extensions.md section 1.6). Such an item is that
+// provider's record of its own output, which Claude cannot read, and it
+// is left out of the request rather than refused: a transcript that
+// moves between providers keeps it for the provider it came from.
+func foreign(typ string) bool {
+	return slices.ContainsFunc(providerSlugs, func(s string) bool { return strings.HasPrefix(typ, s) })
+}
+
+// sidecar returns the error for a media field holding a sidecar:
+// reference, or nil (docs/extensions.md section 1.7). The reference
+// names a blob in a session store, which the writer resolves before it
+// sends; passed on, it would be a URL Claude tries and fails to fetch.
+func sidecar(param, value string) *openresponses.Error {
+	if len(value) < len("sidecar:") || !strings.EqualFold(value[:len("sidecar:")], "sidecar:") {
+		return nil
+	}
+	return invalid(param, fmt.Sprintf("%s is a sidecar: reference to a session store's blob; the writer resolves it to the media's bytes before sending, and the adapter never fetches it", param))
+}
 
 // encodeExtra reads the request's unknown top-level members by kind
 // (PLAN rule 8). An anthropic.<field> member is the Messages API field
@@ -89,7 +110,7 @@ func encodeExtra(extra map[string]any, forward bool, p *sdk.MessageNewParams) er
 			fields[field] = extra[key]
 			continue
 		}
-		if slices.ContainsFunc(providerSlugs, func(s string) bool { return strings.HasPrefix(key, s) }) {
+		if foreign(key) {
 			return openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
 				fmt.Sprintf("%s is a setting for another provider, which the Messages API cannot honour", key), key)
 		}
@@ -519,11 +540,18 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 					add(sdk.MessageParamRoleUser, blocks)
 					continue
 				}
-				for j, b := range blocks {
-					if b.OfText == nil {
-						return nil, nil, unsupported(fmt.Sprintf("%s.content[%d].type", p, j))
+				// blocks has no entry for a part left out as foreign, so
+				// the error names the part by its place in the content.
+				j := 0
+				for k, c := range it.Content {
+					if u, ok := c.(*openresponses.UnknownContent); ok && foreign(u.Type) {
+						continue
 					}
-					system = append(system, *b.OfText)
+					if blocks[j].OfText == nil {
+						return nil, nil, unsupported(fmt.Sprintf("%s.content[%d].type", p, k))
+					}
+					system = append(system, *blocks[j].OfText)
+					j++
 				}
 			default:
 				return nil, nil, invalid(p+".role", fmt.Sprintf("unknown role %q", it.Role))
@@ -554,6 +582,11 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			}
 			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{sdk.NewThinkingBlock(it.EncryptedContent, text)})
 		case *openresponses.UnknownItem:
+			if foreign(it.Type) {
+				// Another provider's item: left out, not refused; see
+				// foreign.
+				continue
+			}
 			block, err := extensionBlock(it.Type, it.Raw)
 			if err != nil {
 				return nil, nil, invalid(p, err.Error())
@@ -681,6 +714,9 @@ func encodeFunctionOutput(out *openresponses.FunctionCallOutput, p string) (sdk.
 				result.Content = append(result.Content, sdk.ToolResultBlockParamContentUnion{OfImage: block.OfImage})
 			}
 		case *openresponses.UnknownContent:
+			if foreign(c.Type) {
+				continue
+			}
 			block, err := extensionBlock(c.Type, c.Raw)
 			if err != nil {
 				return sdk.ContentBlockParamUnion{}, invalid(pp, err.Error())
@@ -717,7 +753,8 @@ func extensionBlock(typ string, raw json.RawMessage) (json.RawMessage, error) {
 
 // encodeBlocks maps message content. Text of any flavour is a text
 // block; images and files become image and document blocks; an
-// anthropic.* part is the block it carries.
+// anthropic.* part is the block it carries, and another provider's part
+// is left out (see [foreign]).
 func encodeBlocks(contents openresponses.Contents, p string) ([]sdk.ContentBlockParamUnion, error) {
 	blocks := make([]sdk.ContentBlockParamUnion, 0, len(contents))
 	for j, content := range contents {
@@ -746,6 +783,9 @@ func encodeBlocks(contents openresponses.Contents, p string) ([]sdk.ContentBlock
 		case *openresponses.InputVideo:
 			return nil, unsupported(pp + ".type")
 		case *openresponses.UnknownContent:
+			if foreign(c.Type) {
+				continue
+			}
 			block, err := extensionBlock(c.Type, c.Raw)
 			if err != nil {
 				return nil, invalid(pp, err.Error())
@@ -762,8 +802,12 @@ func encodeBlocks(contents openresponses.Contents, p string) ([]sdk.ContentBlock
 }
 
 // imageBlock maps an input_image: a Files API id, a data URL as base64,
-// or any other URL as a URL source for the API to fetch.
+// or any other URL but a sidecar: reference as a URL source for the API
+// to fetch.
 func imageBlock(c *openresponses.InputImage, p string) (*sdk.ImageBlockParam, error) {
+	if err := sidecar(p+".image_url", c.ImageURL); err != nil {
+		return nil, err
+	}
 	// detail is a resolution hint the Messages API does not take.
 	switch {
 	case c.FileID != "":
@@ -796,6 +840,12 @@ func fileBlock(f *openresponses.InputFile, p string) (sdk.ContentBlockParamUnion
 			d.Title = param.NewOpt(f.Filename)
 		}
 		return sdk.ContentBlockParamUnion{OfDocument: d}
+	}
+	if err := sidecar(p+".file_url", f.FileURL); err != nil {
+		return sdk.ContentBlockParamUnion{}, err
+	}
+	if err := sidecar(p+".file_data", f.FileData); err != nil {
+		return sdk.ContentBlockParamUnion{}, err
 	}
 	switch {
 	case f.FileID != "":

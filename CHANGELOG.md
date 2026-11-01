@@ -5,6 +5,26 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- docs/extensions.md section 1.6: an adapter leaves out an input item
+  or content part whose type carries another provider's slug, rather
+  than sending it or refusing the request (agentturn#285). It is section
+  4's rule for reasoning another issuer signed, applied to whole items,
+  so a conversation that moves between providers no longer fails on the
+  first request after the move. Tools and request members under another
+  provider's slug are still refused (section 1.5).
+- docs/extensions.md section 1.7: a `sidecar:` media URL, a session
+  store's reference to a blob, is the writer's to resolve before sending
+  (agentturn#284). An adapter refuses one in `image_url`, `file_url`,
+  `file_data` or `video_url` with `invalid_request`, code
+  `invalid_value`, naming the field, and never passes it on to be
+  fetched.
+- `chatcompletions` applies both. Behaviour change: an `anthropic.*` or
+  `gemini.*` item or content part was `invalid_request`; it is now left
+  out, and a message left with no content is not sent. A `sidecar:`
+  `image_url` or `file_data` was sent to the provider as given.
+
 ## v0.0.17 - 2026-10-27
 
 - Members the specification does not define are kept below the top

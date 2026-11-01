@@ -95,6 +95,27 @@ func providerMember(name string) bool {
 	return false
 }
 
+// foreign reports whether an item or content part type carries another
+// provider's slug (docs/extensions.md section 1.6). Such an item is that
+// provider's record of its own output, which Gemini cannot read, and it
+// is left out of the request rather than refused: a transcript that
+// moves between providers keeps it for the provider it came from.
+func foreign(typ string) bool {
+	return providerMember(typ) && !strings.HasPrefix(typ, slug)
+}
+
+// sidecar returns the error for a media field holding a sidecar:
+// reference, or nil (docs/extensions.md section 1.7). The reference
+// names a blob in a session store, which the writer resolves before it
+// sends; passed on, it would be a file URI Gemini tries and fails to
+// read.
+func sidecar(param, value string) *openresponses.Error {
+	if len(value) < len("sidecar:") || !strings.EqualFold(value[:len("sidecar:")], "sidecar:") {
+		return nil
+	}
+	return invalid(param, fmt.Sprintf("%s is a sidecar: reference to a session store's blob; the writer resolves it to the media's bytes before sending, and the adapter never fetches it", param))
+}
+
 // forwardable returns the members [WithExtra] forwards: every member
 // that is neither a shared extension nor under a provider's slug.
 func forwardable(extra map[string]any) map[string]any {
@@ -559,10 +580,17 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 			case openresponses.RoleAssistant:
 				add(genai.RoleModel, parts)
 			case openresponses.RoleSystem, openresponses.RoleDeveloper:
-				for j, p := range parts {
-					if p.Text == "" {
-						return nil, nil, unsupported(fmt.Sprintf("%s.content[%d].type", param, j))
+				// parts has no entry for a part left out as foreign, so the
+				// error names the part by its place in the content.
+				j := 0
+				for k, c := range it.Content {
+					if u, ok := c.(*openresponses.UnknownContent); ok && foreign(u.Type) {
+						continue
 					}
+					if parts[j].Text == "" {
+						return nil, nil, unsupported(fmt.Sprintf("%s.content[%d].type", param, k))
+					}
+					j++
 				}
 				if leading {
 					system = append(system, parts...)
@@ -609,6 +637,11 @@ func encodeInput(items openresponses.Items) (contents []*genai.Content, system [
 				pending = sig
 			}
 		case *openresponses.UnknownItem:
+			if foreign(it.Type) {
+				// Another provider's item: left out, not refused; see
+				// foreign.
+				continue
+			}
 			part, err := extensionPart(it)
 			if err != nil {
 				return nil, nil, invalid(param, err.Error())
@@ -749,6 +782,10 @@ func encodeFunctionOutput(out *openresponses.FunctionCallOutput, name, param str
 					return nil, err
 				}
 				media = append(media, responseMedia(blob, file))
+			case *openresponses.UnknownContent:
+				if !foreign(c.Type) {
+					return nil, unsupported(p + ".type")
+				}
 			default:
 				return nil, unsupported(p + ".type")
 			}
@@ -793,7 +830,8 @@ func extensionPart(u *openresponses.UnknownItem) (*genai.Part, error) {
 }
 
 // encodeParts maps message content. Text of any flavour is a text part;
-// images, files and video become inline data or a file reference.
+// images, files and video become inline data or a file reference; a
+// part under another provider's slug is left out (see [foreign]).
 func encodeParts(contents openresponses.Contents, param string) ([]*genai.Part, error) {
 	parts := make([]*genai.Part, 0, len(contents))
 	for j, content := range contents {
@@ -838,6 +876,10 @@ func encodeParts(contents openresponses.Contents, param string) ([]*genai.Part, 
 				return nil, err
 			}
 			parts = append(parts, mediaPart(blob, file))
+		case *openresponses.UnknownContent:
+			if !foreign(c.Type) {
+				return nil, unsupported(p + ".type")
+			}
 		default:
 			return nil, unsupported(p + ".type")
 		}
@@ -856,6 +898,9 @@ func mediaPart(blob *genai.Blob, file *genai.FileData) *genai.Part {
 // a data URL or bare base64 typed by the filename; file_url is a
 // reference; file_id names a resource this adapter cannot look up.
 func fileSource(f *openresponses.InputFile, param string) (*genai.Blob, *genai.FileData, error) {
+	if err := sidecar(param+".file_data", f.FileData); err != nil {
+		return nil, nil, err
+	}
 	switch {
 	case f.FileID != "":
 		return nil, nil, unsupported(param + ".file_id")
@@ -887,11 +932,14 @@ func fileSource(f *openresponses.InputFile, param string) (*genai.Blob, *genai.F
 }
 
 // mediaSource turns a URL into inline data (a data URL) or a file
-// reference (anything else). Which references a backend can read, gs://
-// on Vertex AI, Files API and YouTube URLs on the Gemini API, is for the
-// backend to say; the adapter passes the URL through and the media type
-// it can infer from the path.
+// reference (anything else but a sidecar: reference, which is refused).
+// Which references a backend can read, gs:// on Vertex AI, Files API and
+// YouTube URLs on the Gemini API, is for the backend to say; the adapter
+// passes the URL through and the media type it can infer from the path.
 func mediaSource(raw, param string) (*genai.Blob, *genai.FileData, error) {
+	if err := sidecar(param, raw); err != nil {
+		return nil, nil, err
+	}
 	if strings.HasPrefix(raw, "data:") {
 		mt, data, err := parseDataURL(raw)
 		if err != nil {

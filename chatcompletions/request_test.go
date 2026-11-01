@@ -3,6 +3,7 @@ package chatcompletions
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ChristopherDavenport/openresponses"
@@ -333,13 +334,80 @@ func TestEncodeErrors(t *testing.T) {
 		{"tool output image file_id", openresponses.Request{Input: openresponses.Items{&openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{&openresponses.InputImage{FileID: "f"}}}}}}, openresponses.CodeUnsupportedParameter, "input[0].output[0].file_id"},
 		{"tool output file_url", openresponses.Request{Input: openresponses.Items{&openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{&openresponses.InputFile{FileURL: "https://x/a.pdf"}}}}}}, openresponses.CodeUnsupportedParameter, "input[0].output[0].file_url"},
 		{"compaction", openresponses.Request{Input: openresponses.Items{&openresponses.Compaction{EncryptedContent: "x"}}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
-		{"extension item", openresponses.Request{Input: openresponses.Items{&openresponses.UnknownItem{Type: "gemini.executable_code"}}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
+		{"item of no provider", openresponses.Request{Input: openresponses.Items{&openresponses.UnknownItem{Type: "acme.thing"}}}, openresponses.CodeUnsupportedParameter, "input[0].type"},
+		{"part of no provider", openresponses.Request{Input: openresponses.Items{openresponses.UserMessage(&openresponses.InputText{Text: "a"}, &openresponses.UnknownContent{Type: "acme.thing"})}}, openresponses.CodeUnsupportedParameter, "input[0].content[1].type"},
+		{"system image after a foreign part", openresponses.Request{Input: openresponses.Items{&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{&openresponses.UnknownContent{Type: "gemini.thought"}, &openresponses.InputImage{ImageURL: "https://x/a.png"}}}}}, openresponses.CodeUnsupportedParameter, "input[0].content[1].type"},
 		{"previous response", openresponses.Request{PreviousResponseID: "resp_1"}, openresponses.CodePreviousResponseNotFound, "previous_response_id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := testAdapter().encodeRequest(tc.req)
 			wantErr(t, err, tc.code, tc.param)
+		})
+	}
+}
+
+// TestEncodeForeignSlug pins docs/extensions.md section 1.6: an item or
+// content part under another provider's slug is left out, wherever it
+// sits, and the request is sent without it rather than refused. A
+// message left with nothing to send is not sent.
+func TestEncodeForeignSlug(t *testing.T) {
+	item := func(typ string) *openresponses.UnknownItem {
+		return &openresponses.UnknownItem{Type: typ, Raw: json.RawMessage(`{"type":"` + typ + `"}`)}
+	}
+	part := func(typ string) *openresponses.UnknownContent {
+		return &openresponses.UnknownContent{Type: typ, Raw: json.RawMessage(`{"type":"` + typ + `"}`)}
+	}
+	body := wire(t, testAdapter(), openresponses.Request{Input: openresponses.Items{
+		&openresponses.Message{Role: openresponses.RoleSystem, Content: openresponses.Contents{part("anthropic.tool_reference")}},
+		openresponses.UserMessage(&openresponses.InputText{Text: "Run it"}, part("anthropic.tool_reference")),
+		&openresponses.Message{Role: openresponses.RoleAssistant, Content: openresponses.Contents{&openresponses.OutputText{Text: "a"}, part("gemini.thought")}},
+		item("anthropic.redacted_thinking"),
+		&openresponses.FunctionCall{CallID: "c1", Name: "run", Arguments: `{}`},
+		item("gemini.executable_code"),
+		&openresponses.FunctionCallOutput{CallID: "c1", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{
+			&openresponses.InputText{Text: "1"}, part("anthropic.tool_reference"),
+		}}},
+		openresponses.UserMessage(part("gemini.thought")),
+		&openresponses.Message{Role: openresponses.RoleAssistant, Content: openresponses.Contents{part("anthropic.tool_reference")}},
+		openresponses.AssistantText("Done"),
+	}})
+	sameJSON(t, body["messages"], `[
+		{"role":"user","content":"Run it"},
+		{"role":"assistant","content":"a","tool_calls":[{"id":"c1","type":"function","function":{"name":"run","arguments":"{}"}}]},
+		{"role":"tool","tool_call_id":"c1","content":"1"},
+		{"role":"assistant","content":"Done"}
+	]`)
+}
+
+// TestEncodeSidecarMedia pins docs/extensions.md section 1.7: a sidecar:
+// reference in any media field is refused, naming the field, and never
+// sent for the provider to fetch.
+func TestEncodeSidecarMedia(t *testing.T) {
+	const ref = "sidecar:sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+	output := func(c openresponses.Content) openresponses.Item {
+		return &openresponses.FunctionCallOutput{CallID: "c", Output: openresponses.FunctionCallOutputData{Parts: openresponses.Contents{c}}}
+	}
+	cases := []struct {
+		name  string
+		item  openresponses.Item
+		param string
+	}{
+		{"image_url", openresponses.UserMessage(&openresponses.InputImage{ImageURL: ref}), "input[0].content[0].image_url"},
+		{"file_url", openresponses.UserMessage(&openresponses.InputFile{Filename: "a.pdf", FileURL: ref}), "input[0].content[0].file_url"},
+		{"file_data", openresponses.UserMessage(&openresponses.InputFile{Filename: "a.pdf", FileData: ref}), "input[0].content[0].file_data"},
+		{"upper-case scheme", openresponses.UserMessage(&openresponses.InputImage{ImageURL: "SIDECAR:sha256:00"}), "input[0].content[0].image_url"},
+		{"tool output image", output(&openresponses.InputImage{ImageURL: ref}), "input[0].output[0].image_url"},
+		{"tool output file", output(&openresponses.InputFile{Filename: "a.pdf", FileData: ref}), "input[0].output[0].file_data"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := testAdapter().encodeRequest(openresponses.Request{Input: openresponses.Items{tc.item}})
+			wantErr(t, err, openresponses.CodeInvalidValue, tc.param)
+			var oerr *openresponses.Error
+			if errors.As(err, &oerr); oerr.Type != openresponses.ErrorTypeInvalidRequest || !strings.Contains(oerr.Message, "sidecar:") {
+				t.Fatalf("err = %s %q, want invalid_request naming the sidecar: reference", oerr.Type, oerr.Message)
+			}
 		})
 	}
 }
