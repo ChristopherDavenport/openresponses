@@ -110,6 +110,9 @@ func foreign(typ string) bool {
 // sends; passed on, it would be a file URI Gemini tries and fails to
 // read.
 func sidecar(param, value string) *openresponses.Error {
+	// A URL parser strips leading and trailing C0 controls and spaces
+	// before reading the scheme, so the match does too.
+	value = strings.TrimFunc(value, func(r rune) bool { return r <= ' ' })
 	if len(value) < len("sidecar:") || !strings.EqualFold(value[:len("sidecar:")], "sidecar:") {
 		return nil
 	}

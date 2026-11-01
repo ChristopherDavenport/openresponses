@@ -793,6 +793,8 @@ func TestEncodeSidecarMedia(t *testing.T) {
 		{"file_data", user(&openresponses.InputFile{Filename: "a.pdf", FileData: ref}), "input[0].content[0].file_data"},
 		{"video_url", user(&openresponses.InputVideo{VideoURL: ref}), "input[0].content[0].video_url"},
 		{"upper-case scheme", user(&openresponses.InputImage{ImageURL: "Sidecar:sha256:00"}), "input[0].content[0].image_url"},
+		{"padded image_url", user(&openresponses.InputImage{ImageURL: " \t" + ref + "\n"}), "input[0].content[0].image_url"},
+		{"padded file_data", user(&openresponses.InputFile{Filename: "a.pdf", FileData: " " + ref}), "input[0].content[0].file_data"},
 		{"tool output image", output(&openresponses.InputImage{ImageURL: ref}), "input[1].output[0].image_url"},
 		{"tool output file", output(&openresponses.InputFile{Filename: "a.pdf", FileData: ref}), "input[1].output[0].file_data"},
 	}
@@ -801,7 +803,7 @@ func TestEncodeSidecarMedia(t *testing.T) {
 			_, _, err := encodeRequest(openresponses.Request{Input: tc.input}, ThinkingAuto)
 			wantErr(t, err, openresponses.CodeInvalidValue, tc.param)
 			var oerr *openresponses.Error
-			if errorsAs(err, &oerr); oerr.Type != openresponses.ErrorTypeInvalidRequest || !strings.Contains(oerr.Message, "sidecar:") {
+			if errorsAs(err, &oerr); oerr.Type != openresponses.ErrorTypeInvalidRequest || !strings.Contains(oerr.Message, "sidecar: reference") {
 				t.Fatalf("err = %s %q, want invalid_request naming the sidecar: reference", oerr.Type, oerr.Message)
 			}
 		})

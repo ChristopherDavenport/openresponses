@@ -237,6 +237,8 @@ func TestClientAdapterSidecarMedia(t *testing.T) {
 		{"file_data", UserMessage(&InputFile{Filename: "a.pdf", FileData: ref}), "input[1].content[0].file_data"},
 		{"video_url", UserMessage(&InputVideo{VideoURL: ref}), "input[1].content[0].video_url"},
 		{"upper-case scheme", UserMessage(&InputImage{ImageURL: "SIDECAR:sha256:00"}), "input[1].content[0].image_url"},
+		{"padded image_url", UserMessage(&InputImage{ImageURL: " \t" + ref + "\n"}), "input[1].content[0].image_url"},
+		{"padded video_url", UserMessage(&InputVideo{VideoURL: " " + ref}), "input[1].content[0].video_url"},
 		{"tool output image", output(&InputImage{ImageURL: ref}), "input[1].output[1].image_url"},
 		{"tool output file", output(&InputFile{Filename: "a.pdf", FileData: ref}), "input[1].output[1].file_data"},
 	}
@@ -246,7 +248,7 @@ func TestClientAdapterSidecarMedia(t *testing.T) {
 				client, seen := captureUpstream(t)
 				err := call.call(testContext(t), client.AsAdapter(WithProviderSlugs("anthropic")), Items{UserText("hi"), tc.item})
 				var oerr *Error
-				if !errors.As(err, &oerr) || oerr.Type != ErrorTypeInvalidRequest || oerr.Code != CodeInvalidValue || oerr.Param != tc.param || !contains(oerr.Message, "sidecar:") {
+				if !errors.As(err, &oerr) || oerr.Type != ErrorTypeInvalidRequest || oerr.Code != CodeInvalidValue || oerr.Param != tc.param || !contains(oerr.Message, "sidecar: reference") {
 					t.Fatalf("err = %v, want invalid_request/invalid_value on %s naming the sidecar: reference", err, tc.param)
 				}
 				if len(*seen) != 0 {

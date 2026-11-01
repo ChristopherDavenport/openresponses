@@ -237,7 +237,10 @@ func sidecarItem(item Item, p string) error {
 			fields = [][2]string{{"video_url", c.VideoURL}}
 		}
 		for _, f := range fields {
-			if len(f[1]) >= len("sidecar:") && strings.EqualFold(f[1][:len("sidecar:")], "sidecar:") {
+			// A URL parser strips leading and trailing C0 controls and
+			// spaces before reading the scheme, so the match does too.
+			v := strings.TrimFunc(f[1], func(r rune) bool { return r <= ' ' })
+			if len(v) >= len("sidecar:") && strings.EqualFold(v[:len("sidecar:")], "sidecar:") {
 				param := pp + "." + f[0]
 				return InvalidRequest(CodeInvalidValue, param+" is a sidecar: reference to a session store's blob; the writer resolves it to the media's bytes before sending, and the adapter never forwards it", param)
 			}

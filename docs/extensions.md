@@ -234,7 +234,9 @@ file or video field (`image_url`, `file_url`, `file_data`,
 the request with `invalid_request`, code `invalid_value` and `param`
 naming the field. It MUST NOT fetch or resolve the reference, and MUST
 NOT pass it to its provider as a URL to fetch. The scheme is matched
-without regard to case, as URL schemes are. An adapter that refuses the
+as a URL parser reads it: without regard to case, and after leading and
+trailing spaces and control characters are removed. A padded reference
+is refused as a reference, not as a value that is not a URL. An adapter that refuses the
 part's type outright, as one whose provider takes no video does, has
 already refused it.
 
