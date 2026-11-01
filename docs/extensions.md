@@ -164,22 +164,28 @@ adapter leaves out a reasoning item another issuer signed. The details:
 
 **Pass-through adapters.** An adapter that speaks Open Responses to an
 upstream has no provider of its own: its provider is whatever stands
-behind the upstream, which the request does not say. Whoever configures
-the adapter therefore names the provider slug, or slugs, the upstream
-accepts. An upstream that is an Open Responses server over one
+behind the upstream, which the request does not say. It learns its
+provider's slugs from whoever configures it, who names the slugs the
+upstream accepts. An upstream that is an Open Responses server over one
 provider's adapter accepts that provider's slug. A server that routes
 each model to its own adapter accepts the slug of each, since the
-adapter it routes to applies this rule again. A pass-through:
+adapter it routes to applies this rule again. An upstream that is a
+provider's own API accepts none, and is configured with an empty list.
 
-- MUST leave out an input item or content part under any other
-  provider's slug, as above, and a reasoning item whose
+A pass-through that has not been configured cannot know its provider,
+and forwards every item as given. Leaving items out on a guess would
+break the setup this library ships for proxies: an Open Responses
+server over the Claude adapter, reached through a pass-through, needs
+Claude's signed reasoning and its `anthropic.` blocks back (section 4).
+
+A configured pass-through:
+
+- MUST leave out an input item or content part under a provider's slug
+  it was not given, as above, and a reasoning item whose
   `openresponses-experimental.issuer` names such a provider, as section
   4's second reader rule says. It compares the issuer's `<issuer>`
   part, and leaves the comparison of the whole string to the adapter
   behind the upstream.
-- With no slug named, MUST treat every provider's slug as another's.
-  That is right for an upstream that is a provider's own API, which
-  defines no item under this library's slugs.
 - Forwards unchanged an item under a slug that names no provider, a
   shared one, and a reasoning item that names no issuer. Refusing those
   would be deciding for an upstream it cannot see: the adapter that maps

@@ -138,10 +138,10 @@ from an upstream 429) to the HTTP response and the error payload.
 streaming adapter into a pull-shaped `iter.Seq2` for in-process use,
 `client.AsAdapter()` serves a remote server as an `Adapter` (so a proxy,
 fallback chain or fan-out composes through one interface, WebSocket
-downstream included; it leaves out other providers' extension items
-and refuses `sidecar:` media, as
-[docs/extensions.md](docs/extensions.md) sections 1.6 and 1.7 say, and
-`WithProviderSlugs` names the providers its upstream accepts), and the
+downstream included; it refuses `sidecar:` media, and given
+`WithProviderSlugs`, the providers its upstream accepts, it leaves out
+other providers' extension items, as
+[docs/extensions.md](docs/extensions.md) sections 1.7 and 1.6 say), and the
 `UnsupportedStreaming` and
 `UnsupportedCompaction` types can be embedded to decline what you do not
 implement. `NewResponse(req)` builds a

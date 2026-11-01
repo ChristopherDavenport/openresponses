@@ -260,9 +260,10 @@ func TestClientAdapterSidecarMedia(t *testing.T) {
 // TestClientAdapterForeignSlug pins docs/extensions.md section 1.6 (and
 // section 4's rule 2) for a pass-through: the caller names the slugs its
 // upstream accepts, and items, content parts and reasoning under any
-// other provider's slug are left out. Without the option every
-// provider's are. Shared and non-provider slugs pass unchanged, and the
-// caller's input is not changed.
+// other provider's slug are left out; naming none filters every
+// provider's. Without the option the adapter cannot know its upstream
+// and forwards everything, as before. Shared and non-provider slugs
+// pass unchanged, and the caller's input is not changed.
 func TestClientAdapterForeignSlug(t *testing.T) {
 	part := func(typ string) Content {
 		return &UnknownContent{Type: typ, Raw: json.RawMessage(`{"type":"` + typ + `"}`)}
@@ -327,19 +328,25 @@ func TestClientAdapterForeignSlug(t *testing.T) {
 		return out
 	}
 	cases := []struct {
-		name  string
-		slugs []string
-		want  []string
+		name string
+		opts []AdapterOption
+		want []string
 	}{
 		{"no option", nil, []string{
+			"message input_text anthropic.tool_reference gemini.thought", "anthropic.redacted_thinking", "gemini.executable_code",
+			"chatcompletions.note", "acme.thing", "openresponses-experimental.note",
+			"reasoning@anthropic", "reasoning@anthropic/other", "reasoning@gemini", "reasoning",
+			"function_call_output input_text gemini.code_execution_result", "message gemini.thought",
+		}},
+		{"accepts none", []AdapterOption{WithProviderSlugs()}, []string{
 			"message input_text", "acme.thing", "openresponses-experimental.note", "reasoning",
 			"function_call_output input_text",
 		}},
-		{"anthropic", []string{"anthropic"}, []string{
+		{"anthropic", []AdapterOption{WithProviderSlugs("anthropic")}, []string{
 			"message input_text anthropic.tool_reference", "anthropic.redacted_thinking", "acme.thing", "openresponses-experimental.note",
 			"reasoning@anthropic", "reasoning@anthropic/other", "reasoning", "function_call_output input_text",
 		}},
-		{"a router for both", []string{"anthropic.", "gemini"}, []string{
+		{"a router for both", []AdapterOption{WithProviderSlugs("anthropic.", "gemini")}, []string{
 			"message input_text anthropic.tool_reference gemini.thought", "anthropic.redacted_thinking", "gemini.executable_code",
 			"acme.thing", "openresponses-experimental.note",
 			"reasoning@anthropic", "reasoning@anthropic/other", "reasoning@gemini", "reasoning",
@@ -352,7 +359,7 @@ func TestClientAdapterForeignSlug(t *testing.T) {
 				client, seen := captureUpstream(t)
 				in := input()
 				before, _ := json.Marshal(in)
-				_ = call.call(testContext(t), client.AsAdapter(WithProviderSlugs(tc.slugs...)), in)
+				_ = call.call(testContext(t), client.AsAdapter(tc.opts...), in)
 				if len(*seen) != 1 {
 					t.Fatalf("upstream saw %d requests", len(*seen))
 				}

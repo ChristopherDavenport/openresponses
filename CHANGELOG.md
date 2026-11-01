@@ -21,14 +21,20 @@ versions may break the API.
   `invalid_value`, naming the field, and never passes it on to be
   fetched.
 - `ClientAdapter` applies both, as a pass-through (section 1.6,
-  "Pass-through adapters"). Behaviour change: it forwarded every item
-  unchanged. It now refuses a `sidecar:` URL with `invalid_request`
-  naming the field, before anything reaches the upstream, and leaves out
-  an item, content part or reasoning item under a provider's slug
-  (`anthropic`, `gemini`, `chatcompletions`) other than those the new
-  `WithProviderSlugs` option names; with no option, every provider's.
-  Items under other slugs, shared ones and unstamped reasoning are
-  forwarded as before. `AsAdapter` now takes options
+  "Pass-through adapters"). Behaviour change: it now refuses a
+  `sidecar:` URL with `invalid_request` naming the field, before
+  anything reaches the upstream. The new `WithProviderSlugs` option
+  names the providers its upstream accepts, and once given, an item,
+  content part or reasoning item under any other provider's slug
+  (`anthropic`, `gemini`, `chatcompletions`) is left out;
+  `WithProviderSlugs()` with no slugs, for an upstream that is a
+  provider's own API such as OpenAI or OpenRouter, leaves out every
+  provider's. Without the option it forwards every item as before: a
+  proxy in front of an Open Responses server over the Claude adapter
+  needs Claude's signed reasoning back, and should say
+  `WithProviderSlugs("anthropic")` if it sets the option at all. Items
+  under other slugs, shared ones and unstamped reasoning are forwarded
+  either way. `AsAdapter` now takes options
   (`AsAdapter(opts ...AdapterOption)`); existing calls compile
   unchanged.
 - `chatcompletions` applies both. Behaviour change: an `anthropic.*` or

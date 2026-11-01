@@ -35,18 +35,21 @@ import (
 //
 // Two rules of docs/extensions.md apply to the input before it is
 // forwarded, as they do in an adapter that maps onto a provider. Media
-// whose URL is a sidecar: reference is refused (section 1.7). And since
-// the upstream stands in for a provider, an input item or content part
-// under a provider's slug other than those [WithProviderSlugs] names is
-// left out, as is a reasoning item such a provider issued (sections 1.6
-// and 4); with no slug named, every provider's is. Items under a slug
-// that names no provider, and shared ones, are forwarded unchanged. The
+// whose URL is a sidecar: reference is always refused (section 1.7).
+// Once [WithProviderSlugs] names the providers the upstream accepts, an
+// input item or content part under any other provider's slug is left
+// out, as is a reasoning item such a provider issued (sections 1.6 and
+// 4). Without it the adapter cannot know what stands behind the upstream
+// and forwards every item as given. Items under a slug that names no
+// provider, and shared ones, are forwarded unchanged either way. The
 // request the caller passed is never changed.
 type ClientAdapter struct {
 	Client *Client
 
-	// providers are the slugs the upstream accepts, without the dot.
-	providers []string
+	// configured is whether WithProviderSlugs was given, and providers
+	// are the slugs it named, without the dot.
+	configured bool
+	providers  []string
 }
 
 var _ Adapter = (*ClientAdapter)(nil)
@@ -60,10 +63,14 @@ type AdapterOption func(*ClientAdapter)
 // and a server that routes each model to its own adapter takes the slug
 // of each, since the adapter it routes to applies docs/extensions.md
 // section 1.6 itself. Items, content parts and reasoning under any other
-// provider's slug are left out. Without this option every provider's
-// are, which is right for an upstream that is a provider's own API.
+// provider's slug are left out. With no slugs the upstream accepts none,
+// and every provider's are left out, which is right for an upstream that
+// is a provider's own API. Without this option nothing is left out: an
+// upstream that is an Open Responses server over the Claude adapter
+// needs Claude's signed reasoning back, and the adapter cannot tell.
 func WithProviderSlugs(slugs ...string) AdapterOption {
 	return func(a *ClientAdapter) {
+		a.configured = true
 		for _, s := range slugs {
 			a.providers = append(a.providers, strings.TrimSuffix(s, "."))
 		}
@@ -75,9 +82,10 @@ func WithProviderSlugs(slugs ...string) AdapterOption {
 var providerSlugs = []string{"anthropic", "gemini", "chatcompletions"}
 
 // foreign reports whether name, a slug without its dot, names a provider
-// other than those the upstream accepts.
+// other than those the upstream accepts. Nothing is foreign until
+// [WithProviderSlugs] says what the upstream accepts.
 func (a *ClientAdapter) foreign(name string) bool {
-	return slices.Contains(providerSlugs, name) && !slices.Contains(a.providers, name)
+	return a.configured && slices.Contains(providerSlugs, name) && !slices.Contains(a.providers, name)
 }
 
 // foreignType reports whether an item or content part type carries the
