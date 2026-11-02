@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: an input item or content part under another
+  provider's slug (`gemini.`, `chatcompletions.`) is left out of the
+  request, wherever it sits, instead of being `invalid_request`
+  (docs/extensions.md section 1.6, agentturn#285). A message left with no
+  content is not sent, and a function output is sent without the part.
+  Tools and request members under those slugs are still refused.
+- An image or file whose `image_url`, `file_url` or `file_data` is a
+  `sidecar:` reference is `invalid_request` with `code: invalid_value`
+  naming the field (section 1.7, agentturn#284). The URL forms were sent
+  to Claude as a URL source to fetch.
+
 ## v0.0.17 - 2026-10-27
 
 - `reasoning.effort` is encoded the way the model takes it, picked from

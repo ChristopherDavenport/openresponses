@@ -17,6 +17,8 @@ as in RFC 2119.
 | Extension | Placement | Issues | Verdict |
 | --- | --- | --- | --- |
 | [Unknown members are kept](#13-unknown-members-are-kept) | every object | #53, #56 | general rule |
+| [Items under another provider's slug](#16-adapters-and-items-under-a-providers-slug) | input items, content parts | agentturn#285 | general rule |
+| [`sidecar:` media references](#17-media-held-in-a-session-store) | image, file and video URLs | agentturn#284 | general rule |
 | [`openresponses-experimental.effort`](#3-reasoning-effort-above-xhigh) | request `reasoning` | #51 | in the set |
 | [`openresponses-experimental.issuer`](#4-who-issued-a-reasoning-item) | reasoning item | #56 | in the set |
 | [`openresponses-experimental.cache_write_tokens`, `openresponses-experimental.cache_write_tokens_by_ttl`](#5-cache-writes) | `usage.input_tokens_details` | #53 | in the set |
@@ -113,11 +115,137 @@ kinds of extension member on a request:
    slug are provider parameters, defined in its README. A member under
    another provider's slug is refused with `invalid_request`, with
    `param` set to the member's name. That is the case rule 3 is for: a
-   setting meant for one provider that this one cannot honour.
+   setting meant for one provider that this one cannot honour. A tool
+   under another provider's slug is such a setting too, and is refused
+   with `invalid_request` naming its `type`.
 
-Any other unknown top-level member is treated as PLAN rule 8 says.
+Any other unknown top-level member is treated as PLAN rule 8 says. An
+input item or content part under a provider's slug is not a request
+member; 1.6 says what an adapter does with one.
 
-### 1.6 Writing an extension down
+### 1.6 Adapters and items under a provider's slug
+
+**Gap.** An input item or content part whose `type` carries a
+provider's slug (`anthropic.redacted_thinking`,
+`gemini.executable_code`) is that provider's record of its own output.
+It reaches another provider's adapter whenever a transcript moves
+between providers, the case section 4 meets for reasoning. The
+specification says that clients should be prepared to meet unknown
+item types, and says nothing of what a server that maps onto a
+provider does with one. Refusing it fails every request after such a
+move, and sending it hands a provider a shape it does not define.
+
+**Rule.** An adapter that receives an input item, or a content part,
+whose type carries another provider's slug MUST NOT send it to its
+provider and MUST NOT refuse the request for it. It leaves the item
+out, and its README says so. Refusal stays the rule for request members
+under another provider's slug (1.5).
+
+An item that carries content rather than a signature, such as a code
+execution result or a web search result, is part of what the model was
+told, and leaving it out changes what the next model is asked. For such
+an item an adapter MAY send a text rendering of its content in its
+place, as its provider's own text, instead of leaving it out. Its README
+says which items it renders and how, and which it leaves out. An item
+that carries only a signature or redacted reasoning has nothing to
+render and is left out.
+
+This is section 4's second reader rule applied to whole items: there an
+adapter leaves out a reasoning item another issuer signed, or sends its
+summary as text. The details:
+
+- The rule holds wherever the part sits: in a message of any role and
+  in a function call output.
+- A message whose every part is left out is not sent. A function call
+  output is still sent without the part, since its call needs an
+  answer.
+- The adapter leaves the item out of what it sends to its provider,
+  and not out of the request it was given. The caller's input, a stored
+  response and a session record keep the item as 1.3 requires, so a
+  later request to the provider that wrote it sends it again.
+- Nothing in a response says what was left out or rendered; the
+  specification has no member for it. The README is where a caller
+  learns which items an adapter leaves out and which it renders.
+- An item under the adapter's own slug is its provider's and is sent,
+  or refused when it is malformed. An item under a slug that names no
+  provider the adapter knows of (`acme.`, a harness's slug) is not
+  covered: the adapter cannot tell whether it carries meaning the
+  provider must see, and refuses it as PLAN rule 3 says.
+
+**Pass-through adapters.** An adapter that speaks Open Responses to an
+upstream has no provider of its own: its provider is whatever stands
+behind the upstream, which the request does not say. It learns its
+provider's slugs from whoever configures it, who names the slugs the
+upstream accepts. An upstream that is an Open Responses server over one
+provider's adapter accepts that provider's slug. A server that routes
+each model to its own adapter accepts the slug of each, since the
+adapter it routes to applies this rule again. An upstream that is a
+provider's own API accepts none, and is configured with an empty list.
+
+A pass-through that has not been configured cannot know its provider,
+and forwards every item as given. Leaving items out on a guess would
+break the setup this library ships for proxies: an Open Responses
+server over the Claude adapter, reached through a pass-through, needs
+Claude's signed reasoning and its `anthropic.` blocks back (section 4).
+
+A configured pass-through:
+
+- MUST leave out an input item or content part under a provider's slug
+  it was not given, as above, an annotation on `output_text` under such
+  a slug (Claude's citation locations, which another upstream refuses as
+  an unknown type), keeping the part, and a reasoning item whose
+  `openresponses-experimental.issuer` names such a provider, as section
+  4's second reader rule says. It compares the issuer's `<issuer>`
+  part, and leaves the comparison of the whole string to the adapter
+  behind the upstream.
+- MUST refuse a request member or tool under a provider's slug it was
+  not given, as 1.5 says, with `param` naming the member or the tool's
+  `type`, before anything reaches the upstream. Unconfigured, it
+  forwards them.
+- Forwards unchanged an item under a slug that names no provider, a
+  shared one, and a reasoning item that names no issuer. Refusing those
+  would be deciding for an upstream it cannot see: the adapter that maps
+  onto a provider decides, as above, and an upstream that does not stamp
+  its reasoning items needs its own back.
+
+In this library the provider slugs are those of its three adapters:
+`anthropic.`, `gemini.` and `chatcompletions.`. The pass-through is
+`ClientAdapter`, and `WithProviderSlugs` names the slugs its upstream
+accepts.
+
+### 1.7 Media held in a session store
+
+**Gap.** A session store may keep an item's media apart from the item
+and write a reference in its place: a URL of the form
+`sidecar:sha256:<hex>`, naming the blob by its hash (agentsession RFC
+0001, "File"). The reference means something only to that store. No
+provider can fetch it, and one handed it as an image or file URL tries
+and fails, in its own words.
+
+**Writers.** A `sidecar:` URL is a store reference that the writer
+resolves before sending. Whoever builds a request from a record MUST
+replace each `sidecar:` URL with the media's bytes, as a data URL or as
+`file_data`, before sending the request, and MUST NOT send a `sidecar:`
+URL to a server or an adapter.
+
+**Adapters.** An adapter that receives a `sidecar:` URL in an image,
+file or video field (`image_url`, `file_url`, `file_data`,
+`video_url`), in a message or in a function call output, MUST refuse
+the request with `invalid_request`, code `invalid_value` and `param`
+naming the field. It MUST NOT fetch or resolve the reference, and MUST
+NOT pass it to its provider as a URL to fetch. The scheme is matched
+as a URL parser reads it: without regard to case, and after leading and
+trailing spaces and control characters are removed. A padded reference
+is refused as a reference, not as a value that is not a URL. An adapter that refuses the
+part's type outright, as one whose provider takes no video does, has
+already refused it.
+
+Refusal here, where 1.6 leaves an item out, is deliberate. Media is
+part of what the user or a tool said; leaving it out would change what
+the model is asked without anyone seeing it, while the refusal names
+the writer's mistake where it can be fixed.
+
+### 1.8 Writing an extension down
 
 Every section in 3–7 says the same things in the same order: the gap in
 the specification, where the member goes, its shape, who writes it, who
@@ -129,7 +257,7 @@ belong in this document.
 | Extension | Written by | Read by |
 | --- | --- | --- |
 | `openresponses-experimental.effort` | clients (agentturn, dax) | `providers/anthropic` |
-| `openresponses-experimental.issuer` | `providers/anthropic`, `providers/gemini` | both, on input; agentturn (#286, #242) |
+| `openresponses-experimental.issuer` | `providers/anthropic`, `providers/gemini` | both, and `ClientAdapter`, on input; agentturn (#286, #242) |
 | `openresponses-experimental.cache_write_tokens`, `openresponses-experimental.cache_write_tokens_by_ttl` | `providers/anthropic` | agenteval (#68), any price table |
 | `context_length_exceeded` | all three adapters | agentturn's compaction |
 | `openresponses-experimental.model_info` | the handler (from an adapter), the Responses client's vendor mappings | dax, agentturn's compaction budget, agentkit's effort floor, effort fitting |
@@ -222,7 +350,8 @@ it as 1.3 requires.
    provider, as PLAN rule 5 says.
 2. **Another issuer:** it MUST NOT send `encrypted_content` to its
    provider. It leaves the item out, or sends the item's summary as
-   text, and its README states which.
+   text, and its README states which. Section 1.6 applies the same rule
+   to items and content parts under another provider's slug.
 3. **No member:** the item is of unknown origin. Sessions recorded
    before this extension carry no member. Each adapter states in its
    README whether it replays such items as its own or treats them as
@@ -238,7 +367,10 @@ its thinking blocks within a tool loop. It treats an item as foreign
 when it carries another issuer, any value other than exactly
 `anthropic`, or when its `encrypted_content` is empty, and leaves it
 out. The Gemini adapter treats an item with no member as foreign; its
-README says what it sends in its place.
+README says what it sends in its place. A pass-through adapter, which
+forwards to an Open Responses upstream, applies rule 2 by the provider
+slugs it is configured with, and forwards an item with no member, as
+1.6 says.
 
 **Replaces** the per-adapter stamps proposed in the review of #56
 (`anthropic.signature: true`, `gemini.signature: true`), which said the

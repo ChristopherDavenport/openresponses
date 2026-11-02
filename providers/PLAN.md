@@ -68,7 +68,12 @@ Each module has the same shape:
    adapter ignores it.
 4. Provider extensions ride on the slug-prefixed unknown types,
    `anthropic.` and `gemini.`, per CONTRIBUTING. Server tools go in as
-   `UnknownTool` and their results come out as `UnknownItem`.
+   `UnknownTool` and their results come out as `UnknownItem`. An input
+   item or content part under another provider's slug is left out of
+   the request, neither sent nor refused, as docs/extensions.md section
+   1.6 says; each README lists it among its exceptions to rule 3.
+   Media whose URL is a `sidecar:` reference is `invalid_request`
+   naming the field, never sent to be fetched (section 1.7).
 5. Reasoning round-trips through `ReasoningItem.EncryptedContent`.
    Anthropic's thinking `signature` and Gemini's `thoughtSignature` both
    go there, base64 for Gemini's bytes, and come back out as the
@@ -243,6 +248,8 @@ regional hosts. Per-model regions mean one client per region; route by
 | `ReasoningItem` of another issuer, or without `encrypted_content` | left out (rule 5; README) |
 | `anthropic.*` items | the `block` they carry, replayed verbatim through `param.Override` |
 | `anthropic.<block type>` content parts | the `block` they carry, in `tool_result` content or message content |
+| `gemini.*`, `chatcompletions.*` items and content parts | left out; a message left empty is not sent (rule 4; README) |
+| `image_url`, `file_url`, `file_data` holding a `sidecar:` reference | `invalid_request` naming the field (rule 4) |
 | `Request.Extra` `anthropic.<field>` | the Messages field `<field>`; `invalid_request` when the mapping set it |
 | `Request.Extra` `gemini.*`, `chatcompletions.*` | `invalid_request` with `param` (rule 8) |
 | other `Request.Extra` members | dropped; forwarded under `WithExtra`, never over a mapped field |
@@ -369,7 +376,12 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   Which references a backend can read (`gs://` on Vertex AI, Files API
   and YouTube URLs on the Gemini API) is for the backend to say, per
   rule 1; a fetcher option for plain `https://` images can come later.
-  `file_id` has no lookup here and is `invalid_request`.
+  `file_id` has no lookup here and is `invalid_request`. A `sidecar:`
+  reference in any of them is `invalid_request` naming the field
+  (rule 4).
+- `anthropic.*` and `chatcompletions.*` items and content parts are
+  left out, a message left empty with them (rule 4); on Gemini 3 the
+  function calls of such a transcript get the placeholder signature.
 - Finish reasons: STOP is `Complete`; MAX_TOKENS is
   `Incomplete(max_output_tokens)`; SAFETY, RECITATION, BLOCKLIST,
   PROHIBITED_CONTENT, SPII and the IMAGE_* reasons are
@@ -448,10 +460,16 @@ Where it differs from the SDK-backed adapters:
   whether reasoning may be sent back at all; without it reasoning
   items are accepted and not sent, the documented exception to rule 3,
   and `reasoning.summary` has no effect.
+- `anthropic.*` and `gemini.*` items and content parts are left out,
+  a message left empty with them (rule 4), the other exception to rule
+  3. An `image_url` or `file_data` holding a `sidecar:` reference is
+  `invalid_request` naming the field.
 - `max_output_tokens` is sent as `max_tokens` unless
   `WithMaxTokensField` says `max_completion_tokens`; providers split.
 - `WithExtra` forwards `Request.Extra` for provider parameters
-  (`top_k`, routing), never overriding a mapped key. Off by default.
+  (`top_k`, routing), never overriding a mapped key. Off by default. A
+  member under `anthropic.` or `gemini.` is `invalid_request` naming it,
+  with or without the option (rule 8).
 - Function outputs are one `tool` message each. A
   `function_call_output` with image or file parts is sent as a `tool`
   message holding its text parts (or the text `[see next message]` when

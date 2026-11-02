@@ -116,12 +116,37 @@ A request field Gemini has no equivalent for comes back as an
 naming the field, rather than being dropped: `parallel_tool_calls:
 false`, `max_tool_calls`, `safety_identifier`, `truncation: auto`,
 `text.verbosity`, `file_id` on images and files, `compaction` and
-`item_reference` items, and tools and items from other providers'
-slugs. `reasoning.summary` alongside `reasoning.effort: none` is
+`item_reference` items, tools from other providers' slugs, and items
+and content parts under a slug that names no provider (`acme.`).
+`reasoning.summary` alongside `reasoning.effort: none` is
 `invalid_request` with `code: invalid_value`, since the two
 contradict each other.
 `previous_response_id` reaching the adapter means the handler has no
 `ResponseStore`, and is `previous_response_not_found`.
+
+An image, file or video whose `image_url`, `file_url`, `file_data` or
+`video_url` is a `sidecar:` reference (`sidecar:sha256:<hex>`,
+docs/extensions.md section 1.7) is `invalid_request` with `code:
+invalid_value` and `param` naming the field. The reference names a blob
+in a session store, which the caller resolves to the media's bytes
+before sending; the adapter never fetches it and never passes it to
+Gemini as a file URI.
+
+Left out of the request, the documented exception to dropping nothing
+(docs/extensions.md section 1.6): an input item or content part under
+another provider's slug, `anthropic.` or `chatcompletions.`, wherever
+it sits, in a message of any role or in a function output. It is that
+provider's record of its own output, such as Claude's
+`redacted_thinking` or `server_tool_use` blocks, which Gemini cannot
+read, and refusing it would fail every request after a conversation
+moves to Gemini. A message left with no content is not sent, and a
+function output is sent without the part. Only what is sent to Gemini
+changes: the request the adapter was given keeps the item, so a stored
+response or session record still carries it for the provider that
+wrote it. Nothing in the response reports the omission. On Gemini 3 a
+function call from such a transcript, which carries no Gemini
+signature, gets the placeholder described under
+[Responses](#responses).
 
 Accepted without effect: `strict` on function tools and on
 `text.format`, `include`, `stream_options` and `store` (the handler's

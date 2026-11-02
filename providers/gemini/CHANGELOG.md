@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: an input item or content part under another
+  provider's slug (`anthropic.`, `chatcompletions.`) is left out of the
+  request, wherever it sits, instead of being `invalid_request`
+  (docs/extensions.md section 1.6, agentturn#285). A Claude history with
+  `anthropic.redacted_thinking` or server tool blocks now reaches Gemini.
+  A message left with no content is not sent, and a function output is
+  sent without the part. Tools and request members under those slugs
+  are still refused.
+- An image, file or video whose `image_url`, `file_url`, `file_data` or
+  `video_url` is a `sidecar:` reference is `invalid_request` with
+  `code: invalid_value` naming the field (section 1.7, agentturn#284).
+  The URL forms were sent to Gemini as a file URI.
+
 ## v0.0.17 - 2026-10-27
 
 - An upstream 408 is `server_error`, which a retry may fix, rather than

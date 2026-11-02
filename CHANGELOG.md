@@ -5,6 +5,56 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- docs/extensions.md section 1.6: an adapter leaves out an input item
+  or content part whose type carries another provider's slug, rather
+  than sending it or refusing the request (agentturn#285). An adapter
+  MAY instead send a text rendering of an item that carries content, such
+  as a code execution or web search result, and its README says which
+  it does; none of this library's adapters renders one yet. It is section
+  4's rule for reasoning another issuer signed, applied to whole items,
+  so a conversation that moves between providers no longer fails on the
+  first request after the move. Tools and request members under another
+  provider's slug are not items: section 1.5 refuses them, which the
+  Claude and Gemini adapters already did, `chatcompletions` now does,
+  and a configured `ClientAdapter` does (below).
+- docs/extensions.md section 1.7: a `sidecar:` media URL, a session
+  store's reference to a blob, is the writer's to resolve before sending
+  (agentturn#284). An adapter refuses one in `image_url`, `file_url`,
+  `file_data` or `video_url` with `invalid_request`, code
+  `invalid_value`, naming the field, and never passes it on to be
+  fetched.
+- `ClientAdapter` applies both, as a pass-through (section 1.6,
+  "Pass-through adapters"). Behaviour change: it now refuses a
+  `sidecar:` URL with `invalid_request` naming the field, before
+  anything reaches the upstream. The new `WithProviderSlugs` option
+  names the providers its upstream accepts, and once given, an item,
+  content part, reasoning item or `output_text` annotation under any
+  other provider's slug
+  (`anthropic`, `gemini`, `chatcompletions`) is left out;
+  `WithProviderSlugs()` with no slugs, for an upstream that is a
+  provider's own API such as OpenAI or OpenRouter, leaves out every
+  provider's. Without the option it forwards every item as before: a
+  proxy in front of an Open Responses server over the Claude adapter
+  needs Claude's signed reasoning back, and should say
+  `WithProviderSlugs("anthropic")` if it sets the option at all. Items
+  under other slugs, shared ones and unstamped reasoning are forwarded
+  either way. Once configured it also refuses, before sending, a request
+  member or tool under a provider's slug it was not given, with
+  `invalid_request`, code `unsupported_parameter` and `param` naming it
+  (section 1.5); unconfigured, it forwards them as before. `AsAdapter` now takes options
+  (`AsAdapter(opts ...AdapterOption)`); existing calls compile
+  unchanged.
+- `chatcompletions` follows section 1.5. Behaviour change: a request
+  member under `anthropic.` or `gemini.` is `invalid_request` with code
+  `unsupported_parameter` and `param` naming it. It was dropped, or
+  forwarded into the body under `WithExtra`.
+- `chatcompletions` applies both. Behaviour change: an `anthropic.*` or
+  `gemini.*` item or content part was `invalid_request`; it is now left
+  out, and a message left with no content is not sent. A `sidecar:`
+  `image_url` or `file_data` was sent to the provider as given.
+
 ## v0.0.17 - 2026-10-27
 
 - Members the specification does not define are kept below the top
