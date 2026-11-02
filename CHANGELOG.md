@@ -5,7 +5,7 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
-## Unreleased
+## v0.0.18 - 2026-11-02
 
 - docs/extensions.md section 1.6: an adapter leaves out an input item
   or content part whose type carries another provider's slug, rather

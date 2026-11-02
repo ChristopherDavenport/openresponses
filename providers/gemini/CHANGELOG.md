@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.18 - 2026-11-02
 
 - Behaviour change: an input item or content part under another
   provider's slug (`anthropic.`, `chatcompletions.`) is left out of the
