@@ -419,6 +419,9 @@ func TestMapError(t *testing.T) {
 				if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != want {
 					t.Fatalf("err = %+v (status %d, want %d)", oerr, oerr.HTTPStatus(), want)
 				}
+				if tc.code == openresponses.CodeInsufficientQuota && oerr.Message != "Insufficient credits" {
+					t.Fatalf("message = %q, want the provider's", oerr.Message)
+				}
 				if got := oerr.Headers.Get("Retry-After"); got != tc.retry {
 					t.Fatalf("Retry-After = %q, want %q", got, tc.retry)
 				}

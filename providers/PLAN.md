@@ -289,8 +289,9 @@ Errors: `*anthropic.Error` maps to `*openresponses.Error` by the
 API's error type, whether it came as an HTTP status or as an `error`
 event in the stream, by the table in the README (the Errors section
 above); an unknown type falls back to the HTTP status. "prompt is too
-long" is `context_length_exceeded`, and `billing_error`, or any 402,
-is `insufficient_quota` with its 402. `Retry-After` and the rate-limit
+long" is `context_length_exceeded`; `billing_error`, any 402, and an
+`invalid_request_error` saying "credit balance is too low" or "API
+usage limits" are `insufficient_quota`, each with its status. `Retry-After` and the rate-limit
 headers are copied into `Error.Headers`, as `Client` already does for
 Open Responses upstreams.
 

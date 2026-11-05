@@ -259,17 +259,28 @@ func registeredCode(code string) bool {
 }
 
 // readQuota applies the reader rule of docs/extensions.md section 6 to
-// an error read from a peer: an HTTP 402 with no registered code is
-// [CodeInsufficientQuota], and that code is invalid_request whatever
-// status it arrived with, so OpenAI's 429 does not read as a rate limit.
-// The status stays the one the peer sent.
+// an error read from a peer (see quota). The status stays the one the
+// peer sent.
 func (e *Error) readQuota() {
-	if e.StatusCode == http.StatusPaymentRequired && !registeredCode(e.Code) {
-		e.Code = CodeInsufficientQuota
+	e.Code, e.Type = quota(e.StatusCode, e.Code, e.Type)
+}
+
+// quota is the code and type of an error read from a peer under
+// docs/extensions.md section 6: one typed insufficient_quota with no
+// code, as OpenAI may send it, and an HTTP 402 with no registered code
+// are [CodeInsufficientQuota], and that code is invalid_request whatever
+// status it arrived with, so OpenAI's 429 does not read as a rate limit.
+func quota(status int, code string, typ ErrorType) (string, ErrorType) {
+	if code == "" && typ == ErrorType(CodeInsufficientQuota) {
+		code = CodeInsufficientQuota
 	}
-	if e.Code == CodeInsufficientQuota {
-		e.Type = ErrorTypeInvalidRequest
+	if status == http.StatusPaymentRequired && !registeredCode(code) {
+		code = CodeInsufficientQuota
 	}
+	if code == CodeInsufficientQuota {
+		typ = ErrorTypeInvalidRequest
+	}
+	return code, typ
 }
 
 // forwardable returns the payload as it may be forwarded from a peer:

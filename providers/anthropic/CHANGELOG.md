@@ -2,10 +2,13 @@
 
 ## Unreleased
 
-- Behaviour change: `billing_error`, and a 402 with no Claude error
-  type, is `invalid_request` with code `insufficient_quota`
-  (docs/extensions.md section 6, #73); the code was `billing_error` or
-  `api_error`. The status stays 402 and Claude's message is kept.
+- Behaviour change: a low credit balance or a reached usage limit is
+  `invalid_request` with code `insufficient_quota` (docs/extensions.md
+  section 6, #73), whether Claude says it as a 400
+  `invalid_request_error` ("Your credit balance is too low…", "…API
+  usage limits…", matched ignoring case) or as `billing_error`, and so is
+  a 402 with no Claude error type; the code was `invalid_request_error`,
+  `billing_error` or `api_error`. Claude's status and message are kept.
 
 ## v0.0.18 - 2026-11-02
 

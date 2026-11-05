@@ -96,6 +96,7 @@ func TestClientErrors(t *testing.T) {
 		{"402 numeric code", 402, `{"error":{"code":402,"message":"Insufficient credits"}}`, ErrorTypeInvalidRequest, CodeInsufficientQuota},
 		{"402 unregistered code", 402, `{"error":{"code":"payment_required","message":"m"}}`, ErrorTypeInvalidRequest, CodeInsufficientQuota},
 		{"402 registered code", 402, `{"error":{"type":"invalid_request","code":"context_length_exceeded","message":"m"}}`, ErrorTypeInvalidRequest, CodeContextLengthExceeded},
+		{"type alone, null code", 429, `{"error":{"type":"insufficient_quota","code":null,"message":"You exceeded your current quota","param":null}}`, ErrorTypeInvalidRequest, CodeInsufficientQuota},
 		{"openai insufficient quota", 429, `{"error":{"type":"insufficient_quota","code":"insufficient_quota","message":"You exceeded your current quota","param":null}}`, ErrorTypeInvalidRequest, CodeInsufficientQuota},
 	}
 	for _, tt := range tests {

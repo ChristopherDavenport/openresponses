@@ -14,13 +14,15 @@ versions may break the API.
   message and status; a client must not retry it unchanged whatever
   status it arrived with, and should read an HTTP 402 with no registered
   code as it. New `CodeInsufficientQuota`, `InsufficientQuota` and
-  `IsInsufficientQuota`. Behaviour change: `Client` (and so
-  `ClientAdapter`) and `ErrorPayload.Err` read a 402 with no registered
-  code as `insufficient_quota`, and type that code `invalid_request`
-  whatever the status, so OpenAI's 429 for it is no longer
-  `IsRateLimited`. `chatcompletions` does the same: OpenAI's
-  `insufficient_quota` was `too_many_requests`, and OpenRouter's 402 kept
-  code `402` (now kept as `chatcompletions.code`).
+  `IsInsufficientQuota`. Behaviour change: `Client` and
+  `ErrorPayload.Err` read a 402 with no registered code as
+  `insufficient_quota`, and type that code `invalid_request` whatever
+  the status, so OpenAI's 429 for it is no longer `IsRateLimited`; an
+  error typed `insufficient_quota` with no code reads as the code too.
+  `ClientAdapter` applies the same reading to the HTTP errors it returns
+  and to the upstream error events it forwards. `chatcompletions` does
+  the same: OpenAI's `insufficient_quota` was `too_many_requests`, and
+  OpenRouter's 402 kept code `402` (now kept as `chatcompletions.code`).
 
 ## v0.0.18 - 2026-11-02
 

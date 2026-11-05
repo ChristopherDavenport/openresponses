@@ -164,6 +164,7 @@ func TestInsufficientQuotaFromPayload(t *testing.T) {
 		{"openai event", ErrorPayload{Type: "insufficient_quota", Code: CodeInsufficientQuota, Message: "m"}, 429},
 		{"bare 402", ErrorPayload{Type: "invalid_request", Code: "", Message: "m"}, 402},
 		{"402 unregistered code", ErrorPayload{Code: "credits", Message: "m"}, 402},
+		{"type alone", ErrorPayload{Type: "insufficient_quota", Message: "m"}, 429},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
