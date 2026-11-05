@@ -301,6 +301,15 @@ one too. Output cut short by
 `max_output_tokens` is not an overflow; it ends the response incomplete,
 as above.
 
+A request the account's credit cannot cover is `invalid_request` with
+the code `insufficient_quota` (docs/extensions.md section 6). Gemini has
+no error of its own for it that the adapter can tell from a rate limit:
+`RESOURCE_EXHAUSTED` is the 429 of a per-minute limit and of a used-up
+quota alike, and it stays `too_many_requests`. A 402, as a gateway in
+front of Gemini sends, is `insufficient_quota` with its status and
+message kept, whether it came as the HTTP status or as the `code` of an
+envelope inside the stream.
+
 ## Model information
 
 The adapter implements `openresponses.Describer`. `Describe` calls

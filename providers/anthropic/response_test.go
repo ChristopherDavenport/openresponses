@@ -485,6 +485,11 @@ func TestMapError(t *testing.T) {
 		{"permission", 403, `{"type":"error","error":{"type":"permission_error","message":"no access"}}`, nil, openresponses.ErrorTypeInvalidRequest, "permission_error", "no access", ""},
 		{"unknown type", 503, `{"type":"error","error":{"type":"new_error","message":"down"}}`, nil, openresponses.ErrorTypeServerError, "new_error", "down", ""},
 		{"context overflow", 400, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215000 tokens > 200000 maximum"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "prompt is too long: 215000 tokens > 200000 maximum", ""},
+		// docs/extensions.md section 6: Claude's billing_error is the
+		// shared insufficient_quota, and so is a 402 from a proxy with no
+		// Claude error type. The status stays 402.
+		{"billing", 402, `{"type":"error","error":{"type":"billing_error","message":"Your credit balance is too low to access the Anthropic API."}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, "Your credit balance is too low to access the Anthropic API.", ""},
+		{"proxy 402", 402, `{"error":{"message":"out of credit"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, "out of credit", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

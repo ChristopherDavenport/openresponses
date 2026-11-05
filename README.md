@@ -82,8 +82,11 @@ and WebSocket alike (`NormalizeOutputParts`), so a tool that built `Text`
 parts still reaches a server that refuses them.
 
 Non-2xx responses and error events surface as `*openresponses.Error`,
-with `IsNotFound`, `IsRateLimited`, `IsInvalidRequest` and
-`IsContextLengthExceeded` helpers.
+with `IsNotFound`, `IsRateLimited`, `IsInvalidRequest`,
+`IsContextLengthExceeded` and `IsInsufficientQuota` helpers. The client
+reads an HTTP 402 with no registered code as `insufficient_quota`, and
+types that code `invalid_request` whatever status it came with, so
+OpenAI's 429 for an exhausted quota is not `IsRateLimited`.
 
 ## Server
 
@@ -274,7 +277,8 @@ The Go binding is in `extensions.go`: the member names (`MemberEffort`,
 `InputTokensDetails.CacheWriteTokens`, ...), `Info` for model
 information with the optional `Describer` an adapter implements beside
 `Streamer`, and `CodeContextLengthExceeded` with
-`IsContextLengthExceeded` in `errors.go`.
+`IsContextLengthExceeded` and `CodeInsufficientQuota` with
+`IsInsufficientQuota` in `errors.go`.
 
 Errors built from remote data (an HTTP error response, an error event or
 a WebSocket error frame) carry only the headers that describe a failure,

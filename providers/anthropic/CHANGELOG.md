@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: `billing_error`, and a 402 with no Claude error
+  type, is `invalid_request` with code `insufficient_quota`
+  (docs/extensions.md section 6, #73); the code was `billing_error` or
+  `api_error`. The status stays 402 and Claude's message is kept.
+
 ## v0.0.18 - 2026-11-02
 
 - Behaviour change: an input item or content part under another

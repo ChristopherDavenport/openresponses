@@ -325,6 +325,7 @@ func errorFromHTTP(res *http.Response) *Error {
 	if out.Type == "" {
 		out.Type = ErrorTypeForStatus(res.StatusCode)
 	}
+	out.readQuota()
 	return out
 }
 

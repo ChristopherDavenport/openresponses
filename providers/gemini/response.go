@@ -405,6 +405,11 @@ func mapError(err error) error {
 	switch typ := openresponses.ErrorTypeForStatus(status); {
 	case contextOverflow(apiErr):
 		out = openresponses.ContextLengthExceeded(apiErr.Message)
+	case status == http.StatusPaymentRequired:
+		// Gemini sends no error of its own for an exhausted balance that
+		// tells it from a rate limit; a 402, as a gateway in front of it
+		// sends, is the shared code (docs/extensions.md section 6).
+		out = openresponses.InsufficientQuota(apiErr.Message)
 	default:
 		// The type follows the status by the root's table (PLAN.md,
 		// Errors); with no status at all it is server_error. 401 UNAUTHENTICATED and 403 PERMISSION_DENIED refuse the

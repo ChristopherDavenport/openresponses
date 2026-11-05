@@ -313,6 +313,8 @@ func TestStreamErrorFrame(t *testing.T) {
 		{`{"error":{"message":"busy","code":"503"}}`, openresponses.ErrorTypeServerError, "503", 503},
 		{`{"error":{"message":"bad","code":"400"}}`, openresponses.ErrorTypeInvalidRequest, "400", 400},
 		{`{"error":{"message":"conflict","code":409}}`, openresponses.ErrorTypeInvalidRequest, "409", 409},
+		{`{"error":{"message":"quota","type":"insufficient_quota","code":"insufficient_quota"}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, 429},
+		{`{"error":{"message":"Insufficient credits","code":402}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, 402},
 	}
 	for _, tc := range cases {
 		t.Run(tc.frame, func(t *testing.T) {
@@ -388,6 +390,12 @@ func TestMapError(t *testing.T) {
 		{"payload too large", 413, `request entity too large`, nil, openresponses.ErrorTypeInvalidRequest, "http_413", "request entity too large", "", ""},
 		{"unprocessable", 422, `{"error":{"message":"bad","type":"invalid_request_error"}}`, nil, openresponses.ErrorTypeInvalidRequest, "invalid_request_error", "bad", "", ""},
 		{"plain text", 503, `upstream unavailable`, nil, openresponses.ErrorTypeServerError, "http_503", "upstream unavailable", "", ""},
+		// docs/extensions.md section 6: an exhausted balance is
+		// insufficient_quota and invalid_request whatever the status it
+		// came with, and the status stays the upstream's.
+		{"openai insufficient quota", 429, `{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, "You exceeded your current quota, please check your plan and billing details.", "", ""},
+		{"openrouter credits", 402, `{"error":{"code":402,"message":"Insufficient credits. Add more using https://openrouter.ai/settings/credits"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, "Insufficient credits. Add more using https://openrouter.ai/settings/credits", "", ""},
+		{"plain 402", 402, `payment required`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, "payment required", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

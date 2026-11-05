@@ -550,9 +550,15 @@ func mapError(err error) error {
 	}
 	message := apiMessage(apiErr)
 	var out *openresponses.Error
-	if code == "invalid_request_error" && strings.Contains(strings.ToLower(message), "prompt is too long") {
+	switch {
+	case code == "invalid_request_error" && strings.Contains(strings.ToLower(message), "prompt is too long"):
 		out = openresponses.ContextLengthExceeded(message)
-	} else {
+	case code == "billing_error" || status == http.StatusPaymentRequired:
+		// Claude's billing_error, or a 402 with no Claude error type from
+		// a proxy: the shared code a client does not retry on
+		// (docs/extensions.md section 6). The status stays 402.
+		out = openresponses.InsufficientQuota(message)
+	default:
 		// Credential and permission refusals are 401 and 403, so
 		// invalid_request: a retry cannot fix them.
 		out = &openresponses.Error{Type: openresponses.ErrorTypeForStatus(status), Code: code, Message: message}
