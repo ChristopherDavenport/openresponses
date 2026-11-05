@@ -23,6 +23,7 @@ as in RFC 2119.
 | [`openresponses-experimental.issuer`](#4-who-issued-a-reasoning-item) | reasoning item | #56 | in the set |
 | [`openresponses-experimental.cache_write_tokens`, `openresponses-experimental.cache_write_tokens_by_ttl`](#5-cache-writes) | `usage.input_tokens_details` | #53 | in the set |
 | [`context_length_exceeded`](#6-error-codes) | error `code` value | #61 | in the set, as a code |
+| [`insufficient_quota`](#6-error-codes) | error `code` value | #73 | in the set, as a code |
 | [`openresponses-experimental.model_info`](#7-model-information) | `GET /models/{model}` model object | #51 | in the set |
 | [Retryability](#8-not-in-the-set) | none | #58 | not needed |
 | [Refusal category](#8-not-in-the-set) | `incomplete_details` | #59 | provider slug instead |
@@ -260,6 +261,7 @@ belong in this document.
 | `openresponses-experimental.issuer` | `providers/anthropic`, `providers/gemini` | both, and `ClientAdapter`, on input; agentturn (#286, #242) |
 | `openresponses-experimental.cache_write_tokens`, `openresponses-experimental.cache_write_tokens_by_ttl` | `providers/anthropic` | agenteval (#68), any price table |
 | `context_length_exceeded` | all three adapters | agentturn's compaction |
+| `insufficient_quota` | all three adapters; `Client` reads a 402 as it | agentturn's retry decision (agentturn#308) |
 | `openresponses-experimental.model_info` | the handler (from an adapter), the Responses client's vendor mappings | dax, agentturn's compaction budget, agentkit's effort floor, effort fitting |
 
 ## 3. Reasoning effort above `xhigh`
@@ -445,7 +447,12 @@ names only a few codes (`previous_response_not_found`,
 the same thing reaches the client under a different code. The case that
 matters most is a request whose input is larger than the model's context
 window. A harness that compacts on overflow has to recognise it, and
-today it must match three providers' messages.
+today it must match three providers' messages. The next is a request
+the account cannot pay for: Claude says `invalid_request_error` with a
+400 ("Your credit balance is too low", or a usage limit reached) or
+`billing_error` with a 402, OpenRouter a bare 402, and OpenAI
+`insufficient_quota` with a 429, the status of a rate limit. A client
+that decides by status retries it.
 
 **Placement.** Values of an error's `code`. No new member is defined. A
 value already used by an established upstream for the same condition is
@@ -456,17 +463,41 @@ no change. A condition no upstream names would take an
 | Code | Type | Meaning |
 | --- | --- | --- |
 | `context_length_exceeded` | `invalid_request` | The request's input, with its instructions and tools, exceeds the model's context window. Retrying the same request cannot succeed. The client must shorten it. OpenAI already sends this code. |
+| `insufficient_quota` | `invalid_request` | The account's or key's credit or spend limit cannot cover the request. Retrying the same request cannot succeed. OpenAI already sends this code. |
 
-**Writers.** An adapter MUST report an overflow with this code and type,
-whatever the provider's own code. Each adapter's README states how it
+**Writers.** An adapter MUST report an overflow with code
+`context_length_exceeded` and type `invalid_request`, whatever the
+provider's own code. Each adapter's README states how it
 recognises one: Claude sends `invalid_request_error` with "prompt is too
 long", and Gemini sends `INVALID_ARGUMENT` with "input token count …
 exceeds". A response cut short by the output token limit is not an
 overflow. It ends `incomplete` with `max_output_tokens`, Claude's
 `model_context_window_exceeded` stop included.
 
-**Readers.** A client MAY compact and retry on this code. It MUST NOT
-retry the same request unchanged.
+An adapter MUST report a request refused because the account's or
+key's credit or spend limit cannot cover it with code
+`insufficient_quota` and type `invalid_request`, whatever the
+provider's own code, keeping the provider's message. It SHOULD keep
+the HTTP status the provider sent, so the code, not the status, is
+what says the request will not succeed. Each adapter's README states
+how it recognises one: Claude sends `invalid_request_error` with a 400
+and a message saying the credit balance is too low or a usage limit is
+reached, or `billing_error` with a 402; OpenAI sends this code with a
+429; and OpenRouter sends a 402.
+
+**Readers.** A client MAY compact and retry on `context_length_exceeded`.
+It MUST NOT retry the same request unchanged.
+
+A client MUST NOT retry a request refused with `insufficient_quota`
+unchanged, whatever HTTP status it arrived with, and MAY retry it
+shortened or with a lower `max_output_tokens`. A client reading an HTTP
+402 with no registered code, that is, no code in this section's table,
+SHOULD take it as `insufficient_quota`, and SHOULD take an error typed
+`insufficient_quota` with no code, as OpenAI may send one, as this
+code too.
+The code comes before the status: a client that decides retries by
+status alone reads OpenAI's 429 as a rate limit and retries a request
+that cannot succeed.
 
 The codes the library already uses for refusing a request
 (`invalid_value`, `missing_required_parameter`,

@@ -136,6 +136,13 @@ specification says which types a retry can help: `server_error` and
   cut short by a token limit is not an overflow: that response ends
   `incomplete` with `max_output_tokens`, Claude's
   `model_context_window_exceeded` stop included.
+- A request refused because the account's credit or spend limit cannot
+  cover it is `invalid_request` with code `insufficient_quota`, whatever
+  the provider's own code and whatever status it came with, as
+  docs/extensions.md section 6 defines it. The status stays the
+  provider's (OpenAI's 429, a 402), so a client judges it by the code.
+  Each README states how its adapter recognises one, and an HTTP 402
+  with no registered code is one in every adapter and in `Client`.
 - An error that arrives with an HTTP status and no type of its own
   takes its type from the status, by `ErrorTypeForStatus`, which
   `Client` and the Chat Completions adapter both use. Only
@@ -282,7 +289,9 @@ Errors: `*anthropic.Error` maps to `*openresponses.Error` by the
 API's error type, whether it came as an HTTP status or as an `error`
 event in the stream, by the table in the README (the Errors section
 above); an unknown type falls back to the HTTP status. "prompt is too
-long" is `context_length_exceeded`. `Retry-After` and the rate-limit
+long" is `context_length_exceeded`; `billing_error`, any 402, and an
+`invalid_request_error` saying "credit balance is too low" or "API
+usage limits" are `insufficient_quota`, each with its status. `Retry-After` and the rate-limit
 headers are copied into `Error.Headers`, as `Client` already does for
 Open Responses upstreams.
 
@@ -512,6 +521,12 @@ Where it differs from the SDK-backed adapters:
   "requested [about] N tokens" less "N in the completion" or "N in the
   output". A message without counts that names `max_tokens` or
   `max_completion_tokens` refuses the output limit and is not one.
+- An error whose code or type is `insufficient_quota` (OpenAI, which
+  sends it with a 429), or any 402 (OpenRouter's exhausted credits)
+  whose code is not `context_length_exceeded`, is `invalid_request`
+  with code `insufficient_quota` (docs/extensions.md section 6), with
+  the status it came with. A stream frame naming `insufficient_quota`
+  reads as OpenAI's 429, and one with code 402 as a 402.
 - The error's code is the envelope's `code`, else its `type`, else
   `http_<status>` (`upstream_error` for a frame). Its `param` and the
   failure headers are kept. The envelope's `type` is kept as the

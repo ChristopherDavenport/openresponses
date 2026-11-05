@@ -342,7 +342,12 @@ came as an HTTP status or as an `error` event inside a 200 stream:
 
 | Claude error type | Type | Status |
 |---|---|---|
-| `invalid_request_error`, `billing_error`, `request_too_large` | `invalid_request` | 400, 402, 413 |
+| `invalid_request_error`, `request_too_large` | `invalid_request` | 400, 413 |
+| `billing_error` | `invalid_request`, code `insufficient_quota` | 402 |
+
+An `invalid_request_error` saying the credit balance is too low or a
+usage limit is reached is code `insufficient_quota` too, with its 400
+(below).
 | `authentication_error`, `permission_error` | `invalid_request` | 401, 403 |
 | `not_found_error` | `not_found` | 404 |
 | `rate_limit_error` | `too_many_requests` | 429 |
@@ -369,6 +374,16 @@ code of its own for it: the adapter recognises an
 ignoring case, and keeps Claude's message. Output cut short by
 `max_tokens` or `model_context_window_exceeded` is not an overflow; that
 response ends incomplete, as above.
+
+A request the account's credit cannot cover is `invalid_request` with
+code `insufficient_quota` (docs/extensions.md, section 6). Claude
+usually refuses it with a 400 `invalid_request_error`, so the adapter
+recognises an `invalid_request_error` whose message contains "credit
+balance is too low" or "API usage limits", ignoring case, as well as
+`billing_error` and any 402 without a Claude error type, as from a
+proxy. It keeps Claude's message and status, in a stream as over HTTP. A client
+must not retry it unchanged; it is told apart from a refusal it may
+retry by the code, not the status.
 
 `Retry-After`, the rate-limit headers and the request id travel with
 every error.

@@ -665,8 +665,11 @@ func (e *apiError) toError(status int, headers http.Header) *openresponses.Error
 		code = "upstream_error"
 	}
 	typ := openresponses.ErrorTypeForStatus(status)
-	if overflowStatus(status) && e.contextOverflow() {
+	switch {
+	case overflowStatus(status) && e.contextOverflow():
 		code, typ = openresponses.CodeContextLengthExceeded, openresponses.ErrorTypeInvalidRequest
+	case e.insufficientQuota(status):
+		code, typ = openresponses.CodeInsufficientQuota, openresponses.ErrorTypeInvalidRequest
 	}
 	var out *openresponses.Error
 	switch typ {
@@ -698,6 +701,18 @@ func (e *apiError) toError(status int, headers http.Header) *openresponses.Error
 		}
 	}
 	return out
+}
+
+// insufficientQuota reports whether the error refuses a request that the
+// account's credit or spend limit cannot cover (docs/extensions.md
+// section 6): OpenAI's insufficient_quota, as code or type, whatever its
+// status, or a 402, as OpenRouter sends for exhausted credits, with no
+// other registered code.
+func (e *apiError) insufficientQuota(status int) bool {
+	if e.code() == openresponses.CodeInsufficientQuota || e.Type == openresponses.CodeInsufficientQuota {
+		return true
+	}
+	return status == http.StatusPaymentRequired && e.code() != openresponses.CodeContextLengthExceeded
 }
 
 // overflowStatus reports whether an upstream refuses a context overflow

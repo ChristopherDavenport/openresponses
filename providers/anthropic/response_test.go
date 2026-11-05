@@ -485,6 +485,15 @@ func TestMapError(t *testing.T) {
 		{"permission", 403, `{"type":"error","error":{"type":"permission_error","message":"no access"}}`, nil, openresponses.ErrorTypeInvalidRequest, "permission_error", "no access", ""},
 		{"unknown type", 503, `{"type":"error","error":{"type":"new_error","message":"down"}}`, nil, openresponses.ErrorTypeServerError, "new_error", "down", ""},
 		{"context overflow", 400, `{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 215000 tokens > 200000 maximum"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeContextLengthExceeded, "prompt is too long: 215000 tokens > 200000 maximum", ""},
+		// docs/extensions.md section 6: Claude's billing_error is the
+		// shared insufficient_quota, and so is a 402 from a proxy with no
+		// Claude error type. The status stays 402.
+		{"billing", 402, `{"type":"error","error":{"type":"billing_error","message":"Your credit balance is too low to access the Anthropic API."}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, "Your credit balance is too low to access the Anthropic API.", ""},
+		// In practice Claude refuses a low balance with a 400
+		// invalid_request_error, told apart by its message.
+		{"credit too low", 400, `{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits."}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.", ""},
+		{"usage limits", 400, `{"type":"error","error":{"type":"invalid_request_error","message":"You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC."}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, "You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC.", ""},
+		{"proxy 402", 402, `{"error":{"message":"out of credit"}}`, nil, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, "out of credit", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -521,6 +530,8 @@ func TestStreamErrorEvent(t *testing.T) {
 		{"rate limited", `{"type":"rate_limit_error","message":"slow down"}`, openresponses.ErrorTypeTooManyRequests, "rate_limit_error", 429},
 		{"api error", `{"type":"api_error","message":"oops"}`, openresponses.ErrorTypeServerError, "api_error", 500},
 		{"unknown type", `{"type":"new_error","message":"?"}`, openresponses.ErrorTypeServerError, "new_error", 500},
+		{"billing", `{"type":"billing_error","message":"Your credit balance is too low to access the Anthropic API."}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, 402},
+		{"credit too low", `{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, 400},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

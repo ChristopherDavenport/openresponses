@@ -311,6 +311,8 @@ func (a *ClientAdapter) CreateStream(ctx context.Context, req Request, sink Even
 		if e, ok := ev.(*ErrorEvent); ok {
 			cp := *e
 			cp.Error = e.Error.forwardable()
+			// Read as Client reads an HTTP error (section 6).
+			cp.Error.Code, cp.Error.Type = quota(e.Status, cp.Error.Code, cp.Error.Type)
 			cp.Extra = cloneExtra(e.Extra)
 			lastError = &cp
 			ev = &cp

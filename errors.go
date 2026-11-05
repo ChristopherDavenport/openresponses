@@ -41,6 +41,16 @@ const (
 // not this error; that response ends incomplete with max_output_tokens.
 const CodeContextLengthExceeded = "context_length_exceeded"
 
+// CodeInsufficientQuota is the code of an invalid_request error for a
+// request refused because the account's or key's credit or spend limit
+// cannot cover it, whatever the provider's own code (docs/extensions.md,
+// section 6). OpenAI already sends it, with a 429. A client judges it by
+// the code before the status: retrying the same request cannot succeed,
+// whatever status it arrived with, though a shorter request or a lower
+// max_output_tokens may fit what is left. An HTTP 402 with no registered
+// code reads as this code.
+const CodeInsufficientQuota = "insufficient_quota"
+
 // HTTPStatus returns the HTTP status for the error type. Unknown types map
 // to 500.
 func (t ErrorType) HTTPStatus() int {
@@ -234,7 +244,43 @@ func (p ErrorPayload) Err(status int) *Error {
 			e.WithHeader(k, v)
 		}
 	}
+	e.readQuota()
 	return e
+}
+
+// registeredCode reports whether docs/extensions.md section 6 registers
+// code.
+func registeredCode(code string) bool {
+	switch code {
+	case CodeContextLengthExceeded, CodeInsufficientQuota:
+		return true
+	}
+	return false
+}
+
+// readQuota applies the reader rule of docs/extensions.md section 6 to
+// an error read from a peer (see quota). The status stays the one the
+// peer sent.
+func (e *Error) readQuota() {
+	e.Code, e.Type = quota(e.StatusCode, e.Code, e.Type)
+}
+
+// quota is the code and type of an error read from a peer under
+// docs/extensions.md section 6: one typed insufficient_quota with no
+// code, as OpenAI may send it, and an HTTP 402 with no registered code
+// are [CodeInsufficientQuota], and that code is invalid_request whatever
+// status it arrived with, so OpenAI's 429 does not read as a rate limit.
+func quota(status int, code string, typ ErrorType) (string, ErrorType) {
+	if code == "" && typ == ErrorType(CodeInsufficientQuota) {
+		code = CodeInsufficientQuota
+	}
+	if status == http.StatusPaymentRequired && !registeredCode(code) {
+		code = CodeInsufficientQuota
+	}
+	if code == CodeInsufficientQuota {
+		typ = ErrorTypeInvalidRequest
+	}
+	return code, typ
 }
 
 // forwardable returns the payload as it may be forwarded from a peer:
@@ -323,6 +369,14 @@ func ContextLengthExceeded(message string) *Error {
 	return InvalidRequest(CodeContextLengthExceeded, message, "")
 }
 
+// InsufficientQuota builds the invalid_request error an adapter reports
+// when the account's or key's credit or spend limit cannot cover the
+// request. message is the provider's. An adapter sets StatusCode to the
+// upstream's status when it has one.
+func InsufficientQuota(message string) *Error {
+	return InvalidRequest(CodeInsufficientQuota, message, "")
+}
+
 // TooManyRequests builds a too_many_requests error.
 func TooManyRequests(code, message string) *Error {
 	return &Error{Type: ErrorTypeTooManyRequests, Code: code, Message: message}
@@ -384,6 +438,14 @@ func IsRateLimited(err error) bool {
 // upstream that types the error invalid_request_error matches too.
 func IsContextLengthExceeded(err error) bool {
 	return errors.Is(err, &Error{Code: CodeContextLengthExceeded})
+}
+
+// IsInsufficientQuota reports whether err carries the code
+// [CodeInsufficientQuota]. It matches on the code alone, whatever the
+// status: a client must not retry such a request unchanged, even when it
+// arrived with a 429.
+func IsInsufficientQuota(err error) bool {
+	return errors.Is(err, &Error{Code: CodeInsufficientQuota})
 }
 
 // IsInvalidRequest reports whether err is an invalid_request error.

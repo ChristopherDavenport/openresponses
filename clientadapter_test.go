@@ -180,6 +180,40 @@ func TestClientAdapterFiltersForwardedErrorHeaders(t *testing.T) {
 	assertSameJSON(t, []byte(`{"type":"too_many_requests","code":"c","message":"m","param":null,"headers":{"Retry-After":"3"},"x:hint":"kept"}`), out)
 }
 
+// An upstream error event is forwarded as section 6 reads it: OpenAI's
+// insufficient_quota typed invalid_request, and a 402 with no registered
+// code as insufficient_quota, the status kept.
+func TestClientAdapterForwardsInsufficientQuota(t *testing.T) {
+	for name, tc := range map[string]struct{ event, want string }{
+		"openai":    {`{"type":"error","sequence_number":0,"status":429,"error":{"type":"insufficient_quota","code":"insufficient_quota","message":"m","param":null}}`, `{"type":"invalid_request","code":"insufficient_quota","message":"m","param":null}`},
+		"bare 402":  {`{"type":"error","sequence_number":0,"status":402,"error":{"type":"invalid_request","code":"credits","message":"m","param":null}}`, `{"type":"invalid_request","code":"insufficient_quota","message":"m","param":null}`},
+		"type only": {`{"type":"error","sequence_number":0,"error":{"type":"insufficient_quota","code":null,"message":"m","param":null}}`, `{"type":"invalid_request","code":"insufficient_quota","message":"m","param":null}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "event: error\ndata: "+tc.event+"\n\n")
+			}))
+			defer upstream.Close()
+			var got *ErrorEvent
+			_ = NewClient(upstream.URL).AsAdapter().CreateStream(testContext(t), Request{Model: "m"}, EventSinkFunc(func(ev StreamEvent) error {
+				if e, ok := ev.(*ErrorEvent); ok {
+					got = e
+				}
+				return nil
+			}))
+			if got == nil {
+				t.Fatal("no error event forwarded")
+			}
+			out, err := json.Marshal(got.Error)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertSameJSON(t, []byte(tc.want), out)
+		})
+	}
+}
+
 // captureUpstream serves a server that records the input of every
 // request it receives and refuses each one, and returns a client of it
 // and the inputs it saw.

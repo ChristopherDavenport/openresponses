@@ -135,6 +135,47 @@ func TestContextLengthExceeded(t *testing.T) {
 	}
 }
 
+func TestInsufficientQuota(t *testing.T) {
+	err := InsufficientQuota("Your credit balance is too low")
+	if !IsInsufficientQuota(err) || !IsInvalidRequest(err) || err.HTTPStatus() != 400 || err.Message != "Your credit balance is too low" {
+		t.Errorf("err = %v", err)
+	}
+	if !IsInsufficientQuota(fmt.Errorf("wrapped: %w", err)) {
+		t.Error("wrapped error not matched")
+	}
+	// The code alone decides, whatever status it came with.
+	err.StatusCode = 429
+	if !IsInsufficientQuota(err) || IsRateLimited(err) {
+		t.Errorf("429 err = %v", err)
+	}
+	if IsInsufficientQuota(InvalidRequest(CodeContextLengthExceeded, "m", "")) {
+		t.Error("other invalid_request matched")
+	}
+}
+
+// An error event or frame is read by the same rule as an HTTP error: the
+// code decides the type whatever the status, and the status is kept.
+func TestInsufficientQuotaFromPayload(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload ErrorPayload
+		status  int
+	}{
+		{"openai event", ErrorPayload{Type: "insufficient_quota", Code: CodeInsufficientQuota, Message: "m"}, 429},
+		{"bare 402", ErrorPayload{Type: "invalid_request", Code: "", Message: "m"}, 402},
+		{"402 unregistered code", ErrorPayload{Code: "credits", Message: "m"}, 402},
+		{"type alone", ErrorPayload{Type: "insufficient_quota", Message: "m"}, 429},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.payload.Err(tc.status)
+			if err.Code != CodeInsufficientQuota || err.Type != ErrorTypeInvalidRequest || err.HTTPStatus() != tc.status || err.Message != "m" {
+				t.Errorf("err = %+v", err)
+			}
+		})
+	}
+}
+
 func TestCacheWriteTokensByTTLInvalid(t *testing.T) {
 	for _, raw := range []string{
 		`{"cached_tokens":0,"openresponses-experimental.cache_write_tokens":7,"openresponses-experimental.cache_write_tokens_by_ttl":{"5m":3,"1h":"4"}}`,

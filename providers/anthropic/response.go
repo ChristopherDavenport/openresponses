@@ -550,9 +550,17 @@ func mapError(err error) error {
 	}
 	message := apiMessage(apiErr)
 	var out *openresponses.Error
-	if code == "invalid_request_error" && strings.Contains(strings.ToLower(message), "prompt is too long") {
+	switch {
+	case code == "invalid_request_error" && strings.Contains(strings.ToLower(message), "prompt is too long"):
 		out = openresponses.ContextLengthExceeded(message)
-	} else {
+	case code == "billing_error" || status == http.StatusPaymentRequired ||
+		code == "invalid_request_error" && creditRefusal(message):
+		// Claude's low balance or usage limit, a billing_error, or a 402
+		// with no Claude error type from a proxy: the shared code a client
+		// does not retry on (docs/extensions.md section 6). The status
+		// stays Claude's.
+		out = openresponses.InsufficientQuota(message)
+	default:
 		// Credential and permission refusals are 401 and 403, so
 		// invalid_request: a retry cannot fix them.
 		out = &openresponses.Error{Type: openresponses.ErrorTypeForStatus(status), Code: code, Message: message}
@@ -570,6 +578,26 @@ func mapError(err error) error {
 		}
 	}
 	return out
+}
+
+// creditMessages are the phrases, in lower case, by which Claude refuses
+// with a 400 invalid_request_error a request the account's credit
+// balance or its usage limit cannot cover.
+var creditMessages = []string{
+	"credit balance is too low", // "Your credit balance is too low to access the Anthropic API."
+	"api usage limits",          // "You have reached your specified API usage limits."
+}
+
+// creditRefusal reports whether message is one of creditMessages,
+// ignoring case.
+func creditRefusal(message string) bool {
+	lower := strings.ToLower(message)
+	for _, phrase := range creditMessages {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // errorStatus is the HTTP status the Messages API gives each error type

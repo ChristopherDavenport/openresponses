@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: a 402 is `invalid_request` with code
+  `insufficient_quota` (docs/extensions.md section 6, #73), with its
+  status and message kept; the code was `gemini_error` or Gemini's
+  status. `RESOURCE_EXHAUSTED` stays `too_many_requests`.
+
 ## v0.0.18 - 2026-11-02
 
 - Behaviour change: an input item or content part under another

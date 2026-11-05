@@ -396,6 +396,11 @@ func TestMapError(t *testing.T) {
 		{"unauthenticated", 401, `{"error":{"code":401,"message":"key","status":"UNAUTHENTICATED"}}`, openresponses.ErrorTypeInvalidRequest, "unauthenticated", "", 0},
 		{"permission denied", 403, `{"error":{"code":403,"message":"no access","status":"PERMISSION_DENIED"}}`, openresponses.ErrorTypeInvalidRequest, "permission_denied", "", 0},
 		{"unavailable", 503, `{"error":{"code":503,"message":"down","status":"UNAVAILABLE"}}`, openresponses.ErrorTypeServerError, "unavailable", "", 0},
+		// docs/extensions.md section 6: Gemini has no error of its own
+		// for an exhausted balance that tells it from a rate limit, so a
+		// 402, as a proxy or gateway in front of it sends, is the shared
+		// insufficient_quota, with its status kept.
+		{"payment required", 402, `{"error":{"code":402,"message":"Insufficient credits"}}`, openresponses.ErrorTypeInvalidRequest, openresponses.CodeInsufficientQuota, "", 0},
 	}
 	for _, tc := range cases {
 		// The same envelope inside a 2xx stream is the same failure, and
@@ -413,6 +418,9 @@ func TestMapError(t *testing.T) {
 				}
 				if oerr.Type != tc.typ || oerr.Code != tc.code || oerr.HTTPStatus() != want {
 					t.Fatalf("err = %+v (status %d, want %d)", oerr, oerr.HTTPStatus(), want)
+				}
+				if tc.code == openresponses.CodeInsufficientQuota && oerr.Message != "Insufficient credits" {
+					t.Fatalf("message = %q, want the provider's", oerr.Message)
 				}
 				if got := oerr.Headers.Get("Retry-After"); got != tc.retry {
 					t.Fatalf("Retry-After = %q, want %q", got, tc.retry)

@@ -88,6 +88,16 @@ func TestClientErrors(t *testing.T) {
 		{"413 without type", 413, `{"error":{"code":"too_large","message":"m"}}`, ErrorTypeInvalidRequest, "too_large"},
 		{"408 without type", 408, `{"error":{"code":"timeout","message":"m"}}`, ErrorTypeServerError, "timeout"},
 		{"503 without type", 503, `{"error":{"code":"down","message":"m"}}`, ErrorTypeServerError, "down"},
+		// docs/extensions.md section 6: a 402 with no registered code is
+		// insufficient_quota, and the code decides the type whatever the
+		// status, so OpenAI's 429 is not read as a rate limit. The status
+		// stays what the upstream sent.
+		{"402 without code", 402, `{"error":{"message":"Insufficient credits"}}`, ErrorTypeInvalidRequest, CodeInsufficientQuota},
+		{"402 numeric code", 402, `{"error":{"code":402,"message":"Insufficient credits"}}`, ErrorTypeInvalidRequest, CodeInsufficientQuota},
+		{"402 unregistered code", 402, `{"error":{"code":"payment_required","message":"m"}}`, ErrorTypeInvalidRequest, CodeInsufficientQuota},
+		{"402 registered code", 402, `{"error":{"type":"invalid_request","code":"context_length_exceeded","message":"m"}}`, ErrorTypeInvalidRequest, CodeContextLengthExceeded},
+		{"type alone, null code", 429, `{"error":{"type":"insufficient_quota","code":null,"message":"You exceeded your current quota","param":null}}`, ErrorTypeInvalidRequest, CodeInsufficientQuota},
+		{"openai insufficient quota", 429, `{"error":{"type":"insufficient_quota","code":"insufficient_quota","message":"You exceeded your current quota","param":null}}`, ErrorTypeInvalidRequest, CodeInsufficientQuota},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
