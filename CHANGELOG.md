@@ -5,7 +5,7 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
-## Unreleased
+## v0.0.19 - 2026-11-04
 
 - docs/extensions.md section 6 registers `insufficient_quota`, type
   `invalid_request`, adopted unprefixed from OpenAI (#73): a request

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.19 - 2026-11-04
 
 - Behaviour change: a low credit balance or a reached usage limit is
   `invalid_request` with code `insufficient_quota` (docs/extensions.md

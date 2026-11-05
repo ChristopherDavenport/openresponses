@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.19 - 2026-11-04
 
 - Behaviour change: a 402 is `invalid_request` with code
   `insufficient_quota` (docs/extensions.md section 6, #73), with its
