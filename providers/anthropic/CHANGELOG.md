@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: an input that would end the Messages request on an
+  assistant turn is refused before sending, as `invalid_request` with
+  code `invalid_value` and `param` naming the item it would end on
+  (docs/extensions.md section 1.8, #77). Claude reads such a request as
+  a prefix to continue (prefill), and newer models refuse it with a
+  400, where Open Responses reads a trailing assistant item as context.
+  Both shapes are refused: an assistant message, function call, sent
+  reasoning or `anthropic.` item last, and an assistant turn left last
+  because every item after it sends Claude nothing. A `pause_turn`
+  continuation is unchanged.
+
 ## v0.0.19 - 2026-11-04
 
 - Behaviour change: a low credit balance or a reached usage limit is

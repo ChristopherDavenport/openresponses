@@ -40,7 +40,7 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 		}
 		// Resume: what Claude produced so far goes back as the assistant
 		// message, and the next turn continues into the same response.
-		produced, _, err := encodeInput(d.em.Response().Output[turnStart:])
+		produced, _, _, err := encodeInput(d.em.Response().Output[turnStart:])
 		if err != nil {
 			return openresponses.ServerError("continuation_failed", err.Error())
 		}

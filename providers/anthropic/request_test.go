@@ -239,14 +239,16 @@ func TestEncodeInputErrors(t *testing.T) {
 
 func TestEncodeExtensionItem(t *testing.T) {
 	p := encode(t, openresponses.Request{Input: openresponses.Items{
+		openresponses.UserText("Search"),
 		&openresponses.UnknownItem{Type: "anthropic.server_tool_use", Raw: json.RawMessage(
 			`{"type":"anthropic.server_tool_use","id":"ax_1","block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"x"}}}`)},
+		openresponses.UserText("Go on"),
 	}})
 	body := wire(t, p)
 	messages := body["messages"].([]any)
-	content := messages[0].(map[string]any)["content"].([]any)
+	content := messages[1].(map[string]any)["content"].([]any)
 	block := content[0].(map[string]any)
-	if messages[0].(map[string]any)["role"] != "assistant" || block["type"] != "server_tool_use" || block["id"] != "srvtoolu_1" {
+	if messages[1].(map[string]any)["role"] != "assistant" || block["type"] != "server_tool_use" || block["id"] != "srvtoolu_1" {
 		t.Fatalf("block = %v", block)
 	}
 }
@@ -590,7 +592,7 @@ func TestEncodeReasoningIssuer(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := encode(t, openresponses.Request{Input: openresponses.Items{
-				openresponses.UserText("Hi"), tc.item, openresponses.AssistantText("Hello"),
+				openresponses.UserText("Hi"), tc.item, openresponses.AssistantText("Hello"), openresponses.UserText("Bye"),
 			}})
 			assistant := p.Messages[1].Content
 			sent := assistant[0].OfThinking != nil
@@ -783,6 +785,7 @@ func TestEncodeForeignSlug(t *testing.T) {
 		}}},
 		openresponses.UserMessage(part("chatcompletions.thing")),
 		openresponses.AssistantText("Done"),
+		openresponses.UserText("Thanks"),
 	}}, defaults)
 	if err != nil {
 		t.Fatalf("encodeRequest: %v", err)
@@ -798,7 +801,8 @@ func TestEncodeForeignSlug(t *testing.T) {
 	want := `[{"content":[{"text":"Run it","type":"text"}],"role":"user"},` +
 		`{"content":[{"id":"toolu_1","input":{},"name":"run","type":"tool_use"}],"role":"assistant"},` +
 		`{"content":[{"content":[{"text":"1","type":"text"}],"tool_use_id":"toolu_1","type":"tool_result"}],"role":"user"},` +
-		`{"content":[{"text":"Done","type":"text"}],"role":"assistant"}]`
+		`{"content":[{"text":"Done","type":"text"}],"role":"assistant"},` +
+		`{"content":[{"text":"Thanks","type":"text"}],"role":"user"}]`
 	if string(got) != want {
 		t.Fatalf("messages =\n%s\nwant\n%s", got, want)
 	}
@@ -835,5 +839,93 @@ func TestEncodeSidecarMedia(t *testing.T) {
 				t.Fatalf("err = %s %q, want invalid_request naming the sidecar: reference", oerr.Type, oerr.Message)
 			}
 		})
+	}
+}
+
+// TestEncodeRefusesPrefill pins openresponses#77: Claude reads a request
+// that ends on an assistant turn as a prefix to continue (prefill), and
+// Open Responses reads a trailing assistant item as context to respond
+// after, so such an input is refused before it is sent, with
+// invalid_request naming the item the request would end on. Both shapes:
+// the last item is on the assistant side, and the last user-side items
+// send nothing, leaving the assistant turn before them last.
+func TestEncodeRefusesPrefill(t *testing.T) {
+	foreignPart := &openresponses.UnknownContent{Type: "gemini.thought", Raw: json.RawMessage(`{"type":"gemini.thought"}`)}
+	cases := []struct {
+		name  string
+		input openresponses.Items
+		param string
+	}{
+		{"assistant message", openresponses.Items{openresponses.UserText("Hi"), openresponses.AssistantText("Hello")}, "input[1]"},
+		{"assistant message alone", openresponses.Items{openresponses.AssistantText("Hello")}, "input[0]"},
+		{"function call", openresponses.Items{openresponses.UserText("Read it"), &openresponses.FunctionCall{CallID: "toolu_1", Name: "read", Arguments: `{}`}}, "input[1]"},
+		{"reasoning", openresponses.Items{openresponses.UserText("Hi"), &openresponses.ReasoningItem{
+			Summary: openresponses.Contents{&openresponses.SummaryText{Text: "Hmm."}}, EncryptedContent: "c2ln",
+		}}, "input[1]"},
+		{"extension item", openresponses.Items{openresponses.UserText("Search"), &openresponses.UnknownItem{Type: "anthropic.server_tool_use", Raw: json.RawMessage(
+			`{"type":"anthropic.server_tool_use","id":"ax_1","block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"x"}}}`)}}, "input[1]"},
+		{"a user message that sends nothing", openresponses.Items{
+			openresponses.UserText("Hi"), openresponses.AssistantText("Hello"), openresponses.UserMessage(foreignPart),
+		}, "input[1]"},
+		{"a function call after a foreign item", openresponses.Items{
+			openresponses.UserText("Run it"),
+			&openresponses.FunctionCall{CallID: "toolu_1", Name: "run", Arguments: `{}`},
+			&openresponses.UnknownItem{Type: "gemini.executable_code", Raw: json.RawMessage(`{"type":"gemini.executable_code"}`)},
+		}, "input[1]"},
+		{"unsigned reasoning after an assistant message", openresponses.Items{
+			openresponses.UserText("Hi"), openresponses.AssistantText("Hello"), &openresponses.ReasoningItem{Summary: openresponses.Contents{&openresponses.SummaryText{Text: "Hmm."}}},
+		}, "input[1]"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := encodeRequest(openresponses.Request{Model: "claude-sonnet-5-5", Input: tc.input}, defaults)
+			wantErr(t, err, openresponses.CodeInvalidValue, tc.param)
+			var oerr *openresponses.Error
+			errorsAs(err, &oerr)
+			if oerr.Type != openresponses.ErrorTypeInvalidRequest || !strings.Contains(oerr.Message, "assistant turn") {
+				t.Fatalf("err = %s %q, want invalid_request saying the request ends on an assistant turn", oerr.Type, oerr.Message)
+			}
+		})
+	}
+}
+
+// TestEncodeContentFilterPath pins the input of the request that failed
+// in openresponses#77 (agentstudies context-eval, tb2-v0.0.35-1,
+// vulnerable-secret, rebuilt from the session and verified against its
+// request_hash): two responses that each ended content_filter with a
+// function call and a refusal message, each call answered. It ends on a
+// user turn of tool_result blocks and is sent, not refused. Claude
+// answered it live with the prefill 400 all the same (see #77).
+func TestEncodeContentFilterPath(t *testing.T) {
+	refusal := func(id string) *openresponses.Message {
+		return &openresponses.Message{ID: id, Status: openresponses.StatusIncomplete, Role: openresponses.RoleAssistant,
+			Content: openresponses.Contents{&openresponses.Refusal{Refusal: "Cyber safeguards flagged this message."}}}
+	}
+	p := encode(t, openresponses.Request{Model: "claude-sonnet-5-5", Input: openresponses.Items{
+		openresponses.UserText("Analyze the following program that contains a secret key."),
+		&openresponses.FunctionCall{CallID: "toolu_012f8cx8pdYUFUmVS15Hn1Pc", Name: "ls"},
+		refusal("msg_a7bd60e6722a6e942e084b2b"),
+		openresponses.NewFunctionCallOutput("toolu_012f8cx8pdYUFUmVS15Hn1Pc", "vulnerable  14520"),
+		&openresponses.FunctionCall{CallID: "toolu_016RCbSTbxaYpUrSgFUdraEZ", Name: "bash", Arguments: `{"command": "cd /app; strings vulnerable"}`},
+		refusal("msg_bad2a1b29e7e1cff49d8fc0d"),
+		openresponses.NewFunctionCallOutput("toolu_016RCbSTbxaYpUrSgFUdraEZ", "Access granted! Secret: %s\n[exit 0]"),
+	}})
+	var roles []string
+	for _, m := range p.Messages {
+		var kinds []string
+		for _, c := range m.Content {
+			switch {
+			case c.OfText != nil:
+				kinds = append(kinds, "text")
+			case c.OfToolUse != nil:
+				kinds = append(kinds, "tool_use")
+			case c.OfToolResult != nil:
+				kinds = append(kinds, "tool_result")
+			}
+		}
+		roles = append(roles, string(m.Role)+"["+strings.Join(kinds, ",")+"]")
+	}
+	if got, want := strings.Join(roles, " "), "user[text] assistant[tool_use,text] user[tool_result] assistant[tool_use,text] user[tool_result]"; got != want {
+		t.Fatalf("messages = %s, want %s", got, want)
 	}
 }

@@ -118,6 +118,21 @@ and content parts under a slug that names no provider (`acme.`).
 `previous_response_id` reaching the adapter means the handler
 has no `ResponseStore`, and is `previous_response_not_found`.
 
+An input that would end the Messages request on an assistant turn is
+`invalid_request` with `code: invalid_value` and `param` naming the
+item it would end on (docs/extensions.md section 1.8, #77). Claude
+reads a trailing assistant turn as a prefix to continue (prefill), and
+newer models refuse it with a 400 ("This model does not support
+assistant message prefill"), where in Open Responses a trailing
+assistant item is context to respond after. Two inputs end that way:
+the last item is an assistant message, a function call, reasoning that
+is sent, or an `anthropic.` item; or every item after the last of those
+sends Claude nothing, such as a user message whose parts are all under
+another provider's slug, so the assistant turn comes last. The adapter
+neither drops nor adds an item to make such a request pass. Resuming a
+turn Claude paused (`pause_turn`) is the adapter's own continuation and
+still sends the paused output last, as Claude asks.
+
 An image or file whose `image_url`, `file_url` or `file_data` is a
 `sidecar:` reference (`sidecar:sha256:<hex>`, docs/extensions.md
 section 1.7) is `invalid_request` with `code: invalid_value` and

@@ -5,6 +5,15 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- docs/extensions.md section 1.8 states a general adapter rule: an
+  adapter never sends an input its provider reads with another meaning,
+  and refuses, with `invalid_request` naming the item, one that would
+  end on an assistant turn its provider continues as a prefix (#77).
+  The section on writing an extension down is now 1.9. PLAN rule 10
+  says the same for this repository's adapters.
+
 ## v0.0.19 - 2026-11-04
 
 - docs/extensions.md section 6 registers `insufficient_quota`, type

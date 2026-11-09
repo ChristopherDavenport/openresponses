@@ -37,9 +37,12 @@ func encodeRequest(req openresponses.Request, cfg config) (sdk.MessageNewParams,
 	if err != nil {
 		return sdk.MessageNewParams{}, err
 	}
-	messages, system, err := encodeInput(req.Input)
+	messages, system, last, err := encodeInput(req.Input)
 	if err != nil {
 		return sdk.MessageNewParams{}, err
+	}
+	if n := len(messages); n > 0 && messages[n-1].Role == sdk.MessageParamRoleAssistant {
+		return sdk.MessageNewParams{}, prefill(req.Input, last)
 	}
 	if req.Instructions != "" {
 		system = append([]sdk.TextBlockParam{{Text: req.Instructions}}, system...)
@@ -50,6 +53,23 @@ func encodeRequest(req openresponses.Request, cfg config) (sdk.MessageNewParams,
 		return sdk.MessageNewParams{}, err
 	}
 	return p, nil
+}
+
+// prefill is the error for an input whose encoding would end on an
+// assistant turn, the one items[last] ends. Claude reads a trailing
+// assistant turn as a prefix to continue, and newer models refuse it,
+// while in Open Responses a trailing assistant item is context to
+// respond after: sent, the request would mean something other than the
+// input (#77). Nothing is dropped or invented to make it pass. A turn
+// Claude paused is resumed with its output as the last turn, but that
+// is the adapter's own continuation and never passes through here.
+func prefill(items openresponses.Items, last int) *openresponses.Error {
+	p := fmt.Sprintf("input[%d]", last)
+	msg := fmt.Sprintf("the request would end on an assistant turn, at %s: Claude reads a trailing assistant turn as a prefix to continue (prefill), not as context to respond after; end the input with a user message or a function call output", p)
+	if last < len(items)-1 {
+		msg += fmt.Sprintf(" (the items after %s send Claude nothing)", p)
+	}
+	return invalid(p, msg)
 }
 
 // providerSlugs are the slugs of the other adapters in this repository.
@@ -508,12 +528,16 @@ func encodeToolChoice(c openresponses.ToolChoice, disableParallel bool) (sdk.Too
 // called it. System and developer messages before every other item are
 // returned separately for the system prompt; a later one stays where it
 // is, as user text, so the system prompt and the cached prefix it
-// starts do not change.
-func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system []sdk.TextBlockParam, err error) {
+// starts do not change. last is the index of the last item that sent
+// a block, so the item that ends the last message; -1 when none did.
+func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system []sdk.TextBlockParam, last int, err error) {
+	last = -1
+	var at int // the index of the item being encoded
 	add := func(role sdk.MessageParamRole, blocks []sdk.ContentBlockParamUnion) {
 		if len(blocks) == 0 {
 			return
 		}
+		last = at
 		if n := len(messages); n > 0 && messages[n-1].Role == role {
 			messages[n-1].Content = append(messages[n-1].Content, blocks...)
 			return
@@ -522,6 +546,7 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 	}
 	leading := true // no item but system and developer messages yet
 	for i, item := range items {
+		at = i
 		p := fmt.Sprintf("input[%d]", i)
 		msg, isMessage := item.(*openresponses.Message)
 		if !isMessage || msg.Role != openresponses.RoleSystem && msg.Role != openresponses.RoleDeveloper {
@@ -531,7 +556,7 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 		case *openresponses.Message:
 			blocks, err := encodeBlocks(it.Content, p+".content")
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, -1, err
 			}
 			switch it.Role {
 			case openresponses.RoleUser:
@@ -551,24 +576,24 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 						continue
 					}
 					if blocks[j].OfText == nil {
-						return nil, nil, unsupported(fmt.Sprintf("%s.content[%d].type", p, k))
+						return nil, nil, -1, unsupported(fmt.Sprintf("%s.content[%d].type", p, k))
 					}
 					system = append(system, *blocks[j].OfText)
 					j++
 				}
 			default:
-				return nil, nil, invalid(p+".role", fmt.Sprintf("unknown role %q", it.Role))
+				return nil, nil, -1, invalid(p+".role", fmt.Sprintf("unknown role %q", it.Role))
 			}
 		case *openresponses.FunctionCall:
 			input, err := decodeArguments(it.Arguments)
 			if err != nil {
-				return nil, nil, invalid(p+".arguments", "arguments is not a JSON object: "+err.Error())
+				return nil, nil, -1, invalid(p+".arguments", "arguments is not a JSON object: "+err.Error())
 			}
 			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{sdk.NewToolUseBlock(toolUseID(it.CallID), input, it.Name)})
 		case *openresponses.FunctionCallOutput:
 			block, err := encodeFunctionOutput(it, p+".output")
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, -1, err
 			}
 			add(sdk.MessageParamRoleUser, []sdk.ContentBlockParamUnion{block})
 		case *openresponses.ReasoningItem:
@@ -592,16 +617,16 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			}
 			block, err := extensionBlock(it.Type, it.Raw)
 			if err != nil {
-				return nil, nil, invalid(p, err.Error())
+				return nil, nil, -1, invalid(p, err.Error())
 			}
 			if block == nil {
-				return nil, nil, unsupported(p + ".type")
+				return nil, nil, -1, unsupported(p + ".type")
 			}
 			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{param.Override[sdk.ContentBlockParamUnion](block)})
 		default:
 			// Compaction and item_reference need state this adapter does not
 			// keep.
-			return nil, nil, unsupported(p + ".type")
+			return nil, nil, -1, unsupported(p + ".type")
 		}
 	}
 	for i, m := range messages {
@@ -609,7 +634,7 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			messages[i].Content = toolResultsFirst(m.Content)
 		}
 	}
-	return messages, system, nil
+	return messages, system, last, nil
 }
 
 // toolResultsFirst orders a user turn the way Claude requires: every
