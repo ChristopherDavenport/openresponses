@@ -254,8 +254,9 @@ item (an assistant message, a function call, reasoning, or a
 provider's item of its own output) is context: the model responds
 after it. Some providers read a request that ends on an assistant turn
 as a prefix for the model to continue instead (prefill), and some of
-their models refuse such a request outright, as Claude's newer models
-do with a 400. The specification says nothing of how the end of the
+their models refuse such a request outright: Anthropic documents that
+Claude models from 4.6 on do not support prefill and answer it with a
+400. The specification says nothing of how the end of the
 input maps onto a provider that makes that distinction.
 
 **Rule.** An adapter MUST NOT send an input that its provider reads

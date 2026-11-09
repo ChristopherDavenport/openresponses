@@ -1010,3 +1010,32 @@ func TestEncodeResumesPausedTurn(t *testing.T) {
 		t.Fatalf("block = %v, want the server_tool_use", block)
 	}
 }
+
+// TestEncodeSendsUserSideEnds pins what the prefill check lets through:
+// a late system or developer message after an assistant turn is user
+// text, and a user message with one part Claude reads beside one under
+// another provider's slug still sends a user turn, so neither leaves
+// the assistant turn last.
+func TestEncodeSendsUserSideEnds(t *testing.T) {
+	foreignPart := &openresponses.UnknownContent{Type: "gemini.thought", Raw: json.RawMessage(`{"type":"gemini.thought"}`)}
+	cases := []struct {
+		name string
+		last openresponses.Item
+		text string
+	}{
+		{"developer message", openresponses.DeveloperText("Be brief."), "Be brief."},
+		{"system message", openresponses.SystemText("Be brief."), "Be brief."},
+		{"user message with a foreign part", openresponses.UserMessage(&openresponses.InputText{Text: "and?"}, foreignPart), "and?"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := encode(t, openresponses.Request{Input: openresponses.Items{
+				openresponses.UserText("Hi"), openresponses.AssistantText("Hello"), tc.last,
+			}})
+			last := p.Messages[len(p.Messages)-1]
+			if len(p.Messages) != 3 || last.Role != sdk.MessageParamRoleUser || len(last.Content) != 1 || last.Content[0].OfText.Text != tc.text {
+				t.Fatalf("messages = %+v, want a last user turn of %q", p.Messages, tc.text)
+			}
+		})
+	}
+}

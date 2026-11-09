@@ -14,8 +14,9 @@
   assistant turn is refused before sending, as `invalid_request` with
   code `invalid_value` and `param` naming the item it would end on
   (docs/extensions.md section 1.8, #77). Claude reads such a request as
-  a prefix to continue (prefill), and newer models refuse it with a
-  400, where Open Responses reads a trailing assistant item as context.
+  a prefix to continue (prefill), which Anthropic documents models from
+  Claude 4.6 on refuse with a 400, where Open Responses reads a
+  trailing assistant item as context.
   Both shapes are refused: an assistant message, function call, sent
   reasoning or other `anthropic.` item last, and an assistant turn left last
   because every item after it sends Claude nothing. A paused turn is

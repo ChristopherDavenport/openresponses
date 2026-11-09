@@ -57,10 +57,10 @@ func encodeRequest(req openresponses.Request, cfg config) (sdk.MessageNewParams,
 
 // prefill is the error for an input whose encoding would end on an
 // assistant turn, the one items[last] ends. Claude reads a trailing
-// assistant turn as a prefix to continue, and newer models refuse it,
-// while in Open Responses a trailing assistant item is context to
-// respond after: sent, the request would mean something other than the
-// input (#77). Nothing is dropped or invented to make it pass. A turn
+// assistant turn as a prefix to continue, which models from Claude 4.6
+// on refuse, as Anthropic documents, while in Open Responses a trailing
+// assistant item is context to respond after: sent, the request would
+// mean something other than the input (#77). Nothing is dropped or invented to make it pass. A turn
 // Claude paused is resumed with its output as the last turn: the
 // adapter's own continuation never passes through here, and a caller's
 // is let through by [pausedTurn].

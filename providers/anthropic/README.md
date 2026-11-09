@@ -122,9 +122,11 @@ An input that would end the Messages request on an assistant turn is
 `invalid_request` with `code: invalid_value` and `param` naming the
 item it would end on (docs/extensions.md section 1.8, #77). Claude
 reads a trailing assistant turn as a prefix to continue (prefill), and
-newer models refuse it with a 400 ("This model does not support
-assistant message prefill"), where in Open Responses a trailing
-assistant item is context to respond after. Two inputs end that way:
+Anthropic documents that models from Claude 4.6 on do not support it
+and answer it with a 400, where in Open Responses a trailing assistant
+item is context to respond after. The 400 that #77 was filed for,
+though worded as a prefill refusal, came from a replayed `refusal`
+part in a request that ended on a user turn; see below. Two inputs end that way:
 the last item is an assistant message, a function call, reasoning that
 is sent, or an `anthropic.` item other than a server tool call; or
 every item after the last of those sends Claude nothing, such as a user
