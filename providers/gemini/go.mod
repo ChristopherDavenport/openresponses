@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/ChristopherDavenport/openresponses v0.0.20
-	google.golang.org/genai v1.72.0
+	google.golang.org/genai v1.77.0
 )
 
 require (
