@@ -850,6 +850,8 @@ func TestEncodeSidecarMedia(t *testing.T) {
 // the last item is on the assistant side, and the last user-side items
 // send nothing, leaving the assistant turn before them last.
 func TestEncodeRefusesPrefill(t *testing.T) {
+	serverToolUse := &openresponses.UnknownItem{Type: "anthropic.server_tool_use", Raw: json.RawMessage(
+		`{"type":"anthropic.server_tool_use","id":"ax_1","block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"x"}}}`)}
 	foreignPart := &openresponses.UnknownContent{Type: "gemini.thought", Raw: json.RawMessage(`{"type":"gemini.thought"}`)}
 	cases := []struct {
 		name  string
@@ -862,8 +864,9 @@ func TestEncodeRefusesPrefill(t *testing.T) {
 		{"reasoning", openresponses.Items{openresponses.UserText("Hi"), &openresponses.ReasoningItem{
 			Summary: openresponses.Contents{&openresponses.SummaryText{Text: "Hmm."}}, EncryptedContent: "c2ln",
 		}}, "input[1]"},
-		{"extension item", openresponses.Items{openresponses.UserText("Search"), &openresponses.UnknownItem{Type: "anthropic.server_tool_use", Raw: json.RawMessage(
-			`{"type":"anthropic.server_tool_use","id":"ax_1","block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"x"}}}`)}}, "input[1]"},
+		{"extension item", openresponses.Items{openresponses.UserText("Search"), serverToolUse, &openresponses.UnknownItem{Type: "anthropic.web_search_tool_result", Raw: json.RawMessage(
+			`{"type":"anthropic.web_search_tool_result","id":"ax_2","block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[]}}`)}}, "input[2]"},
+		{"an assistant message after a server tool call", openresponses.Items{openresponses.UserText("Search"), serverToolUse, openresponses.AssistantText("Found it.")}, "input[2]"},
 		{"a user message that sends nothing", openresponses.Items{
 			openresponses.UserText("Hi"), openresponses.AssistantText("Hello"), openresponses.UserMessage(foreignPart),
 		}, "input[1]"},
@@ -984,5 +987,26 @@ func TestEncodeLeavesOutRefusal(t *testing.T) {
 				t.Fatalf("messages =\n%s\nwant\n%s", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestEncodeResumesPausedTurn: a history that ends on a server tool call
+// with no result yet, the output of a turn Claude paused (pause_turn)
+// that the adapter did not resume itself, is sent as it is. Claude and
+// Open Responses read it alike, as a turn to carry on, which is what the
+// adapter's own continuation sends; it is not prefill.
+func TestEncodeResumesPausedTurn(t *testing.T) {
+	p := encode(t, openresponses.Request{Input: openresponses.Items{
+		openresponses.UserText("Search for Go"),
+		&openresponses.UnknownItem{Type: "anthropic.server_tool_use", Raw: json.RawMessage(
+			`{"type":"anthropic.server_tool_use","id":"ax_1","block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"go"}}}`)},
+	}})
+	last := p.Messages[len(p.Messages)-1]
+	if last.Role != sdk.MessageParamRoleAssistant || len(last.Content) != 1 {
+		t.Fatalf("last message = %+v, want the paused assistant turn", last)
+	}
+	block := wire(t, p)["messages"].([]any)[1].(map[string]any)["content"].([]any)[0].(map[string]any)
+	if block["type"] != "server_tool_use" || block["id"] != "srvtoolu_1" {
+		t.Fatalf("block = %v, want the server_tool_use", block)
 	}
 }

@@ -277,9 +277,13 @@ The details:
 - A prefix a caller wants the model to continue is a provider
   parameter, an item or member under that provider's slug, defined in
   its adapter's README; none is defined yet.
-- An adapter's own continuation of a turn its provider paused, which
-  sends the paused output back for the provider to continue, is not an
-  input it was given and is not covered.
+- A turn its provider paused is not prefill. An adapter's own
+  continuation, which sends the paused output back for the provider to
+  continue, is not an input it was given and is not covered. An input
+  that ends in such output, a caller resuming the turn itself, is read
+  alike by the provider and by Open Responses, as a turn to carry on,
+  and is sent; the adapter's README says which items end a paused
+  turn.
 
 ### 1.9 Writing an extension down
 

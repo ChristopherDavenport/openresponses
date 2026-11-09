@@ -126,12 +126,17 @@ newer models refuse it with a 400 ("This model does not support
 assistant message prefill"), where in Open Responses a trailing
 assistant item is context to respond after. Two inputs end that way:
 the last item is an assistant message, a function call, reasoning that
-is sent, or an `anthropic.` item; or every item after the last of those
-sends Claude nothing, such as a user message whose parts are all under
-another provider's slug, so the assistant turn comes last. The adapter
-neither drops nor adds an item to make such a request pass. Resuming a
-turn Claude paused (`pause_turn`) is the adapter's own continuation and
-still sends the paused output last, as Claude asks.
+is sent, or an `anthropic.` item other than a server tool call; or
+every item after the last of those sends Claude nothing, such as a user
+message whose parts are all under another provider's slug, so the
+assistant turn comes last. The adapter
+neither drops nor adds an item to make such a request pass. A turn
+Claude paused (`pause_turn`) is not prefill: the adapter's own
+continuation sends the paused output last, as Claude asks, and so may
+a caller. An input whose last sent item is an
+`anthropic.server_tool_use`, a server tool call with no result yet, as
+a paused turn that the adapter did not resume (`WithContinuations(0)`,
+or the continuations ran out) ends, is sent as it is.
 
 An image or file whose `image_url`, `file_url` or `file_data` is a
 `sidecar:` reference (`sidecar:sha256:<hex>`, docs/extensions.md

@@ -41,7 +41,7 @@ func encodeRequest(req openresponses.Request, cfg config) (sdk.MessageNewParams,
 	if err != nil {
 		return sdk.MessageNewParams{}, err
 	}
-	if n := len(messages); n > 0 && messages[n-1].Role == sdk.MessageParamRoleAssistant {
+	if n := len(messages); n > 0 && messages[n-1].Role == sdk.MessageParamRoleAssistant && !pausedTurn(req.Input[last]) {
 		return sdk.MessageNewParams{}, prefill(req.Input, last)
 	}
 	if req.Instructions != "" {
@@ -61,8 +61,9 @@ func encodeRequest(req openresponses.Request, cfg config) (sdk.MessageNewParams,
 // while in Open Responses a trailing assistant item is context to
 // respond after: sent, the request would mean something other than the
 // input (#77). Nothing is dropped or invented to make it pass. A turn
-// Claude paused is resumed with its output as the last turn, but that
-// is the adapter's own continuation and never passes through here.
+// Claude paused is resumed with its output as the last turn: the
+// adapter's own continuation never passes through here, and a caller's
+// is let through by [pausedTurn].
 func prefill(items openresponses.Items, last int) *openresponses.Error {
 	p := fmt.Sprintf("input[%d]", last)
 	msg := fmt.Sprintf("the request would end on an assistant turn, at %s: Claude reads a trailing assistant turn as a prefix to continue (prefill), not as context to respond after; end the input with a user message or a function call output", p)
@@ -70,6 +71,17 @@ func prefill(items openresponses.Items, last int) *openresponses.Error {
 		msg += fmt.Sprintf(" (the items after %s send Claude nothing)", p)
 	}
 	return invalid(p, msg)
+}
+
+// pausedTurn reports whether item, the last an input sends, is a server
+// tool call: the end of a turn Claude paused (pause_turn) before the
+// tool's result, as a response the adapter did not resume ends. Sent
+// back, Claude carries the turn on, which is what Open Responses means
+// by it too, so it is not prefill; the adapter's own continuation sends
+// the same shape.
+func pausedTurn(item openresponses.Item) bool {
+	it, ok := item.(*openresponses.UnknownItem)
+	return ok && it.Type == slug+"server_tool_use"
 }
 
 // providerSlugs are the slugs of the other adapters in this repository.

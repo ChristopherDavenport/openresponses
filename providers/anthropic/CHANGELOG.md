@@ -17,9 +17,11 @@
   a prefix to continue (prefill), and newer models refuse it with a
   400, where Open Responses reads a trailing assistant item as context.
   Both shapes are refused: an assistant message, function call, sent
-  reasoning or `anthropic.` item last, and an assistant turn left last
-  because every item after it sends Claude nothing. A `pause_turn`
-  continuation is unchanged.
+  reasoning or other `anthropic.` item last, and an assistant turn left last
+  because every item after it sends Claude nothing. A paused turn is
+  not refused: the adapter's own `pause_turn` continuation is unchanged,
+  and an input whose last sent item is an `anthropic.server_tool_use`,
+  a caller resuming a paused turn, is sent as before.
 
 ## v0.0.19 - 2026-11-04
 
