@@ -258,6 +258,7 @@ regional hosts. Per-model regions mean one client per region; route by
 | `input_image.file_id`, `input_file.file_id` | Files API sources |
 | `ReasoningItem`, issuer `anthropic` or none, with `encrypted_content` | `thinking` block from the summary text and the signature |
 | `ReasoningItem` of another issuer, or without `encrypted_content` | left out (rule 5; README) |
+| `refusal` part of an assistant message | left out; a message left empty is not sent. It renders `stop_details.explanation`, which a request has no form for, and replayed it makes Claude refuse later requests (README; #77) |
 | an input whose last sent item is on the assistant side | `invalid_request` naming that item; Claude would read it as prefill (rule 10; README) |
 | `anthropic.*` items | the `block` they carry, replayed verbatim through `param.Override` |
 | `anthropic.<block type>` content parts | the `block` they carry, in `tool_result` content or message content |

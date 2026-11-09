@@ -554,7 +554,7 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 		}
 		switch it := item.(type) {
 		case *openresponses.Message:
-			blocks, err := encodeBlocks(it.Content, p+".content")
+			blocks, err := encodeBlocks(it.Content, p+".content", it.Role == openresponses.RoleAssistant)
 			if err != nil {
 				return nil, nil, -1, err
 			}
@@ -783,7 +783,13 @@ func extensionBlock(typ string, raw json.RawMessage) (json.RawMessage, error) {
 // block; images and files become image and document blocks; an
 // anthropic.* part is the block it carries, and another provider's part
 // is left out (see [foreign]).
-func encodeBlocks(contents openresponses.Contents, p string) ([]sdk.ContentBlockParamUnion, error) {
+//
+// An assistant message's refusal parts are left out (assistant set):
+// the part is this adapter's rendering of a refusal's
+// stop_details.explanation, which a Messages request has no form for,
+// Anthropic's guidance is to discard a refused response's output, and
+// replayed as text it makes Claude refuse later requests (#77).
+func encodeBlocks(contents openresponses.Contents, p string, assistant bool) ([]sdk.ContentBlockParamUnion, error) {
 	blocks := make([]sdk.ContentBlockParamUnion, 0, len(contents))
 	for j, content := range contents {
 		pp := fmt.Sprintf("%s[%d]", p, j)
@@ -795,6 +801,9 @@ func encodeBlocks(contents openresponses.Contents, p string) ([]sdk.ContentBlock
 		case *openresponses.Text:
 			blocks = append(blocks, sdk.NewTextBlock(c.Text))
 		case *openresponses.Refusal:
+			if assistant {
+				continue
+			}
 			blocks = append(blocks, sdk.NewTextBlock(c.Refusal))
 		case *openresponses.InputImage:
 			img, err := imageBlock(c, pp)

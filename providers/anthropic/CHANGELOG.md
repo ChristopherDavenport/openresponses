@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Behaviour change: an assistant message's `refusal` parts are no
+  longer sent back to Claude, and an assistant message with nothing else
+  is not sent (#77). The part renders a refusal's
+  `stop_details.explanation`, which a Messages request has no form for;
+  Anthropic's guidance is to discard a refused response's output; and
+  replayed as text after a `tool_use`, it made Claude refuse a later
+  request with a 400 about assistant prefill, though the request ended
+  on a user turn. The caller's input keeps the part.
 - Behaviour change: an input that would end the Messages request on an
   assistant turn is refused before sending, as `invalid_request` with
   code `invalid_value` and `param` naming the item it would end on

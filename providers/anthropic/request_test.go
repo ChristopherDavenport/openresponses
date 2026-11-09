@@ -894,8 +894,9 @@ func TestEncodeRefusesPrefill(t *testing.T) {
 // vulnerable-secret, rebuilt from the session and verified against its
 // request_hash): two responses that each ended content_filter with a
 // function call and a refusal message, each call answered. It ends on a
-// user turn of tool_result blocks and is sent, not refused. Claude
-// answered it live with the prefill 400 all the same (see #77).
+// user turn of tool_result blocks and is sent, not refused, and the
+// refusal parts are left out: sent back as text after the tool_use
+// blocks, they made Claude refuse the request with a prefill 400 (#77).
 func TestEncodeContentFilterPath(t *testing.T) {
 	refusal := func(id string) *openresponses.Message {
 		return &openresponses.Message{ID: id, Status: openresponses.StatusIncomplete, Role: openresponses.RoleAssistant,
@@ -925,7 +926,63 @@ func TestEncodeContentFilterPath(t *testing.T) {
 		}
 		roles = append(roles, string(m.Role)+"["+strings.Join(kinds, ",")+"]")
 	}
-	if got, want := strings.Join(roles, " "), "user[text] assistant[tool_use,text] user[tool_result] assistant[tool_use,text] user[tool_result]"; got != want {
+	if got, want := strings.Join(roles, " "), "user[text] assistant[tool_use] user[tool_result] assistant[tool_use] user[tool_result]"; got != want {
 		t.Fatalf("messages = %s, want %s", got, want)
+	}
+}
+
+// TestEncodeLeavesOutRefusal: an assistant message's refusal parts are
+// not sent to Claude. The part is the adapter's rendering of a refusal's
+// explanation, which a Messages request has no form for, and replayed it
+// makes Claude refuse later requests (#77). A message left with nothing
+// sends no turn, which neither leaves an assistant turn last nor splits
+// a user turn.
+func TestEncodeLeavesOutRefusal(t *testing.T) {
+	refusal := &openresponses.Refusal{Refusal: "Cyber safeguards flagged this message."}
+	turns := func(p sdk.MessageNewParams) string {
+		data, err := json.Marshal(p.Messages)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	cases := []struct {
+		name  string
+		input openresponses.Items
+		want  string
+	}{
+		{
+			"text before the refusal is kept",
+			openresponses.Items{
+				openresponses.UserText("Hi"),
+				&openresponses.Message{Role: openresponses.RoleAssistant, Status: openresponses.StatusIncomplete, Content: openresponses.Contents{&openresponses.OutputText{Text: "Sure,"}, refusal}},
+				openresponses.UserText("Go on"),
+			},
+			`[{"content":[{"text":"Hi","type":"text"}],"role":"user"},{"content":[{"text":"Sure,","type":"text"}],"role":"assistant"},{"content":[{"text":"Go on","type":"text"}],"role":"user"}]`,
+		},
+		{
+			"a refusal alone sends no turn between two user messages",
+			openresponses.Items{
+				openresponses.UserText("Hi"),
+				&openresponses.Message{Role: openresponses.RoleAssistant, Status: openresponses.StatusIncomplete, Content: openresponses.Contents{refusal}},
+				openresponses.UserText("Try again"),
+			},
+			`[{"content":[{"text":"Hi","type":"text"},{"text":"Try again","type":"text"}],"role":"user"}]`,
+		},
+		{
+			"a refusal alone last leaves the user turn last",
+			openresponses.Items{
+				openresponses.UserText("Hi"),
+				&openresponses.Message{Role: openresponses.RoleAssistant, Status: openresponses.StatusIncomplete, Content: openresponses.Contents{refusal}},
+			},
+			`[{"content":[{"text":"Hi","type":"text"}],"role":"user"}]`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := turns(encode(t, openresponses.Request{Input: tc.input})); got != tc.want {
+				t.Fatalf("messages =\n%s\nwant\n%s", got, tc.want)
+			}
+		})
 	}
 }

@@ -154,6 +154,16 @@ provider that wrote it. Nothing in the response reports the omission.
 Reasoning another issuer signed is left out too; see
 [Responses](#responses).
 
+An assistant message's `refusal` parts are left out as well, and an
+assistant message with nothing else is not sent. The part is this
+adapter's rendering of Claude's `stop_details.explanation` (see
+[Responses](#responses)), which has no form in a Messages request;
+Anthropic's refusal guidance is to discard a refused response's
+output; and sent back as text, it can make Claude refuse a later
+request of the conversation with a 400 whose message speaks of
+assistant prefill, though the request ends on a user turn (#77). The
+caller's input keeps the part, as with every item left out.
+
 Accepted without effect: `metadata` (echoed on the response, never sent
 upstream), `input_image.detail`, `include`, `stream_options` and
 `store` (the handler's concerns). `safety_identifier` becomes
@@ -310,7 +320,10 @@ make, ends it incomplete with `content_filter`, as the Gemini adapter
 ends a safety stop. Claude's `stop_details.explanation`, when it sends
 one, becomes a `refusal` content part of the assistant message, after
 any text already streamed; when it sends none there is no refusal part,
-since the adapter writes no refusal text of its own. The category
+since the adapter writes no refusal text of its own. The part is not
+sent back to Claude on a later request (see
+[What the request mapping rejects and ignores](#what-the-request-mapping-rejects-and-ignores)).
+The category
 (`cyber`, `bio`, ...) is the member `anthropic.refusal_category` of
 `incomplete_details`, present when Claude names one:
 
