@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.20 - 2026-11-09
 
 - Behaviour change: an assistant message's `refusal` parts are no
   longer sent back to Claude, and an assistant message with nothing else
