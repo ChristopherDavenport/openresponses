@@ -168,15 +168,21 @@ provider that wrote it. Nothing in the response reports the omission.
 Reasoning another issuer signed is left out too; see
 [Responses](#responses).
 
-An assistant message's `refusal` parts are left out as well, and an
-assistant message with nothing else is not sent. The part is this
-adapter's rendering of Claude's `stop_details.explanation` (see
-[Responses](#responses)), which has no form in a Messages request;
-Anthropic's refusal guidance is to discard a refused response's
-output; and sent back as text, it can make Claude refuse a later
-request of the conversation with a 400 whose message speaks of
-assistant prefill, though the request ends on a user turn (#77). The
-caller's input keeps the part, as with every item left out.
+An assistant message's `refusal` parts are left out as well, whoever
+wrote them: this adapter, from Claude's `stop_details.explanation`
+(see [Responses](#responses)), or another provider earlier in the
+conversation, such as an OpenAI refusal through the Chat Completions
+adapter. A refusal has no form in a Messages request; Anthropic's
+refusal guidance is to discard a refused response's output; and sent
+back as text, it can make Claude refuse a later request of the
+conversation with a 400 whose message speaks of assistant prefill,
+though the request ends on a user turn (#77). An assistant message with
+nothing else is not sent, so `[user, refusal-only assistant]` is sent
+as the user turn alone, where the prefill check refused it before, and
+`[user A, refusal-only assistant, user B]` as one user turn of A and B:
+Claude is not told that it refused. This is the one case where leaving
+an item out lets a request through that would otherwise be refused.
+The caller's input keeps the part, as with every item left out.
 
 Accepted without effect: `metadata` (echoed on the response, never sent
 upstream), `input_image.detail`, `include`, `stream_options` and

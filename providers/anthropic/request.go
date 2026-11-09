@@ -805,9 +805,9 @@ func extensionBlock(typ string, raw json.RawMessage) (json.RawMessage, error) {
 // anthropic.* part is the block it carries, and another provider's part
 // is left out (see [foreign]).
 //
-// An assistant message's refusal parts are left out (assistant set):
-// the part is this adapter's rendering of a refusal's
-// stop_details.explanation, which a Messages request has no form for,
+// An assistant message's refusal parts are left out (assistant set),
+// whoever wrote them: a refusal's explanation (this adapter's comes from
+// stop_details.explanation) has no form in a Messages request,
 // Anthropic's guidance is to discard a refused response's output, and
 // replayed as text it makes Claude refuse later requests (#77).
 func encodeBlocks(contents openresponses.Contents, p string, assistant bool) ([]sdk.ContentBlockParamUnion, error) {

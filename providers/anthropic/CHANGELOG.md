@@ -9,7 +9,9 @@
   Anthropic's guidance is to discard a refused response's output; and
   replayed as text after a `tool_use`, it made Claude refuse a later
   request with a 400 about assistant prefill, though the request ended
-  on a user turn. The caller's input keeps the part.
+  on a user turn. Refusal parts any provider wrote are left out, so
+  `[user, refusal-only assistant]`, refused as prefill before, is sent
+  as the user turn alone. The caller's input keeps the part.
 - Behaviour change: an input that would end the Messages request on an
   assistant turn is refused before sending, as `invalid_request` with
   code `invalid_value` and `param` naming the item it would end on
