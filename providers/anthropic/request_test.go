@@ -864,8 +864,8 @@ func TestEncodeRefusesPrefill(t *testing.T) {
 		{"reasoning", openresponses.Items{openresponses.UserText("Hi"), &openresponses.ReasoningItem{
 			Summary: openresponses.Contents{&openresponses.SummaryText{Text: "Hmm."}}, EncryptedContent: "c2ln",
 		}}, "input[1]"},
-		{"extension item", openresponses.Items{openresponses.UserText("Search"), serverToolUse, &openresponses.UnknownItem{Type: "anthropic.web_search_tool_result", Raw: json.RawMessage(
-			`{"type":"anthropic.web_search_tool_result","id":"ax_2","block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[]}}`)}}, "input[2]"},
+		{"extension item", openresponses.Items{openresponses.UserText("Hi"), &openresponses.UnknownItem{Type: "anthropic.redacted_thinking", Raw: json.RawMessage(
+			`{"type":"anthropic.redacted_thinking","id":"ax_2","block":{"type":"redacted_thinking","data":"c2ln"}}`)}}, "input[1]"},
 		{"an assistant message after a server tool call", openresponses.Items{openresponses.UserText("Search"), serverToolUse, openresponses.AssistantText("Found it.")}, "input[2]"},
 		{"a user message that sends nothing", openresponses.Items{
 			openresponses.UserText("Hi"), openresponses.AssistantText("Hello"), openresponses.UserMessage(foreignPart),
@@ -990,24 +990,44 @@ func TestEncodeLeavesOutRefusal(t *testing.T) {
 	}
 }
 
-// TestEncodeResumesPausedTurn: a history that ends on a server tool call
-// with no result yet, the output of a turn Claude paused (pause_turn)
-// that the adapter did not resume itself, is sent as it is. Claude and
-// Open Responses read it alike, as a turn to carry on, which is what the
-// adapter's own continuation sends; it is not prefill.
+// TestEncodeResumesPausedTurn: a history that ends on a server-side
+// tool block, as the output of a turn Claude paused (pause_turn) that the
+// adapter did not resume may end, is sent as it is: a server tool call
+// with no result yet, an MCP tool call, or a server tool's result. Claude
+// and Open Responses read it alike, as a turn to carry on, which is what
+// the adapter's own continuation sends; it is not prefill. A caller
+// cannot write a prefix with such blocks. A paused turn that ends on text
+// or thinking is still refused (see TestEncodeRefusesPrefill): nothing in
+// a response marks it as paused.
 func TestEncodeResumesPausedTurn(t *testing.T) {
-	p := encode(t, openresponses.Request{Input: openresponses.Items{
-		openresponses.UserText("Search for Go"),
-		&openresponses.UnknownItem{Type: "anthropic.server_tool_use", Raw: json.RawMessage(
-			`{"type":"anthropic.server_tool_use","id":"ax_1","block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"go"}}}`)},
-	}})
-	last := p.Messages[len(p.Messages)-1]
-	if last.Role != sdk.MessageParamRoleAssistant || len(last.Content) != 1 {
-		t.Fatalf("last message = %+v, want the paused assistant turn", last)
+	item := func(typ, block string) *openresponses.UnknownItem {
+		return &openresponses.UnknownItem{Type: "anthropic." + typ, Raw: json.RawMessage(`{"type":"anthropic.` + typ + `","block":` + block + `}`)}
 	}
-	block := wire(t, p)["messages"].([]any)[1].(map[string]any)["content"].([]any)[0].(map[string]any)
-	if block["type"] != "server_tool_use" || block["id"] != "srvtoolu_1" {
-		t.Fatalf("block = %v, want the server_tool_use", block)
+	search := item("server_tool_use", `{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"go"}}`)
+	cases := []struct {
+		name  string
+		input openresponses.Items
+		last  string
+	}{
+		{"a server tool call", openresponses.Items{search}, "server_tool_use"},
+		{"a server tool's result", openresponses.Items{search, item("web_search_tool_result", `{"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[]}`)}, "web_search_tool_result"},
+		{"an MCP tool call", openresponses.Items{item("mcp_tool_use", `{"type":"mcp_tool_use","id":"mcptoolu_1","name":"echo","server_name":"s","input":{}}`)}, "mcp_tool_use"},
+		{"an MCP tool's result", openresponses.Items{
+			item("mcp_tool_use", `{"type":"mcp_tool_use","id":"mcptoolu_1","name":"echo","server_name":"s","input":{}}`),
+			item("mcp_tool_result", `{"type":"mcp_tool_result","tool_use_id":"mcptoolu_1","content":[]}`),
+		}, "mcp_tool_result"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := encode(t, openresponses.Request{Input: append(openresponses.Items{openresponses.UserText("Search for Go")}, tc.input...)})
+			if last := p.Messages[len(p.Messages)-1]; last.Role != sdk.MessageParamRoleAssistant || len(last.Content) != len(tc.input) {
+				t.Fatalf("last message = %+v, want the paused assistant turn", last)
+			}
+			content := wire(t, p)["messages"].([]any)[1].(map[string]any)["content"].([]any)
+			if b := content[len(content)-1].(map[string]any); b["type"] != tc.last {
+				t.Fatalf("last block = %v, want %s", b, tc.last)
+			}
+		})
 	}
 }
 

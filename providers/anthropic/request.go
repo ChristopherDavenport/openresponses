@@ -73,15 +73,24 @@ func prefill(items openresponses.Items, last int) *openresponses.Error {
 	return invalid(p, msg)
 }
 
-// pausedTurn reports whether item, the last an input sends, is a server
-// tool call: the end of a turn Claude paused (pause_turn) before the
-// tool's result, as a response the adapter did not resume ends. Sent
-// back, Claude carries the turn on, which is what Open Responses means
-// by it too, so it is not prefill; the adapter's own continuation sends
-// the same shape.
+// pausedTurn reports whether item, the last an input sends, is a
+// server-side tool block: a server or MCP tool call (server_tool_use,
+// mcp_tool_use) or a server-side tool's result (any *_tool_result, such
+// as web_search_tool_result or mcp_tool_result). A turn Claude paused
+// (pause_turn) that the adapter did not resume can end on any of them.
+// Sent back, Claude carries the turn on, which is what Open Responses
+// means by it too, so it is not prefill; the adapter's own continuation
+// sends the same output, and a caller cannot write a prefix with such
+// blocks. A paused turn can also end on text or thinking, but nothing in
+// a response marks it as paused, so such an ending is refused as
+// prefill.
 func pausedTurn(item openresponses.Item) bool {
 	it, ok := item.(*openresponses.UnknownItem)
-	return ok && it.Type == slug+"server_tool_use"
+	if !ok {
+		return false
+	}
+	block, ok := strings.CutPrefix(it.Type, slug)
+	return ok && (block == "server_tool_use" || block == "mcp_tool_use" || strings.HasSuffix(block, "_tool_result"))
 }
 
 // providerSlugs are the slugs of the other adapters in this repository.

@@ -126,19 +126,26 @@ Anthropic documents that models from Claude 4.6 on do not support it
 and answer it with a 400, where in Open Responses a trailing assistant
 item is context to respond after. The 400 that #77 was filed for,
 though worded as a prefill refusal, came from a replayed `refusal`
-part in a request that ended on a user turn; see below. Two inputs end that way:
-the last item is an assistant message, a function call, reasoning that
-is sent, or an `anthropic.` item other than a server tool call; or
-every item after the last of those sends Claude nothing, such as a user
-message whose parts are all under another provider's slug, so the
-assistant turn comes last. The adapter
-neither drops nor adds an item to make such a request pass. A turn
-Claude paused (`pause_turn`) is not prefill: the adapter's own
+part in a request that ended on a user turn; see below. Two inputs
+end that way: the last item is an assistant message, a function call,
+reasoning that is sent, or an `anthropic.` item other than a
+server-side tool block; or every item after the last of those sends
+Claude nothing, such as a user message whose parts are all under
+another provider's slug, so the assistant turn comes last. The adapter
+neither drops nor adds an item to make such a request pass.
+
+A turn Claude paused (`pause_turn`) is not prefill: the adapter's own
 continuation sends the paused output last, as Claude asks, and so may
-a caller. An input whose last sent item is an
-`anthropic.server_tool_use`, a server tool call with no result yet, as
-a paused turn that the adapter did not resume (`WithContinuations(0)`,
-or the continuations ran out) ends, is sent as it is.
+a caller. An input whose last sent item is a server-side tool block,
+as a paused turn that the adapter did not resume
+(`WithContinuations(0)`, or the continuations ran out) may end, is sent
+as it is: `anthropic.server_tool_use` or `anthropic.mcp_tool_use` (a
+server or MCP tool call), or any `anthropic.<kind>_tool_result` (a
+server-side tool's result, such as `anthropic.web_search_tool_result`
+or `anthropic.mcp_tool_result`). A caller cannot write a prefix with
+such blocks. A known limit: a paused turn that ends on text or thinking
+is refused as prefill, since nothing in a response marks it as paused
+and the adapter cannot tell such a resume from a prefix.
 
 An image or file whose `image_url`, `file_url` or `file_data` is a
 `sidecar:` reference (`sidecar:sha256:<hex>`, docs/extensions.md

@@ -21,8 +21,11 @@
   reasoning or other `anthropic.` item last, and an assistant turn left last
   because every item after it sends Claude nothing. A paused turn is
   not refused: the adapter's own `pause_turn` continuation is unchanged,
-  and an input whose last sent item is an `anthropic.server_tool_use`,
-  a caller resuming a paused turn, is sent as before.
+  and an input whose last sent item is a server-side tool block
+  (`anthropic.server_tool_use`, `anthropic.mcp_tool_use` or any
+  `anthropic.<kind>_tool_result`), as a caller resuming a paused turn
+  sends, is sent as before. A paused turn that ends on text or thinking
+  cannot be told from a prefix and is refused.
 
 ## v0.0.19 - 2026-11-04
 
