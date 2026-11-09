@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: an assistant message's `refusal` parts are no
+  longer sent back to Claude, and an assistant message with nothing else
+  is not sent (#77). The part renders a refusal's
+  `stop_details.explanation`, which a Messages request has no form for;
+  Anthropic's guidance is to discard a refused response's output; and
+  replayed as text after a `tool_use`, it made Claude refuse a later
+  request with a 400 about assistant prefill, though the request ended
+  on a user turn. Refusal parts any provider wrote are left out, so
+  `[user, refusal-only assistant]`, refused as prefill before, is sent
+  as the user turn alone. The caller's input keeps the part.
+- Behaviour change: an input that would end the Messages request on an
+  assistant turn is refused before sending, as `invalid_request` with
+  code `invalid_value` and `param` naming the item it would end on
+  (docs/extensions.md section 1.8, #77). Claude reads such a request as
+  a prefix to continue (prefill), which Anthropic documents models from
+  Claude 4.6 on refuse with a 400, where Open Responses reads a
+  trailing assistant item as context.
+  Both shapes are refused: an assistant message, function call, sent
+  reasoning or other `anthropic.` item last, and an assistant turn left last
+  because every item after it sends Claude nothing. A paused turn is
+  not refused: the adapter's own `pause_turn` continuation is unchanged,
+  and an input whose last sent item is a server-side tool block
+  (`anthropic.server_tool_use`, `anthropic.mcp_tool_use` or any
+  `anthropic.<kind>_tool_result`), as a caller resuming a paused turn
+  sends, is sent as before. A paused turn that ends on text or thinking
+  cannot be told from a prefix and is refused.
+
 ## v0.0.19 - 2026-11-04
 
 - Behaviour change: a low credit balance or a reached usage limit is

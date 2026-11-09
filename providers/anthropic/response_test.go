@@ -174,7 +174,7 @@ func TestThinkingRoundTrip(t *testing.T) {
 			}
 		}
 	}
-	messages, _, err := encodeInput(out)
+	messages, _, _, err := encodeInput(out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +223,7 @@ func TestStreamExtensionBlocks(t *testing.T) {
 
 	// The whole output replays as one assistant message in the API's own
 	// block shapes.
-	messages, _, err := encodeInput(out)
+	messages, _, _, err := encodeInput(out)
 	if err != nil {
 		t.Fatal(err)
 	}

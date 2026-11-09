@@ -19,6 +19,7 @@ as in RFC 2119.
 | [Unknown members are kept](#13-unknown-members-are-kept) | every object | #53, #56 | general rule |
 | [Items under another provider's slug](#16-adapters-and-items-under-a-providers-slug) | input items, content parts | agentturn#285 | general rule |
 | [`sidecar:` media references](#17-media-held-in-a-session-store) | image, file and video URLs | agentturn#284 | general rule |
+| [A trailing assistant turn](#18-adapters-and-a-trailing-assistant-turn) | the end of `input` | #77 | general rule |
 | [`openresponses-experimental.effort`](#3-reasoning-effort-above-xhigh) | request `reasoning` | #51 | in the set |
 | [`openresponses-experimental.issuer`](#4-who-issued-a-reasoning-item) | reasoning item | #56 | in the set |
 | [`openresponses-experimental.cache_write_tokens`, `openresponses-experimental.cache_write_tokens_by_ttl`](#5-cache-writes) | `usage.input_tokens_details` | #53 | in the set |
@@ -246,7 +247,46 @@ part of what the user or a tool said; leaving it out would change what
 the model is asked without anyone seeing it, while the refusal names
 the writer's mistake where it can be fixed.
 
-### 1.8 Writing an extension down
+### 1.8 Adapters and a trailing assistant turn
+
+**Gap.** In Open Responses an input that ends on an assistant-side
+item (an assistant message, a function call, reasoning, or a
+provider's item of its own output) is context: the model responds
+after it. Some providers read a request that ends on an assistant turn
+as a prefix for the model to continue instead (prefill), and some of
+their models refuse such a request outright: Anthropic documents that
+Claude models from 4.6 on do not support prefill and answer it with a
+400. The specification says nothing of how the end of the
+input maps onto a provider that makes that distinction.
+
+**Rule.** An adapter MUST NOT send an input that its provider reads
+with a different meaning than Open Responses gives it. In particular,
+a request MUST NOT end on an assistant turn the provider would
+continue as a prefix. The adapter MUST refuse such an input before
+sending, with `invalid_request`, code `invalid_value` and `param`
+naming the item the request would end on.
+
+The details:
+
+- Two inputs end that way: the last item is on the assistant side, or
+  the items after the last assistant-side item send the provider
+  nothing (every part left out as 1.6 says), so the assistant turn
+  before them comes last. `param` names the assistant-side item in
+  both.
+- The adapter MUST NOT drop or invent items to make the request pass:
+  that changes what the model is asked without anyone seeing it.
+- A prefix a caller wants the model to continue is a provider
+  parameter, an item or member under that provider's slug, defined in
+  its adapter's README; none is defined yet.
+- A turn its provider paused is not prefill. An adapter's own
+  continuation, which sends the paused output back for the provider to
+  continue, is not an input it was given and is not covered. An input
+  that ends in such output, a caller resuming the turn itself, is read
+  alike by the provider and by Open Responses, as a turn to carry on,
+  and is sent; the adapter's README says which items end a paused
+  turn.
+
+### 1.9 Writing an extension down
 
 Every section in 3–7 says the same things in the same order: the gap in
 the specification, where the member goes, its shape, who writes it, who

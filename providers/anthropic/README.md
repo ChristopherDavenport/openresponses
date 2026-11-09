@@ -118,6 +118,35 @@ and content parts under a slug that names no provider (`acme.`).
 `previous_response_id` reaching the adapter means the handler
 has no `ResponseStore`, and is `previous_response_not_found`.
 
+An input that would end the Messages request on an assistant turn is
+`invalid_request` with `code: invalid_value` and `param` naming the
+item it would end on (docs/extensions.md section 1.8, #77). Claude
+reads a trailing assistant turn as a prefix to continue (prefill), and
+Anthropic documents that models from Claude 4.6 on do not support it
+and answer it with a 400, where in Open Responses a trailing assistant
+item is context to respond after. The 400 that #77 was filed for,
+though worded as a prefill refusal, came from a replayed `refusal`
+part in a request that ended on a user turn; see below. Two inputs
+end that way: the last item is an assistant message, a function call,
+reasoning that is sent, or an `anthropic.` item other than a
+server-side tool block; or every item after the last of those sends
+Claude nothing, such as a user message whose parts are all under
+another provider's slug, so the assistant turn comes last. The adapter
+neither drops nor adds an item to make such a request pass.
+
+A turn Claude paused (`pause_turn`) is not prefill: the adapter's own
+continuation sends the paused output last, as Claude asks, and so may
+a caller. An input whose last sent item is a server-side tool block,
+as a paused turn that the adapter did not resume
+(`WithContinuations(0)`, or the continuations ran out) may end, is sent
+as it is: `anthropic.server_tool_use` or `anthropic.mcp_tool_use` (a
+server or MCP tool call), or any `anthropic.<kind>_tool_result` (a
+server-side tool's result, such as `anthropic.web_search_tool_result`
+or `anthropic.mcp_tool_result`). A caller cannot write a prefix with
+such blocks. A known limit: a paused turn that ends on text or thinking
+is refused as prefill, since nothing in a response marks it as paused
+and the adapter cannot tell such a resume from a prefix.
+
 An image or file whose `image_url`, `file_url` or `file_data` is a
 `sidecar:` reference (`sidecar:sha256:<hex>`, docs/extensions.md
 section 1.7) is `invalid_request` with `code: invalid_value` and
@@ -138,6 +167,22 @@ item, so a stored response or session record still carries it for the
 provider that wrote it. Nothing in the response reports the omission.
 Reasoning another issuer signed is left out too; see
 [Responses](#responses).
+
+An assistant message's `refusal` parts are left out as well, whoever
+wrote them: this adapter, from Claude's `stop_details.explanation`
+(see [Responses](#responses)), or another provider earlier in the
+conversation, such as an OpenAI refusal through the Chat Completions
+adapter. A refusal has no form in a Messages request; Anthropic's
+refusal guidance is to discard a refused response's output; and sent
+back as text, it can make Claude refuse a later request of the
+conversation with a 400 whose message speaks of assistant prefill,
+though the request ends on a user turn (#77). An assistant message with
+nothing else is not sent, so `[user, refusal-only assistant]` is sent
+as the user turn alone, where the prefill check refused it before, and
+`[user A, refusal-only assistant, user B]` as one user turn of A and B:
+Claude is not told that it refused. This is the one case where leaving
+an item out lets a request through that would otherwise be refused.
+The caller's input keeps the part, as with every item left out.
 
 Accepted without effect: `metadata` (echoed on the response, never sent
 upstream), `input_image.detail`, `include`, `stream_options` and
@@ -295,7 +340,10 @@ make, ends it incomplete with `content_filter`, as the Gemini adapter
 ends a safety stop. Claude's `stop_details.explanation`, when it sends
 one, becomes a `refusal` content part of the assistant message, after
 any text already streamed; when it sends none there is no refusal part,
-since the adapter writes no refusal text of its own. The category
+since the adapter writes no refusal text of its own. The part is not
+sent back to Claude on a later request (see
+[What the request mapping rejects and ignores](#what-the-request-mapping-rejects-and-ignores)).
+The category
 (`cyber`, `bio`, ...) is the member `anthropic.refusal_category` of
 `incomplete_details`, present when Claude names one:
 

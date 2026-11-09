@@ -105,6 +105,11 @@ Each module has the same shape:
    Each README states its function, so another implementation produces
    the same ids; the Anthropic adapter's is `call_` followed by the first
    24 hex digits of the SHA-256 of the `call_id`.
+10. An input is never sent with a meaning its provider reads otherwise:
+   a request that would end on an assistant turn the provider continues
+   as a prefix is refused before sending, with `invalid_request` naming
+   the item it would end on, and nothing is dropped or added to make it
+   pass (docs/extensions.md section 1.8, #77).
 
 ## Errors
 
@@ -253,6 +258,8 @@ regional hosts. Per-model regions mean one client per region; route by
 | `input_image.file_id`, `input_file.file_id` | Files API sources |
 | `ReasoningItem`, issuer `anthropic` or none, with `encrypted_content` | `thinking` block from the summary text and the signature |
 | `ReasoningItem` of another issuer, or without `encrypted_content` | left out (rule 5; README) |
+| `refusal` part of an assistant message | left out; a message left empty is not sent. It renders `stop_details.explanation`, which a request has no form for, and replayed it makes Claude refuse later requests (README; #77) |
+| an input whose last sent item is on the assistant side | `invalid_request` naming that item; Claude would read it as prefill (rule 10; README). Not a server-side tool block last (`server_tool_use`, `mcp_tool_use`, `*_tool_result`), a paused turn a caller resumes |
 | `anthropic.*` items | the `block` they carry, replayed verbatim through `param.Override` |
 | `anthropic.<block type>` content parts | the `block` they carry, in `tool_result` content or message content |
 | `gemini.*`, `chatcompletions.*` items and content parts | left out; a message left empty is not sent (rule 4; README) |
