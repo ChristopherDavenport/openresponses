@@ -18,14 +18,18 @@
   request tier. When a `pause_turn` is resumed, the last turn's tier is
   the response's.
 - Behaviour change, dependencies: github.com/anthropics/anthropic-sdk-go
-  is v1.84.0 (was v1.78.0); the module still requires Go 1.25. Behaviour
-  change from SDK v1.81: the SDK records spans and sends trace-context
-  headers on every request whenever the program registers a global
-  OpenTelemetry tracer provider. The adapter uses the client the caller
-  builds, so the choice is the caller's: build it with
-  `option.WithoutOpenTelemetry()`, or set
-  `ANTHROPIC_OPEN_TELEMETRY=false`, to turn it off. The module now has
-  go.opentelemetry.io/otel v1.33 as an indirect dependency.
+  is v1.84.0 (was v1.78.0); the module still requires Go 1.25. From SDK
+  v1.81 the SDK records a span for each API call with the global
+  OpenTelemetry tracer provider, and injects trace-context headers into
+  each request with the global propagator, whenever the program
+  registers them. The spans carry metadata only unless content is asked
+  for. The adapter uses the client the caller builds, so the choice is
+  the caller's: `option.WithoutOpenTelemetry()` or
+  `ANTHROPIC_OPEN_TELEMETRY=false` turns off the spans and the headers;
+  `option.WithOpenTelemetryPropagation(false)` or
+  `ANTHROPIC_OPEN_TELEMETRY_PROPAGATION=false` turns off the headers
+  alone. The module now has go.opentelemetry.io/otel v1.33 as an
+  indirect dependency.
 
 ## v0.0.20 - 2026-11-09
 
