@@ -256,10 +256,7 @@ decodes to, in the URL alphabet its underscores belong to.
 content, SPII, language and image reasons, and a blocked prompt, end
 it incomplete with `content_filter`. `MALFORMED_FUNCTION_CALL`,
 `UNEXPECTED_TOOL_CALL`, `TOO_MANY_TOOL_CALLS` and `OTHER` fail it with
-a `model_error` whose code is the reason in lower case, and so does
-`CONTINUATION`: the adapter turns off the SDK's automatic continuation,
-which has no bound on the requests it makes, and does not yet continue
-the response itself. Grounding supports become `url_citation`
+a `model_error` whose code is the reason in lower case. Grounding supports become `url_citation`
 annotations with character offsets into the message text, and
 logprobs, when the request includes them, land on the `output_text`
 part. `model` on the response is the version Gemini served, and
@@ -268,6 +265,28 @@ part. `model` on the response is the version Gemini served, and
 `ON_DEMAND_PRIORITY` `priority` and `ON_DEMAND_FLEX` `flex`.
 `ON_DEMAND_OFFPEAK` and `PROVISIONED_THROUGHPUT`, which have no Open
 Responses tier, or no traffic type keep the requested tier.
+
+A response Gemini cuts with `CONTINUATION` is continued by the
+adapter: it sends the same request again with the continuation token,
+and the next request's output goes on in the same response, extending
+the item the cut left open, under one `response.created` and one
+terminal event, with output indices running on. `WithContinuations`
+sets how many times (default 8, `DefaultContinuations`); zero never
+continues, as in the Anthropic adapter. A cut that is not continued,
+because the limit was reached or Gemini sent no token, ends the
+response incomplete with what it has, the open item marked incomplete:
+
+```json
+"incomplete_details": {"reason": "max_output_tokens", "gemini.finish_reason": "CONTINUATION"}
+```
+
+`max_output_tokens` is the reason because the output was cut at a
+bound on its length, and a client reads it as a cut answer it may
+continue; the member tells it from a `MAX_TOKENS` cut, which a larger
+`max_output_tokens` would help and this would not. The SDK's own
+automatic continuation, which has no bound on the requests it makes,
+is turned off, and with it the SDK's resuming of a dropped stream from
+a checkpoint. Each request is billed, and usage is summed over them.
 
 Usage: `input_tokens` is `promptTokenCount` plus
 `toolUsePromptTokenCount`, and `cached_tokens` is

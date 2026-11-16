@@ -34,13 +34,18 @@ import (
 	"google.golang.org/genai"
 )
 
+// DefaultContinuations is how many times a response Gemini cuts with
+// finish reason CONTINUATION is continued before it ends incomplete.
+const DefaultContinuations = 8
+
 // Adapter implements [openresponses.Adapter] over a Gemini client.
 type Adapter struct {
 	openresponses.UnsupportedCompaction
 
-	client       *genai.Client
-	thinking     Thinking
-	forwardExtra bool
+	client        *genai.Client
+	thinking      Thinking
+	forwardExtra  bool
+	continuations int
 }
 
 var _ openresponses.Adapter = (*Adapter)(nil)
@@ -76,6 +81,16 @@ func WithThinking(t Thinking) Option {
 	return func(a *Adapter) { a.thinking = t }
 }
 
+// WithContinuations sets how many times a response Gemini cuts with
+// finish reason CONTINUATION is continued: the request is sent again
+// with the continuation token, and the next request's output goes on in
+// the same response. The default is [DefaultContinuations]; zero never
+// continues. A cut response that is not continued ends incomplete with
+// what it has.
+func WithContinuations(n int) Option {
+	return func(a *Adapter) { a.continuations = n }
+}
+
 // WithExtra forwards the request's unknown top-level members (Extra) into
 // the GenerateContent body, for Gemini request fields the mapping does
 // not cover, such as cachedContent. Keys the mapping sets are never
@@ -103,7 +118,7 @@ func thinkingFor(model string) Thinking {
 
 // New returns an adapter over client.
 func New(client *genai.Client, opts ...Option) *Adapter {
-	a := &Adapter{client: client}
+	a := &Adapter{client: client, continuations: DefaultContinuations}
 	for _, opt := range opts {
 		opt(a)
 	}

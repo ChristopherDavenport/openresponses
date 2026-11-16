@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Behaviour change: a response Gemini cuts with finish reason
+  `CONTINUATION` is continued by the adapter (#84). It sends the same
+  request again with the continuation token, and the next request's
+  output goes on in the same response, extending the item the cut left
+  open, with one `response.created`, one terminal event and output
+  indices running on; usage is summed over the requests.
+  `WithContinuations` sets how many times (default
+  `DefaultContinuations`, 8; zero never continues, as in the Anthropic
+  adapter). A cut that is not continued, at the limit or without a
+  token, ends the response incomplete with `max_output_tokens` and
+  `incomplete_details["gemini.finish_reason"]: "CONTINUATION"`, the
+  open item marked incomplete. Before, the finish failed the response
+  with `model_error`, code `continuation`, after one request.
 - Dependencies: golang.org/x/net is v0.62.0 (indirect, was v0.60.0)
   and golang.org/x/crypto v0.59.0 (indirect, was v0.57.0), with
   golang.org/x/sys v0.50.0 and golang.org/x/text v0.44.0 following.

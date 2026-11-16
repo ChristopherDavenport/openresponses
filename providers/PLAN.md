@@ -110,6 +110,11 @@ Each module has the same shape:
    as a prefix is refused before sending, with `invalid_request` naming
    the item it would end on, and nothing is dropped or added to make it
    pass (docs/extensions.md section 1.8, #77).
+11. An adapter that continues a response the provider cut MUST bound
+   the continuations and report the cut when the bound is reached
+   (#84). The Gemini adapter ends such a response incomplete. The
+   Anthropic adapter does not follow this yet: a `pause_turn` that
+   outlasts `WithContinuations` completes with what it has.
 
 ## Errors
 
@@ -407,15 +412,20 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   `Incomplete(max_output_tokens)`; SAFETY, RECITATION, BLOCKLIST,
   PROHIBITED_CONTENT, SPII and the IMAGE_* reasons are
   `Incomplete(content_filter)`; MALFORMED_FUNCTION_CALL,
-  UNEXPECTED_TOOL_CALL, OTHER and CONTINUATION are `ModelError`; the
-  SDK's `AutomaticContinuation` is off, since it has no bound, until
-  the adapter has a bounded loop of its own. A blocked prompt
+  UNEXPECTED_TOOL_CALL and OTHER are `ModelError`. CONTINUATION is
+  continued: the request is re-sent with `ContinuationToken`, up to
+  `WithContinuations` (8), into the same response; at the limit, or
+  with no token, `Incomplete(max_output_tokens)` with
+  `incomplete_details["gemini.finish_reason"]` `CONTINUATION` (rule
+  11). The SDK's `AutomaticContinuation` is off, since it has no
+  bound. A blocked prompt
   (`PromptFeedback.BlockReason` with no candidates) is
   `Incomplete(content_filter)` with empty output.
 - Usage: `PromptTokenCount + ToolUsePromptTokenCount` is input,
   `CachedContentTokenCount` is cached, `CandidatesTokenCount +
   ThoughtsTokenCount` is output, `ThoughtsTokenCount` is
-  `reasoning_tokens`. Gemini reports no cache writes, so
+  `reasoning_tokens`, each summed across continued requests. Gemini
+  reports no cache writes, so
   `openresponses-experimental.cache_write_tokens` is never set.
   `ResponseID` and `ModelVersion` fill the response. `TrafficType`,
   which only Vertex AI reports, is the served `service_tier`: ON_DEMAND
