@@ -5,6 +5,17 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- providers/PLAN.md rule 11: an adapter that continues a response the
+  provider cut must bound the continuations and report the cut when
+  the bound is reached (#84). Both adapters here end such a response
+  incomplete with `max_output_tokens` and name the provider's reason
+  under their slug in `incomplete_details`: the Gemini adapter now
+  continues a `CONTINUATION` cut itself, and the Anthropic adapter's
+  `pause_turn` at the limit no longer completes. Their changelogs have
+  the details.
+
 ## v0.0.21 - 2026-11-15
 
 - Behaviour change: the `chatcompletions` adapter requests logprobs only

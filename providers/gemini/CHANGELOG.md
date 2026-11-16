@@ -1,5 +1,34 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: a response Gemini cuts with finish reason
+  `CONTINUATION` is continued by the adapter (#84). It sends the same
+  request again with the continuation token, and the next request's
+  output goes on in the same response, extending the item the cut left
+  open, with one `response.created`, one terminal event and output
+  indices running on; usage is summed over the requests.
+  `WithContinuations` sets how many times (default
+  `DefaultContinuations`, 8; zero or less never continues, as in the
+  Anthropic adapter). The token is the finishing chunk's or the latest
+  checkpoint token before it, and a request that ends on the token it
+  was sent with is not sent again. `max_output_tokens` bounds the
+  whole response: Gemini counts it across the continued requests, so
+  each request sends it unchanged, and once the output has spent it
+  the response ends incomplete with `max_output_tokens` without
+  another request. A cut that is not continued, at the limit or without a
+  token, ends the response incomplete with `max_output_tokens` and
+  `incomplete_details["gemini.finish_reason"]: "CONTINUATION"`, the
+  open item marked incomplete. Before, the finish failed the response
+  with `model_error`, code `continuation`, after one request.
+- Dependencies: golang.org/x/net is v0.62.0 (indirect, was v0.60.0)
+  and golang.org/x/crypto v0.59.0 (indirect, was v0.57.0), with
+  golang.org/x/sys v0.50.0 and golang.org/x/text v0.44.0 following.
+  govulncheck reported GO-2026-6866 and GO-2026-6860 (x/net html) and
+  GO-2026-5932 (x/crypto openpgp) in the required modules; none was
+  reachable from the adapter, and none is reported now. The module
+  stays on Go 1.26.
+
 ## v0.0.21 - 2026-11-15
 
 - Behaviour change: logprobs are requested from Gemini

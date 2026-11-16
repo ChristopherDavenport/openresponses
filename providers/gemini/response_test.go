@@ -17,7 +17,7 @@ import (
 
 // newAdapter returns an adapter whose client talks to handler over an
 // in-process server, as the Gemini API backend.
-func newAdapter(t *testing.T, handler http.Handler) *Adapter {
+func newAdapter(t *testing.T, handler http.Handler, opts ...Option) *Adapter {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
@@ -28,7 +28,7 @@ func newAdapter(t *testing.T, handler http.Handler) *Adapter {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(client)
+	return New(client, opts...)
 }
 
 // sse serves each chunk as one server-sent event, the way
@@ -289,32 +289,6 @@ func TestStreamModelError(t *testing.T) {
 	var oerr *openresponses.Error
 	if !errorsAs(err, &oerr) || oerr.Type != openresponses.ErrorTypeModelError || !strings.Contains(oerr.Message, "MALFORMED_FUNCTION_CALL") {
 		t.Fatalf("err = %v", err)
-	}
-}
-
-// TestStreamContinuationNotFollowed pins that the adapter does not let
-// the SDK continue a CONTINUATION finish on its own. genai v1.74 turned
-// automatic continuation on by default, with no bound on the number of
-// requests; the adapter turns it off, so the finish fails the response
-// as it did before and only one request is made.
-func TestStreamContinuationNotFollowed(t *testing.T) {
-	var requests int
-	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if requests == 1 {
-			sse(`{"candidates":[{"content":{"parts":[{"text":"Hel"}],"role":"model"},"finishReason":"CONTINUATION","continuationToken":"dG9rZW4=","index":0}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":1,"totalTokenCount":4}}`).ServeHTTP(w, r)
-			return
-		}
-		sse(finishChunk).ServeHTTP(w, r)
-	})
-	_, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
-	wantErr(t, err, "continuation", "")
-	var oerr *openresponses.Error
-	if !errorsAs(err, &oerr) || oerr.Type != openresponses.ErrorTypeModelError {
-		t.Fatalf("err = %v, want a model_error", err)
-	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want 1: the SDK continued the response", requests)
 	}
 }
 

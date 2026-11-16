@@ -1,5 +1,6 @@
 // Package anthropic serves Claude as an [openresponses.Adapter] through
-// the github.com/anthropics/anthropic-sdk-go Messages API.
+// the github.com/anthropics/anthropic-sdk-go/v2 Messages API, which sends
+// API version 2026-10-21.
 //
 // The adapter takes a constructed [sdk.MessageService] and knows nothing
 // about endpoints or credentials. The Claude API, Vertex AI and Bedrock
@@ -25,7 +26,7 @@ import (
 	"context"
 
 	"github.com/ChristopherDavenport/openresponses"
-	sdk "github.com/anthropics/anthropic-sdk-go"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
 )
 
 // DefaultMaxTokens is the max_tokens sent when a request has no
@@ -34,7 +35,7 @@ const DefaultMaxTokens = 32768
 
 // DefaultContinuations is how many times a turn Claude paused
 // (stop_reason pause_turn, used by long-running server tools) is resumed
-// before the response completes with what it has.
+// before the response ends incomplete with what it has.
 const DefaultContinuations = 8
 
 // Adapter implements [openresponses.Adapter] over the Messages API.
@@ -69,7 +70,8 @@ func WithMaxTokens(n int) Option {
 }
 
 // WithContinuations sets how many times a paused turn is resumed. The
-// default is [DefaultContinuations]; zero never resumes.
+// default is [DefaultContinuations]; zero or less never resumes. A turn
+// still paused when they run out ends the response incomplete.
 func WithContinuations(n int) Option {
 	return func(a *Adapter) { a.continuations = n }
 }

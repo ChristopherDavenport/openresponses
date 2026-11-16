@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/ChristopherDavenport/openresponses"
-	sdk "github.com/anthropics/anthropic-sdk-go"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -70,7 +70,7 @@ func TestEncodeSystem(t *testing.T) {
 	if strings.Join(got, "|") != "Be brief.|You are a pirate.|Answer in French." {
 		t.Fatalf("system = %q", got)
 	}
-	if len(p.Messages) != 1 || p.Messages[0].Role != sdk.MessageParamRoleUser || p.Messages[0].Content[0].OfText.Text != "Hello" {
+	if len(p.Messages) != 1 || messageRole(p.Messages[0]) != roleUser || messageContent(p.Messages[0])[0].OfText.Text != "Hello" {
 		t.Fatalf("messages = %+v", p.Messages)
 	}
 	if p.MaxTokens != DefaultMaxTokens || p.Model != "claude-opus-5" {
@@ -98,10 +98,10 @@ func TestEncodeLateSystem(t *testing.T) {
 		t.Fatalf("got %d messages, want 5", len(p.Messages))
 	}
 	tools := p.Messages[2]
-	if tools.Role != sdk.MessageParamRoleUser || len(tools.Content) != 2 || tools.Content[0].OfToolResult == nil || tools.Content[1].OfText.Text != "The policy allowed read." {
+	if messageRole(tools) != roleUser || len(messageContent(tools)) != 2 || messageContent(tools)[0].OfToolResult == nil || messageContent(tools)[1].OfText.Text != "The policy allowed read." {
 		t.Fatalf("note after the tool result = %+v", tools)
 	}
-	if last := p.Messages[4]; last.Role != sdk.MessageParamRoleUser || last.Content[0].OfText.Text != "Be brief." {
+	if last := p.Messages[4]; messageRole(last) != roleUser || messageContent(last)[0].OfText.Text != "Be brief." {
 		t.Fatalf("trailing system message = %+v", last)
 	}
 }
@@ -124,27 +124,27 @@ func TestEncodeTurns(t *testing.T) {
 		t.Fatalf("got %d messages, want 3", len(p.Messages))
 	}
 	assistant := p.Messages[1]
-	if assistant.Role != sdk.MessageParamRoleAssistant || len(assistant.Content) != 3 {
+	if messageRole(assistant) != roleAssistant || len(messageContent(assistant)) != 3 {
 		t.Fatalf("assistant = %+v", assistant)
 	}
-	if th := assistant.Content[0].OfThinking; th == nil || th.Signature != "sig==" || th.Thinking != "Need a lookup." {
-		t.Fatalf("thinking = %+v", assistant.Content[0])
+	if th := messageContent(assistant)[0].OfThinking; th == nil || th.Signature != "sig==" || th.Thinking != "Need a lookup." {
+		t.Fatalf("thinking = %+v", messageContent(assistant)[0])
 	}
-	if assistant.Content[1].OfText.Text != "Let me check." {
-		t.Fatalf("text = %+v", assistant.Content[1])
+	if messageContent(assistant)[1].OfText.Text != "Let me check." {
+		t.Fatalf("text = %+v", messageContent(assistant)[1])
 	}
-	if tu := assistant.Content[2].OfToolUse; tu == nil || tu.ID != "toolu_1" || tu.Name != "weather" || tu.Input.(map[string]any)["city"] != "Oslo" {
-		t.Fatalf("tool use = %+v", assistant.Content[2])
+	if tu := messageContent(assistant)[2].OfToolUse; tu == nil || tu.ID != "toolu_1" || tu.Name != "weather" || tu.Input.(map[string]any)["city"] != "Oslo" {
+		t.Fatalf("tool use = %+v", messageContent(assistant)[2])
 	}
 	user := p.Messages[2]
-	if user.Role != sdk.MessageParamRoleUser || len(user.Content) != 2 {
+	if messageRole(user) != roleUser || len(messageContent(user)) != 2 {
 		t.Fatalf("user = %+v", user)
 	}
-	if tr := user.Content[0].OfToolResult; tr == nil || tr.ToolUseID != "toolu_1" || tr.Content[0].OfText.Text != "rainy" {
-		t.Fatalf("tool result = %+v", user.Content[0])
+	if tr := messageContent(user)[0].OfToolResult; tr == nil || tr.ToolUseID != "toolu_1" || tr.Content[0].OfText.Text != "rainy" {
+		t.Fatalf("tool result = %+v", messageContent(user)[0])
 	}
-	if user.Content[1].OfText.Text != "Thanks" {
-		t.Fatalf("trailing text = %+v", user.Content[1])
+	if messageContent(user)[1].OfText.Text != "Thanks" {
+		t.Fatalf("trailing text = %+v", messageContent(user)[1])
 	}
 }
 
@@ -156,10 +156,10 @@ func TestEncodeFunctionOutputParts(t *testing.T) {
 			&openresponses.InputImage{ImageURL: "data:image/png;base64,aGk="},
 		}}},
 	}})
-	if tu := p.Messages[0].Content[0].OfToolUse; tu.Input.(map[string]any) == nil {
+	if tu := messageContent(p.Messages[0])[0].OfToolUse; tu.Input.(map[string]any) == nil {
 		t.Fatalf("empty arguments should give an empty object, got %#v", tu.Input)
 	}
-	tr := p.Messages[1].Content[0].OfToolResult
+	tr := messageContent(p.Messages[1])[0].OfToolResult
 	if len(tr.Content) != 2 || tr.Content[0].OfText.Text != "here" || tr.Content[1].OfImage.Source.OfBase64.Data != "aGk=" {
 		t.Fatalf("tool result = %+v", tr)
 	}
@@ -176,7 +176,7 @@ func TestEncodeMedia(t *testing.T) {
 		&openresponses.InputFile{FileURL: "https://example.com/a.pdf"},
 		&openresponses.InputFile{FileID: "file_2"},
 	)}})
-	c := p.Messages[0].Content
+	c := messageContent(p.Messages[0])
 	if len(c) != 8 {
 		t.Fatalf("got %d blocks", len(c))
 	}
@@ -277,8 +277,6 @@ func TestEncodeExtensionPart(t *testing.T) {
 func TestEncodeConfig(t *testing.T) {
 	p := encode(t, openresponses.Request{
 		MaxOutputTokens:  ptr(256),
-		Temperature:      ptr(0.5),
-		TopP:             ptr(0.9),
 		SafetyIdentifier: "user-1",
 		PromptCacheKey:   "k",
 		ServiceTier:      openresponses.ServiceTierDefault,
@@ -288,8 +286,8 @@ func TestEncodeConfig(t *testing.T) {
 		Text:             openresponses.TextConfig{Format: openresponses.JSONSchemaFormat("out", json.RawMessage(`{"type":"object"}`), true)},
 	})
 	body := wire(t, p)
-	if body["max_tokens"] != float64(256) || body["temperature"] != 0.5 || body["top_p"] != 0.9 {
-		t.Fatalf("sampling = %v", body)
+	if body["max_tokens"] != float64(256) {
+		t.Fatalf("max_tokens = %v", body)
 	}
 	if body["metadata"].(map[string]any)["user_id"] != "user-1" {
 		t.Fatalf("metadata = %v", body["metadata"])
@@ -304,8 +302,8 @@ func TestEncodeConfig(t *testing.T) {
 	if oc["effort"] != "xhigh" || oc["format"].(map[string]any)["type"] != "json_schema" {
 		t.Fatalf("output_config = %v", oc)
 	}
-	if th, ok := body["thinking"]; ok {
-		t.Fatalf("thinking with temperature 0.5 = %v, want the effort alone", th)
+	if th, _ := body["thinking"].(map[string]any); th["type"] != "adaptive" {
+		t.Fatalf("thinking = %v, want adaptive with the effort", body["thinking"])
 	}
 	if _, ok := body["labels"]; ok {
 		t.Fatalf("metadata must not be sent upstream: %v", body)
@@ -313,7 +311,7 @@ func TestEncodeConfig(t *testing.T) {
 
 	p = encode(t, openresponses.Request{})
 	body = wire(t, p)
-	for _, key := range []string{"thinking", "output_config", "tools", "tool_choice", "system", "metadata", "cache_control", "temperature"} {
+	for _, key := range []string{"thinking", "output_config", "tools", "tool_choice", "system", "metadata", "cache_control", "temperature", "top_p", "top_k"} {
 		if _, ok := body[key]; ok {
 			t.Fatalf("empty request should not send %s: %v", key, body)
 		}
@@ -610,7 +608,7 @@ func TestEncodeReasoningIssuer(t *testing.T) {
 			p := encode(t, openresponses.Request{Input: openresponses.Items{
 				openresponses.UserText("Hi"), tc.item, openresponses.AssistantText("Hello"), openresponses.UserText("Bye"),
 			}})
-			assistant := p.Messages[1].Content
+			assistant := messageContent(p.Messages[1])
 			sent := assistant[0].OfThinking != nil
 			if sent != tc.sent || len(assistant) != map[bool]int{true: 2, false: 1}[tc.sent] {
 				t.Fatalf("assistant = %+v, want thinking sent %v", assistant, tc.sent)
@@ -634,7 +632,7 @@ func TestEncodeCallIDRewrite(t *testing.T) {
 	}})
 	// call_ and the first 24 hex digits of sha256("functions.read:0").
 	const want = "call_c216cab2de2e56d547b4e634"
-	calls, results := p.Messages[1].Content, p.Messages[2].Content
+	calls, results := messageContent(p.Messages[1]), messageContent(p.Messages[2])
 	if got := calls[0].OfToolUse.ID; got != want || results[0].OfToolResult.ToolUseID != want {
 		t.Fatalf("rewritten call %q, result %q, want %q", got, results[0].OfToolResult.ToolUseID, want)
 	}
@@ -649,17 +647,16 @@ func TestEncodeCallIDRewrite(t *testing.T) {
 // them.
 func TestEncodeExtra(t *testing.T) {
 	req := openresponses.Request{Model: "claude-opus-5", Extra: map[string]any{
-		"anthropic.top_k":                    5,
 		"anthropic.inference_geo":            "us",
 		"openresponses-experimental.unknown": true,
 		"routing":                            "fast",
 		"model":                              "other",
 	}}
 	body := wire(t, encode(t, req))
-	if body["top_k"] != float64(5) || body["inference_geo"] != "us" {
+	if body["inference_geo"] != "us" {
 		t.Fatalf("anthropic. members = %v", body)
 	}
-	for _, key := range []string{"routing", "anthropic.top_k", "openresponses-experimental.unknown"} {
+	for _, key := range []string{"routing", "anthropic.inference_geo", "openresponses-experimental.unknown"} {
 		if _, ok := body[key]; ok {
 			t.Fatalf("%s sent: %v", key, body)
 		}
@@ -697,9 +694,10 @@ func TestEncodeExtra(t *testing.T) {
 }
 
 // TestEncodeEffortWithoutThinking covers the requests Claude refuses
-// thinking on: a forced tool, a temperature other than 1, top_k, or a
-// top_p below 0.95. An adaptive model gets the effort alone; a summary,
-// or an effort on a budget model, cannot be honoured and is refused.
+// thinking on, a forced tool; the sampling parameters that also were are
+// refused outright (TestEncodeSamplingRefused). An adaptive model gets
+// the effort alone; a summary, or an effort on a budget model, cannot be
+// honoured and is refused.
 func TestEncodeEffortWithoutThinking(t *testing.T) {
 	tool := openresponses.Tools{&openresponses.FunctionTool{Name: "f"}}
 	cases := []struct {
@@ -709,9 +707,6 @@ func TestEncodeEffortWithoutThinking(t *testing.T) {
 	}{
 		{"required", openresponses.Request{Tools: tool, ToolChoice: openresponses.ToolChoice{Mode: openresponses.ToolChoiceRequired}}, "tool_choice"},
 		{"function", openresponses.Request{Tools: tool, ToolChoice: openresponses.ToolChoiceFunction("f")}, "tool_choice"},
-		{"temperature", openresponses.Request{Temperature: ptr(0.2)}, "temperature"},
-		{"top_k", openresponses.Request{Extra: map[string]any{"anthropic.top_k": 5}}, "anthropic.top_k"},
-		{"top_p", openresponses.Request{TopP: ptr(0.9)}, "top_p"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -747,10 +742,44 @@ func TestEncodeEffortWithoutThinking(t *testing.T) {
 			}
 		})
 	}
-	// Temperature 1 and top_p from 0.95 are what thinking takes.
-	body := wire(t, encode(t, openresponses.Request{Model: "claude-opus-4-8", Temperature: ptr(1.0), TopP: ptr(0.95), Reasoning: openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortLow}}))
-	if _, ok := body["thinking"]; !ok {
-		t.Fatalf("temperature 1, top_p 0.95: no thinking: %v", body)
+}
+
+// TestEncodeSamplingRefused: the Messages API at version 2026-10-21,
+// which anthropic-sdk-go v2 sends, refuses temperature, top_p and top_k
+// at any value, their defaults included. Each is refused before sending,
+// in every spelling the adapter would send it: the request fields, an
+// anthropic. member, and top_k forwarded under WithExtra.
+func TestEncodeSamplingRefused(t *testing.T) {
+	cases := []struct {
+		name    string
+		req     openresponses.Request
+		forward bool
+		param   string
+	}{
+		{"temperature", openresponses.Request{Temperature: ptr(0.5)}, false, "temperature"},
+		{"temperature 1", openresponses.Request{Temperature: ptr(1.0)}, false, "temperature"},
+		{"top_p", openresponses.Request{TopP: ptr(0.9)}, false, "top_p"},
+		{"top_p 1", openresponses.Request{TopP: ptr(1.0)}, false, "top_p"},
+		{"anthropic.top_k", openresponses.Request{Extra: map[string]any{"anthropic.top_k": 5}}, false, "anthropic.top_k"},
+		{"anthropic.temperature", openresponses.Request{Extra: map[string]any{"anthropic.temperature": 0.5}}, false, "anthropic.temperature"},
+		{"anthropic.top_p", openresponses.Request{Extra: map[string]any{"anthropic.top_p": 0.9}}, false, "anthropic.top_p"},
+		{"forwarded top_k", openresponses.Request{Extra: map[string]any{"top_k": 5}}, true, "top_k"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := encodeRequest(tc.req, config{maxTokens: DefaultMaxTokens, forwardExtra: tc.forward})
+			wantErr(t, err, openresponses.CodeUnsupportedParameter, tc.param)
+			if !strings.Contains(err.Error(), "2026-10-21") {
+				t.Fatalf("err = %v, want the reason: API version 2026-10-21", err)
+			}
+		})
+	}
+
+	// Without WithExtra a bare top_k is an unknown member, dropped like
+	// any other (PLAN rule 8), and never sent.
+	body := wire(t, encode(t, openresponses.Request{Extra: map[string]any{"top_k": 5}}))
+	if _, ok := body["top_k"]; ok {
+		t.Fatalf("top_k sent: %v", body)
 	}
 }
 
@@ -767,7 +796,7 @@ func TestEncodeToolResultsFirst(t *testing.T) {
 		openresponses.UserText("and"),
 	}})
 	var kinds []string
-	for _, c := range p.Messages[2].Content {
+	for _, c := range messageContent(p.Messages[2]) {
 		switch {
 		case c.OfToolResult != nil:
 			kinds = append(kinds, c.OfToolResult.ToolUseID)
@@ -933,7 +962,7 @@ func TestEncodeContentFilterPath(t *testing.T) {
 	var roles []string
 	for _, m := range p.Messages {
 		var kinds []string
-		for _, c := range m.Content {
+		for _, c := range messageContent(m) {
 			switch {
 			case c.OfText != nil:
 				kinds = append(kinds, "text")
@@ -943,7 +972,7 @@ func TestEncodeContentFilterPath(t *testing.T) {
 				kinds = append(kinds, "tool_result")
 			}
 		}
-		roles = append(roles, string(m.Role)+"["+strings.Join(kinds, ",")+"]")
+		roles = append(roles, messageRole(m)+"["+strings.Join(kinds, ",")+"]")
 	}
 	if got, want := strings.Join(roles, " "), "user[text] assistant[tool_use] user[tool_result] assistant[tool_use] user[tool_result]"; got != want {
 		t.Fatalf("messages = %s, want %s", got, want)
@@ -1036,7 +1065,7 @@ func TestEncodeResumesPausedTurn(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			p := encode(t, openresponses.Request{Input: append(openresponses.Items{openresponses.UserText("Search for Go")}, tc.input...)})
-			if last := p.Messages[len(p.Messages)-1]; last.Role != sdk.MessageParamRoleAssistant || len(last.Content) != len(tc.input) {
+			if last := p.Messages[len(p.Messages)-1]; messageRole(last) != roleAssistant || len(messageContent(last)) != len(tc.input) {
 				t.Fatalf("last message = %+v, want the paused assistant turn", last)
 			}
 			content := wire(t, p)["messages"].([]any)[1].(map[string]any)["content"].([]any)
@@ -1069,7 +1098,7 @@ func TestEncodeSendsUserSideEnds(t *testing.T) {
 				openresponses.UserText("Hi"), openresponses.AssistantText("Hello"), tc.last,
 			}})
 			last := p.Messages[len(p.Messages)-1]
-			if len(p.Messages) != 3 || last.Role != sdk.MessageParamRoleUser || len(last.Content) != 1 || last.Content[0].OfText.Text != tc.text {
+			if len(p.Messages) != 3 || messageRole(last) != roleUser || len(messageContent(last)) != 1 || messageContent(last)[0].OfText.Text != tc.text {
 				t.Fatalf("messages = %+v, want a last user turn of %q", p.Messages, tc.text)
 			}
 		})

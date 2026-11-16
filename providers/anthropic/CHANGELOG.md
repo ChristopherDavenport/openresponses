@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: a turn Claude paused (`pause_turn`) that is still
+  paused when the continuations run out (`WithContinuations`, default
+  8; also at zero) ends the response incomplete with
+  `max_output_tokens` and `incomplete_details["anthropic.stop_reason"]:
+  "pause_turn"`, as PLAN rule 11 asks. It used to complete with what it
+  had, so a caller could not tell the cut from a finished answer.
+- Behaviour change, dependencies: the adapter is built on
+  github.com/anthropics/anthropic-sdk-go/v2 v2.10.0 (was
+  github.com/anthropics/anthropic-sdk-go v1.84.0); the module still
+  requires Go 1.25 (#86). SDK v2 sends API version `2026-10-21`, and
+  callers build their client from the `/v2` import paths
+  (`github.com/anthropics/anthropic-sdk-go/v2`, `.../v2/option`,
+  `.../v2/vertex`, `.../v2/bedrock`). What users see:
+  - `temperature` and `top_p` are refused at any value, their defaults
+    included, with `invalid_request`, `code: unsupported_parameter`,
+    `param` the field and a message naming API version `2026-10-21`,
+    which returns a 400 for them. So are `anthropic.temperature`,
+    `anthropic.top_p`, `anthropic.top_k`, and a `top_k` member that
+    `WithExtra` would forward. Before, `temperature` and `top_p` were
+    passed through and `anthropic.top_k` was sent as `top_k`; a
+    caller that sets any of them must stop. With them gone, a forced
+    tool is the only parameter Claude refuses thinking with.
+  - On Amazon Bedrock (`bedrock-runtime`), API version `2026-10-21`
+    serves only Claude 4.7 and later. A caller of Claude 4.6 or older
+    there stays on an earlier release of this adapter.
+  - The SDK sends an API key as `Authorization: Bearer` rather than
+    `X-Api-Key`, and a client holds one credential; see the SDK's
+    migration guide for the client options.
+  `pause_turn` with `WithContinuations`, `top_logprobs` alone accepted
+  without effect, `service_tier` as the served tier, and the tracing
+  opt-out (`option.WithoutOpenTelemetry()`,
+  `option.WithOpenTelemetryPropagation(false)`, and
+  `ANTHROPIC_OPEN_TELEMETRY` / `ANTHROPIC_OPEN_TELEMETRY_PROPAGATION`
+  set to `false`) are unchanged.
+
 ## v0.0.21 - 2026-11-15
 
 - Behaviour change: a request whose `include` names

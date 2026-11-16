@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ChristopherDavenport/openresponses"
-	sdk "github.com/anthropics/anthropic-sdk-go"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
 )
 
 var _ openresponses.Describer = (*Adapter)(nil)

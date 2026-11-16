@@ -176,9 +176,8 @@ func invalid(param, message string) *openresponses.Error {
 func encodeConfig(req openresponses.Request, thinking Thinking) (*genai.GenerateContentConfig, error) {
 	// AutomaticContinuation is off: from genai v1.74 the SDK otherwise
 	// re-sends the request on a CONTINUATION finish until the model
-	// finishes, with no bound on the number of billed requests. Until the
-	// adapter runs a bounded loop of its own, the finish fails the
-	// response as a model_error, as it did before.
+	// finishes, with no bound on the number of billed requests. The
+	// adapter continues the response itself, up to WithContinuations.
 	cfg := &genai.GenerateContentConfig{CandidateCount: 1, AutomaticContinuation: genai.Ptr(false)}
 
 	if req.MaxOutputTokens != nil {

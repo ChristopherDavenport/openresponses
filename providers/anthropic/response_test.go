@@ -12,8 +12,8 @@ import (
 
 	"github.com/ChristopherDavenport/openresponses"
 	"github.com/ChristopherDavenport/openresponses/streamtest"
-	sdk "github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
+	"github.com/anthropics/anthropic-sdk-go/v2/option"
 )
 
 // newAdapter returns an adapter whose client talks to handler over an
@@ -217,15 +217,15 @@ func TestThinkingRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(messages) != 1 || len(messages[0].Content) != 2 {
+	if len(messages) != 1 || len(messageContent(messages[0])) != 2 {
 		t.Fatalf("messages = %+v", messages)
 	}
-	th := messages[0].Content[0].OfThinking
+	th := messageContent(messages[0])[0].OfThinking
 	if th == nil || th.Thinking != "Let me think." || th.Signature != "c2lnbmF0dXJl" {
-		t.Fatalf("thinking block = %+v", messages[0].Content[0])
+		t.Fatalf("thinking block = %+v", messageContent(messages[0])[0])
 	}
-	if messages[0].Content[1].OfToolUse == nil {
-		t.Fatalf("tool use = %+v", messages[0].Content[1])
+	if messageContent(messages[0])[1].OfToolUse == nil {
+		t.Fatalf("tool use = %+v", messageContent(messages[0])[1])
 	}
 }
 
@@ -494,18 +494,75 @@ func TestPauseTurnContinues(t *testing.T) {
 	if resp.ServiceTier != openresponses.ServiceTierPriority {
 		t.Fatalf("service_tier = %q, want the last turn's", resp.ServiceTier)
 	}
+}
 
-	// With continuations disabled the paused output completes as-is.
-	sink, err = streamtest.Run(context.Background(), newAdapter(t, sse(msgStart,
-		`{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}}`,
+// pausedStream is one Messages stream that Claude pauses after a server
+// tool call.
+func pausedStream(id string) []string {
+	return []string{msgStart,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"` + id + `","name":"web_search","input":{}}}`,
 		textStop,
-		`{"type":"message_delta","delta":{"stop_reason":"pause_turn","stop_sequence":null},"usage":{"output_tokens":3}}`, msgStop), WithContinuations(0)), hello())
-	if err != nil {
-		t.Fatal(err)
+		`{"type":"message_delta","delta":{"stop_reason":"pause_turn","stop_sequence":null},"usage":{"output_tokens":3}}`, msgStop}
+}
+
+// TestPauseTurnLimit: a turn still paused when the continuations run
+// out ends the response incomplete (PLAN rule 11), with what the turns
+// produced and the stop reason under the adapter's slug; zero
+// continuations never resume.
+func TestPauseTurnLimit(t *testing.T) {
+	check := func(t *testing.T, r *openresponses.Response, items int) {
+		t.Helper()
+		if r.Status != openresponses.ResponseStatusIncomplete || r.IncompleteDetails == nil ||
+			r.IncompleteDetails.Reason != openresponses.IncompleteReasonMaxOutputTokens {
+			t.Fatalf("resp = %s %+v, want incomplete max_output_tokens", r.Status, r.IncompleteDetails)
+		}
+		if got := r.IncompleteDetails.Extra["anthropic.stop_reason"]; got != "pause_turn" {
+			t.Fatalf("incomplete_details = %+v, want anthropic.stop_reason pause_turn", r.IncompleteDetails)
+		}
+		if len(r.Output) != items {
+			t.Fatalf("output = %d items, want %d", len(r.Output), items)
+		}
 	}
-	if r := sink.Response(); r.Status != openresponses.ResponseStatusCompleted || len(r.Output) != 1 {
-		t.Fatalf("resp = %+v", r)
-	}
+
+	t.Run("zero", func(t *testing.T) {
+		sink, err := streamtest.Run(context.Background(), newAdapter(t, sse(pausedStream("srvtoolu_1")...), WithContinuations(0)), hello())
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(t, sink.Response(), 1)
+	})
+
+	t.Run("limit", func(t *testing.T) {
+		var mu sync.Mutex
+		var turns int
+		h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			turns++
+			n := turns
+			mu.Unlock()
+			w.Header().Set("Content-Type", "text/event-stream")
+			writeSSE(w, pausedStream(fmt.Sprintf("srvtoolu_%d", n))...)
+		})
+		sink, err := streamtest.Run(context.Background(), newAdapter(t, h, WithContinuations(1)), hello())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if turns != 2 {
+			t.Fatalf("turns = %d, want 2", turns)
+		}
+		check(t, sink.Response(), 2)
+		if u := sink.Response().Usage; u == nil || u.OutputTokens != 6 {
+			t.Fatalf("usage = %+v, want both turns", u)
+		}
+	})
+
+	t.Run("create", func(t *testing.T) {
+		resp, err := newAdapter(t, sse(pausedStream("srvtoolu_1")...), WithContinuations(0)).Create(context.Background(), hello())
+		if err != nil {
+			t.Fatal(err)
+		}
+		check(t, resp, 1)
+	})
 }
 
 func TestMapError(t *testing.T) {

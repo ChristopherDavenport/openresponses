@@ -14,8 +14,8 @@ import (
 	"strings"
 
 	"github.com/ChristopherDavenport/openresponses"
-	sdk "github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/packages/param"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
+	"github.com/anthropics/anthropic-sdk-go/v2/packages/param"
 )
 
 // Slug prefix for Claude extension types: tools, items and annotations
@@ -41,7 +41,7 @@ func encodeRequest(req openresponses.Request, cfg config) (sdk.MessageNewParams,
 	if err != nil {
 		return sdk.MessageNewParams{}, err
 	}
-	if n := len(messages); n > 0 && messages[n-1].Role == sdk.MessageParamRoleAssistant && !pausedTurn(req.Input[last]) {
+	if n := len(messages); n > 0 && messages[n-1].OfAssistant != nil && !pausedTurn(req.Input[last]) {
 		return sdk.MessageNewParams{}, prefill(req.Input, last)
 	}
 	if req.Instructions != "" {
@@ -148,6 +148,9 @@ func encodeExtra(extra map[string]any, forward bool, p *sdk.MessageNewParams) er
 			if field == "" {
 				return invalid(key, "an anthropic. member names a Messages API field after the slug")
 			}
+			if slices.Contains(samplingParams, field) {
+				return sampling(key)
+			}
 			if _, ok := set[field]; ok {
 				return invalid(key, fmt.Sprintf("%s conflicts with %s, which the request already sets", key, field))
 			}
@@ -160,6 +163,9 @@ func encodeExtra(extra map[string]any, forward bool, p *sdk.MessageNewParams) er
 		}
 		if strings.HasPrefix(key, openresponses.ExtensionSlug) || !forward {
 			continue
+		}
+		if slices.Contains(samplingParams, key) {
+			return sampling(key)
 		}
 		if _, ok := set[key]; !ok {
 			if _, ok := fields[key]; !ok {
@@ -178,6 +184,18 @@ func unsupported(param string) *openresponses.Error {
 		fmt.Sprintf("%s is not supported by the Messages API", param), param)
 }
 
+// samplingParams are the Messages API's sampling parameters. API version
+// 2026-10-21, which anthropic-sdk-go v2 sends, refuses each at any
+// value, its default included, so the adapter refuses them before
+// sending in whatever spelling it would send them.
+var samplingParams = []string{"temperature", "top_p", "top_k"}
+
+// sampling is the error for a sampling parameter, named by param.
+func sampling(param string) *openresponses.Error {
+	return openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
+		fmt.Sprintf("%s is not supported: the Messages API at version 2026-10-21 refuses temperature, top_p and top_k at any value", param), param)
+}
+
 func invalid(param, message string) *openresponses.Error {
 	return openresponses.InvalidRequest(openresponses.CodeInvalidValue, message, param)
 }
@@ -188,13 +206,11 @@ func encodeConfig(req openresponses.Request, cfg config) (sdk.MessageNewParams, 
 	if req.MaxOutputTokens != nil {
 		p.MaxTokens = int64(*req.MaxOutputTokens)
 	}
-	if req.Temperature != nil {
-		p.Temperature = param.NewOpt(*req.Temperature)
-	}
-	if req.TopP != nil {
-		p.TopP = param.NewOpt(*req.TopP)
-	}
 	switch {
+	case req.Temperature != nil:
+		return p, sampling("temperature")
+	case req.TopP != nil:
+		return p, sampling("top_p")
 	case req.PresencePenalty != nil:
 		return p, unsupported("presence_penalty")
 	case req.FrequencyPenalty != nil:
@@ -341,20 +357,12 @@ func encodeReasoning(r openresponses.ReasoningConfig, model string, thinking Thi
 
 // thinkingConflict returns the request parameter Claude refuses
 // thinking with, or "": a forced tool (tool_choice required or a named
-// function), a temperature other than 1, a top_p below 0.95, or top_k
-// (anthropic.top_k). The README's table says what each encoding does
-// then.
+// function). The sampling parameters Claude also refused thinking with
+// are refused outright (see sampling). The README's table says what
+// each encoding does then.
 func thinkingConflict(req openresponses.Request) string {
-	switch {
-	case req.ToolChoice.Function != nil || req.ToolChoice.Mode == openresponses.ToolChoiceRequired:
+	if req.ToolChoice.Function != nil || req.ToolChoice.Mode == openresponses.ToolChoiceRequired {
 		return "tool_choice"
-	case req.Temperature != nil && *req.Temperature != 1:
-		return "temperature"
-	case req.TopP != nil && *req.TopP < 0.95:
-		return "top_p"
-	}
-	if _, ok := req.Extra[slug+"top_k"]; ok {
-		return slug + "top_k"
 	}
 	return ""
 }
@@ -557,16 +565,16 @@ func encodeToolChoice(c openresponses.ToolChoice, disableParallel bool) (sdk.Too
 func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system []sdk.TextBlockParam, last int, err error) {
 	last = -1
 	var at int // the index of the item being encoded
-	add := func(role sdk.MessageParamRole, blocks []sdk.ContentBlockParamUnion) {
+	add := func(role string, blocks []sdk.ContentBlockParamUnion) {
 		if len(blocks) == 0 {
 			return
 		}
 		last = at
-		if n := len(messages); n > 0 && messages[n-1].Role == role {
-			messages[n-1].Content = append(messages[n-1].Content, blocks...)
+		if n := len(messages); n > 0 && messageRole(messages[n-1]) == role {
+			messages[n-1] = newMessage(role, append(messageContent(messages[n-1]), blocks...))
 			return
 		}
-		messages = append(messages, sdk.MessageParam{Role: role, Content: blocks})
+		messages = append(messages, newMessage(role, blocks))
 	}
 	leading := true // no item but system and developer messages yet
 	for i, item := range items {
@@ -584,12 +592,12 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			}
 			switch it.Role {
 			case openresponses.RoleUser:
-				add(sdk.MessageParamRoleUser, blocks)
+				add(roleUser, blocks)
 			case openresponses.RoleAssistant:
-				add(sdk.MessageParamRoleAssistant, blocks)
+				add(roleAssistant, blocks)
 			case openresponses.RoleSystem, openresponses.RoleDeveloper:
 				if !leading {
-					add(sdk.MessageParamRoleUser, blocks)
+					add(roleUser, blocks)
 					continue
 				}
 				// blocks has no entry for a part left out as foreign, so
@@ -613,13 +621,13 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			if err != nil {
 				return nil, nil, -1, invalid(p+".arguments", "arguments is not a JSON object: "+err.Error())
 			}
-			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{sdk.NewToolUseBlock(toolUseID(it.CallID), input, it.Name)})
+			add(roleAssistant, []sdk.ContentBlockParamUnion{sdk.NewToolUseBlock(toolUseID(it.CallID), input, it.Name)})
 		case *openresponses.FunctionCallOutput:
 			block, err := encodeFunctionOutput(it, p+".output")
 			if err != nil {
 				return nil, nil, -1, err
 			}
-			add(sdk.MessageParamRoleUser, []sdk.ContentBlockParamUnion{block})
+			add(roleUser, []sdk.ContentBlockParamUnion{block})
 		case *openresponses.ReasoningItem:
 			if !replayable(it) {
 				// Claude refuses a thinking block it did not sign; see
@@ -632,7 +640,7 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			if text == "" {
 				text = it.Content.Text()
 			}
-			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{sdk.NewThinkingBlock(it.EncryptedContent, text)})
+			add(roleAssistant, []sdk.ContentBlockParamUnion{sdk.NewThinkingBlock(it.EncryptedContent, text)})
 		case *openresponses.UnknownItem:
 			if foreign(it.Type) {
 				// Another provider's item: left out, not refused; see
@@ -646,7 +654,7 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 			if block == nil {
 				return nil, nil, -1, unsupported(p + ".type")
 			}
-			add(sdk.MessageParamRoleAssistant, []sdk.ContentBlockParamUnion{param.Override[sdk.ContentBlockParamUnion](block)})
+			add(roleAssistant, []sdk.ContentBlockParamUnion{param.Override[sdk.ContentBlockParamUnion](block)})
 		default:
 			// Compaction and item_reference need state this adapter does not
 			// keep.
@@ -654,11 +662,45 @@ func encodeInput(items openresponses.Items) (messages []sdk.MessageParam, system
 		}
 	}
 	for i, m := range messages {
-		if m.Role == sdk.MessageParamRoleUser {
-			messages[i].Content = toolResultsFirst(m.Content)
+		if m.OfUser != nil {
+			messages[i] = newMessage(roleUser, toolResultsFirst(m.OfUser.Content))
 		}
 	}
 	return messages, system, last, nil
+}
+
+// The roles of the messages encodeInput builds. anthropic-sdk-go v2 has
+// one param type per role, so a message's role is which field is set.
+const (
+	roleUser      = "user"
+	roleAssistant = "assistant"
+)
+
+// newMessage returns a user or assistant message holding blocks.
+func newMessage(role string, blocks []sdk.ContentBlockParamUnion) sdk.MessageParam {
+	if role == roleAssistant {
+		return sdk.NewAssistantMessage(blocks...)
+	}
+	return sdk.NewUserMessage(blocks...)
+}
+
+// messageRole returns the role of a message newMessage built.
+func messageRole(m sdk.MessageParam) string {
+	if m.OfAssistant != nil {
+		return roleAssistant
+	}
+	return roleUser
+}
+
+// messageContent returns the blocks of a message newMessage built.
+func messageContent(m sdk.MessageParam) []sdk.ContentBlockParamUnion {
+	if m.OfAssistant != nil {
+		return m.OfAssistant.Content
+	}
+	if m.OfUser != nil {
+		return m.OfUser.Content
+	}
+	return nil
 }
 
 // toolResultsFirst orders a user turn the way Claude requires: every

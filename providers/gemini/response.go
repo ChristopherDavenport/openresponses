@@ -1,10 +1,12 @@
 package gemini
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"iter"
 	"math"
 	"net/http"
 	"regexp"
@@ -22,7 +24,10 @@ import (
 // extends a message, thoughts open or extend a reasoning item, a
 // function call arrives whole and is emitted in one step, and any other
 // part becomes a gemini.* extension item. The candidate's finish reason
-// ends the response.
+// ends the response. A response Gemini cuts with finish reason
+// CONTINUATION is continued, up to the configured number of
+// continuations: the request is sent again with the continuation token
+// and the next request's output goes on in the same response.
 func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, sink openresponses.EventSink) error {
 	contents, cfg, err := encodeRequest(req, a.thinking)
 	if err != nil {
@@ -31,8 +36,55 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 	if a.forwardExtra {
 		forwardExtra(cfg, forwardable(req.Extra))
 	}
-	d := &decoder{em: openresponses.NewEmitter(sink, openresponses.NewResponse(req))}
-	for chunk, err := range a.client.Models.GenerateContentStream(ctx, req.Model, contents, cfg) {
+	d := &decoder{}
+	d.em = openresponses.NewEmitter(openresponses.EventSinkFunc(func(ev openresponses.StreamEvent) error {
+		d.annotate(ev)
+		return sink.Send(ev)
+	}), openresponses.NewResponse(req))
+	for hop := 0; ; hop++ {
+		if err := d.hop(a.client.Models.GenerateContentStream(ctx, req.Model, contents, cfg)); err != nil {
+			return err
+		}
+		if d.token == nil {
+			// The response ended with a terminal event.
+			return nil
+		}
+		// The next request is this one with the token: maxOutputTokens
+		// stays the caller's value, since Gemini counts it across the
+		// continued requests and requires it never to shrink (API
+		// reference, Candidate.finishReason CONTINUATION). The SDK's own
+		// loop sends it unchanged too (genai v1.77.0 continuation.go:342-351,
+		// prepareContinuationConfig).
+		next := *cfg
+		if req.MaxOutputTokens != nil {
+			// When the output so far, thinking included, has spent it,
+			// another request can produce nothing; this is the caller's
+			// own cut, and reads as one.
+			if u := d.em.Response().Usage; u != nil && u.OutputTokens >= *req.MaxOutputTokens {
+				return d.em.Incomplete(openresponses.IncompleteReasonMaxOutputTokens)
+			}
+		}
+		if hop >= a.continuations || len(d.token) == 0 {
+			d.cut = true
+			return d.em.Incomplete(openresponses.IncompleteReasonMaxOutputTokens)
+		}
+		next.ContinuationToken = d.token
+		cfg = &next
+		d.sent, d.checkpoint, d.token = d.token, nil, nil
+	}
+}
+
+// hop drains one GenerateContent stream into the emitter. It returns
+// nil once a terminal event has been sent or the stream ended with
+// finish reason CONTINUATION, which leaves d.token non-nil.
+func (d *decoder) hop(stream iter.Seq2[*genai.GenerateContentResponse, error]) error {
+	// Each request numbers its own parts from zero.
+	d.partAt, d.kind, d.partStarts = -1, "", map[int]int{}
+	defer func() {
+		// The next request's usage is its own, added to this one's.
+		d.prior = d.em.Response().Usage
+	}()
+	for chunk, err := range stream {
 		if err != nil {
 			return mapError(err)
 		}
@@ -44,8 +96,30 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 	return openresponses.ServerError("truncated_stream", "the Gemini stream ended without a finish reason")
 }
 
+// cutMember is the incomplete_details member naming Gemini's finish
+// reason when a CONTINUATION cut ends the response, which tells it from
+// a MAX_TOKENS cut: a larger max_output_tokens does not help there, more
+// continuations do.
+const cutMember = slug + "finish_reason"
+
+// annotate sets the members the Emitter has no call for on an event's
+// response before the event is sent, so the event carries them as the
+// final response does.
+func (d *decoder) annotate(ev openresponses.StreamEvent) {
+	if ev, ok := ev.(*openresponses.ResponseIncompleteEvent); ok && d.cut {
+		if details := ev.Response.IncompleteDetails; details != nil {
+			if details.Extra == nil {
+				details.Extra = map[string]any{}
+			}
+			details.Extra[cutMember] = string(genai.FinishReasonContinuation)
+		}
+	}
+}
+
 // decoder folds GenerateContent chunks into Emitter calls. At most one
-// writer is open at a time, matching Gemini's sequential parts.
+// writer is open at a time, matching Gemini's sequential parts. It lives
+// for the whole response, across the requests a continuation makes, so
+// an item one request leaves open is extended by the next.
 type decoder struct {
 	em        *openresponses.Emitter
 	msg       *openresponses.MessageWriter
@@ -53,11 +127,36 @@ type decoder struct {
 	// cited is the byte offset in the open message's text after the
 	// last citation, so grounding segments are located in order.
 	cited int
-	seen  bool
+	// partAt is the index of this request's current part, as Gemini
+	// numbers the parts of its response, and kind its kind; streamed
+	// text, or thought, that follows the same kind extends the part.
+	partAt int
+	kind   string
+	// partStarts holds, for each text part of this request, the byte
+	// offset in the open message's text where the part began. Gemini's
+	// segment offsets count from the start of the part they name
+	// (Segment.StartIndex), and the message may hold earlier parts' and
+	// earlier requests' text.
+	partStarts map[int]int
+	seen       bool
+	// prior is the usage of the requests before this one. Within a
+	// request each chunk's usage metadata is its running total, so it
+	// replaces the last; across requests the totals are added.
+	prior *openresponses.Usage
+	// token is set, non-nil, when a request ended with finish reason
+	// CONTINUATION, to the token to continue from: empty when there is
+	// none, or when it is the token that request was sent with.
+	token []byte
+	// checkpoint is the latest continuation token a chunk of this
+	// request carried, and sent the token this request was sent with.
+	checkpoint, sent []byte
+	// cut is set when a CONTINUATION cut ends the response incomplete.
+	cut bool
 }
 
 // chunk applies one response chunk. It reports true once a terminal
-// event has been sent.
+// event has been sent, or when the chunk ends the request with finish
+// reason CONTINUATION, which sets d.token and sends nothing.
 func (d *decoder) chunk(chunk *genai.GenerateContentResponse) (bool, error) {
 	if !d.seen {
 		d.seen = true
@@ -67,7 +166,7 @@ func (d *decoder) chunk(chunk *genai.GenerateContentResponse) (bool, error) {
 		}
 	}
 	if chunk.UsageMetadata != nil {
-		d.em.Response().Usage = usage(chunk.UsageMetadata)
+		d.em.Response().Usage = addUsage(d.prior, usage(chunk.UsageMetadata))
 		if tier, ok := servedTier(chunk.UsageMetadata.TrafficType); ok {
 			d.em.Response().ServiceTier = tier
 		}
@@ -80,10 +179,22 @@ func (d *decoder) chunk(chunk *genai.GenerateContentResponse) (bool, error) {
 		return false, nil
 	}
 	c := chunk.Candidates[0]
+	if len(c.ContinuationToken) > 0 {
+		d.checkpoint = c.ContinuationToken
+	}
 	if c.Content != nil {
 		for _, p := range c.Content.Parts {
+			kind := partKind(p)
+			next := kind != "" && (kind != d.kind || kind != "text" && kind != "thought")
+			if next {
+				d.partAt++
+				d.kind = kind
+			}
 			if err := d.part(p); err != nil {
 				return false, err
+			}
+			if next && kind == "text" && d.msg != nil {
+				d.partStarts[d.partAt] = len(messageText(d.msg)) - len(p.Text)
 			}
 		}
 	}
@@ -99,6 +210,19 @@ func (d *decoder) chunk(chunk *genai.GenerateContentResponse) (bool, error) {
 	}
 	if c.FinishReason == "" {
 		return false, nil
+	}
+	if c.FinishReason == genai.FinishReasonContinuation {
+		// Not an end: CreateStream decides whether to continue. The open
+		// item stays open for the next request to extend. The token is
+		// the latest checkpoint, the finishing chunk's own when it has
+		// one, and a request that ends on the token it was sent with
+		// made no progress, as genai v1.77.0 decides in
+		// continuation.go:215-219 (observe) and 307-316 (nextResumeToken).
+		d.token = []byte{}
+		if len(d.checkpoint) > 0 && !bytes.Equal(d.checkpoint, d.sent) {
+			d.token = d.checkpoint
+		}
+		return true, nil
 	}
 	return true, d.finish(c)
 }
@@ -210,6 +334,8 @@ func (d *decoder) openMessage() (*openresponses.MessageWriter, error) {
 	}
 	d.msg = m
 	d.cited = 0
+	// Parts recorded so far put their text in a message now closed.
+	clear(d.partStarts)
 	return m, nil
 }
 
@@ -264,7 +390,9 @@ func (d *decoder) ground(gm *genai.GroundingMetadata) error {
 		if support == nil || support.Segment == nil {
 			continue
 		}
-		start, end := locate(text, support.Segment, &d.cited)
+		// A part this request put no text into the open message is not
+		// moved on: its offsets read from the message's start.
+		start, end := locate(text, support.Segment, &d.cited, d.partStarts[int(support.Segment.PartIndex)])
 		for _, i := range support.GroundingChunkIndices {
 			if int(i) >= len(gm.GroundingChunks) || gm.GroundingChunks[i] == nil || gm.GroundingChunks[i].Web == nil {
 				continue
@@ -290,10 +418,11 @@ func messageText(m *openresponses.MessageWriter) string {
 
 // locate returns the character range of seg within text. The segment's
 // own text is searched for from *cited onward, so repeated phrases
-// resolve in order; when it is absent the byte offsets are used as
-// given. end is exclusive.
-func locate(text string, seg *genai.Segment, cited *int) (start, end int) {
-	byteStart, byteEnd := int(seg.StartIndex), int(seg.EndIndex)
+// resolve in order; when it is absent the byte offsets are used, moved
+// on by base, the bytes of text in the message before the part the
+// segment names began. end is exclusive.
+func locate(text string, seg *genai.Segment, cited *int, base int) (start, end int) {
+	byteStart, byteEnd := base+int(seg.StartIndex), base+int(seg.EndIndex)
 	if seg.Text != "" {
 		if i := strings.Index(text[min(*cited, len(text)):], seg.Text); i >= 0 {
 			byteStart = *cited + i
@@ -322,6 +451,7 @@ func (d *decoder) finish(c *genai.Candidate) error {
 	}
 	// MALFORMED_FUNCTION_CALL, UNEXPECTED_TOOL_CALL, TOO_MANY_TOOL_CALLS,
 	// OTHER and the rest are failures of the generation itself.
+	// CONTINUATION never reaches here; chunk hands it to CreateStream.
 	msg := c.FinishMessage
 	if msg == "" {
 		msg = "Gemini stopped generating: " + string(c.FinishReason)
@@ -344,6 +474,36 @@ func usage(u *genai.GenerateContentResponseUsageMetadata) *openresponses.Usage {
 		out.TotalTokens = out.InputTokens + out.OutputTokens
 	}
 	return out
+}
+
+// partKind names the kind of part p is, for numbering parts as Gemini
+// does: streamed text, or thought, of one kind extends one part, and
+// every other part is a part of its own. An empty part is none.
+func partKind(p *genai.Part) string {
+	switch {
+	case p.Thought:
+		return "thought"
+	case p.FunctionCall != nil:
+		return "function_call"
+	case p.Text != "":
+		return "text"
+	case p.ExecutableCode != nil, p.CodeExecutionResult != nil, p.InlineData != nil, p.FileData != nil:
+		return "other"
+	}
+	return ""
+}
+
+// addUsage adds b to the usage of earlier requests, a, which may be nil.
+func addUsage(a, b *openresponses.Usage) *openresponses.Usage {
+	if a == nil {
+		return b
+	}
+	b.InputTokens += a.InputTokens
+	b.OutputTokens += a.OutputTokens
+	b.TotalTokens += a.TotalTokens
+	b.InputTokensDetails.CachedTokens += a.InputTokensDetails.CachedTokens
+	b.OutputTokensDetails.ReasoningTokens += a.OutputTokensDetails.ReasoningTokens
+	return b
 }
 
 // servedTier maps the traffic type Vertex AI reports serving the request
