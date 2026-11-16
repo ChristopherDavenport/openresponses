@@ -71,10 +71,6 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 		next.ContinuationToken = d.token
 		cfg = &next
 		d.sent, d.checkpoint, d.token = d.token, nil, nil
-		d.base = 0
-		if d.msg != nil {
-			d.base = len(messageText(d.msg))
-		}
 	}
 }
 
@@ -82,6 +78,8 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 // nil once a terminal event has been sent or the stream ended with
 // finish reason CONTINUATION, which leaves d.token non-nil.
 func (d *decoder) hop(stream iter.Seq2[*genai.GenerateContentResponse, error]) error {
+	// Each request numbers its own parts from zero.
+	d.partAt, d.kind, d.partStarts = -1, "", map[int]int{}
 	defer func() {
 		// The next request's usage is its own, added to this one's.
 		d.prior = d.em.Response().Usage
@@ -129,11 +127,18 @@ type decoder struct {
 	// cited is the byte offset in the open message's text after the
 	// last citation, so grounding segments are located in order.
 	cited int
-	// base is the byte length of the open message's text when this
-	// request began. Gemini's segment offsets count from the start of the
-	// request's own output, and the message may hold earlier requests'.
-	base int
-	seen bool
+	// partAt is the index of this request's current part, as Gemini
+	// numbers the parts of its response, and kind its kind; streamed
+	// text, or thought, that follows the same kind extends the part.
+	partAt int
+	kind   string
+	// partStarts holds, for each text part of this request, the byte
+	// offset in the open message's text where the part began. Gemini's
+	// segment offsets count from the start of the part they name
+	// (Segment.StartIndex), and the message may hold earlier parts' and
+	// earlier requests' text.
+	partStarts map[int]int
+	seen       bool
 	// prior is the usage of the requests before this one. Within a
 	// request each chunk's usage metadata is its running total, so it
 	// replaces the last; across requests the totals are added.
@@ -179,8 +184,17 @@ func (d *decoder) chunk(chunk *genai.GenerateContentResponse) (bool, error) {
 	}
 	if c.Content != nil {
 		for _, p := range c.Content.Parts {
+			kind := partKind(p)
+			next := kind != "" && (kind != d.kind || kind != "text" && kind != "thought")
+			if next {
+				d.partAt++
+				d.kind = kind
+			}
 			if err := d.part(p); err != nil {
 				return false, err
+			}
+			if next && kind == "text" && d.msg != nil {
+				d.partStarts[d.partAt] = len(messageText(d.msg)) - len(p.Text)
 			}
 		}
 	}
@@ -320,7 +334,8 @@ func (d *decoder) openMessage() (*openresponses.MessageWriter, error) {
 	}
 	d.msg = m
 	d.cited = 0
-	d.base = 0
+	// Parts recorded so far put their text in a message now closed.
+	clear(d.partStarts)
 	return m, nil
 }
 
@@ -375,7 +390,9 @@ func (d *decoder) ground(gm *genai.GroundingMetadata) error {
 		if support == nil || support.Segment == nil {
 			continue
 		}
-		start, end := locate(text, support.Segment, &d.cited, d.base)
+		// A part this request put no text into the open message is not
+		// moved on: its offsets read from the message's start.
+		start, end := locate(text, support.Segment, &d.cited, d.partStarts[int(support.Segment.PartIndex)])
 		for _, i := range support.GroundingChunkIndices {
 			if int(i) >= len(gm.GroundingChunks) || gm.GroundingChunks[i] == nil || gm.GroundingChunks[i].Web == nil {
 				continue
@@ -402,8 +419,8 @@ func messageText(m *openresponses.MessageWriter) string {
 // locate returns the character range of seg within text. The segment's
 // own text is searched for from *cited onward, so repeated phrases
 // resolve in order; when it is absent the byte offsets are used, moved
-// on by base, the bytes of text that came before this request's output.
-// end is exclusive.
+// on by base, the bytes of text in the message before the part the
+// segment names began. end is exclusive.
 func locate(text string, seg *genai.Segment, cited *int, base int) (start, end int) {
 	byteStart, byteEnd := base+int(seg.StartIndex), base+int(seg.EndIndex)
 	if seg.Text != "" {
@@ -457,6 +474,23 @@ func usage(u *genai.GenerateContentResponseUsageMetadata) *openresponses.Usage {
 		out.TotalTokens = out.InputTokens + out.OutputTokens
 	}
 	return out
+}
+
+// partKind names the kind of part p is, for numbering parts as Gemini
+// does: streamed text, or thought, of one kind extends one part, and
+// every other part is a part of its own. An empty part is none.
+func partKind(p *genai.Part) string {
+	switch {
+	case p.Thought:
+		return "thought"
+	case p.FunctionCall != nil:
+		return "function_call"
+	case p.Text != "":
+		return "text"
+	case p.ExecutableCode != nil, p.CodeExecutionResult != nil, p.InlineData != nil, p.FileData != nil:
+		return "other"
+	}
+	return ""
 }
 
 // addUsage adds b to the usage of earlier requests, a, which may be nil.

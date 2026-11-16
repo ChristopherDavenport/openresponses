@@ -460,3 +460,31 @@ func TestContinuationGroundingOffsets(t *testing.T) {
 		t.Fatalf("citation = %d..%d, want 14..20 (Really)", got.StartIndex, got.EndIndex)
 	}
 }
+
+// TestContinuationGroundingPartStart: segment offsets count from the
+// start of the Part they name (genai Segment.StartIndex), so the shift is
+// where that part's text began in the message, recorded per request by
+// part index. A part this request put no text into is not shifted: here
+// the continued request carries grounding alone, and its segment reads
+// against the message from its start rather than past its end.
+func TestContinuationGroundingPartStart(t *testing.T) {
+	h := &hops{t: t, chunks: [][]string{
+		{`{"candidates":[{"content":{"parts":[{"text":"Café is nice. "}],"role":"model"},"finishReason":"CONTINUATION","continuationToken":"dG9rZW4=","index":0}]}`},
+		{`{"candidates":[{"finishReason":"STOP","index":0,
+		  "groundingMetadata":{
+		    "groundingChunks":[{"web":{"uri":"https://example.com/a","title":"A"}}],
+		    "groundingSupports":[{"segment":{"partIndex":0,"startIndex":0,"endIndex":5},"groundingChunkIndices":[0]}]}}]}`},
+	}}
+	sink, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	text := sink.Response().Output[0].(*openresponses.Message).Content[0].(*openresponses.OutputText)
+	if len(text.Annotations) != 1 {
+		t.Fatalf("annotations = %d", len(text.Annotations))
+	}
+	got := text.Annotations[0].(*openresponses.URLCitation)
+	if got.StartIndex != 0 || got.EndIndex != 4 {
+		t.Fatalf("citation = %d..%d, want 0..4 (Café)", got.StartIndex, got.EndIndex)
+	}
+}

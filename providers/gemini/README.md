@@ -284,9 +284,12 @@ the continued requests, so each request sends it unchanged, as the
 SDK's own loop does. When the `output_tokens` the requests reported,
 thinking included, have spent it, the response ends incomplete with
 `max_output_tokens` and no further request, a plain cut without the
-member below. A continued request's grounding
-offsets count from the start of its own output, and are moved on past
-the text earlier requests put in the message.
+member below. A grounding segment's byte offsets, used when it
+carries no text to search for, count from the start of the part it
+names. The adapter numbers each request's parts as Gemini does and
+moves the offsets on to where that part's text began in the message,
+past earlier parts' and earlier requests' text. A part that put no
+text into the open message is not moved.
 
 ```json
 "incomplete_details": {"reason": "max_output_tokens", "gemini.finish_reason": "CONTINUATION"}
