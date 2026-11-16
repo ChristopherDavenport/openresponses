@@ -112,9 +112,9 @@ Each module has the same shape:
    pass (docs/extensions.md section 1.8, #77).
 11. An adapter that continues a response the provider cut MUST bound
    the continuations and report the cut when the bound is reached
-   (#84). The Gemini adapter ends such a response incomplete. The
-   Anthropic adapter does not follow this yet: a `pause_turn` that
-   outlasts `WithContinuations` completes with what it has.
+   (#84). Both adapters end such a response
+   `Incomplete(max_output_tokens)` and name the provider's reason under
+   their slug in `incomplete_details`.
 
 ## Errors
 
@@ -286,7 +286,7 @@ regional hosts. Per-model regions mean one client per region; route by
 | `end_turn`, `tool_use`, `stop_sequence` | `Complete` |
 | `max_tokens`, `model_context_window_exceeded` | `Incomplete(max_output_tokens)` |
 | `refusal` | `Incomplete(content_filter)`; Claude's explanation, when sent, as a `Refusal` content part; the category as `incomplete_details["anthropic.refusal_category"]` |
-| `pause_turn` | the turn's output is replayed as the assistant message and the call re-issued, up to `WithContinuations` (8); then `Complete` |
+| `pause_turn` | the turn's output is replayed as the assistant message and the call re-issued, up to `WithContinuations` (8); then `Incomplete(max_output_tokens)` with `incomplete_details["anthropic.stop_reason"]` `pause_turn` (rule 11) |
 | citations | `web_search_result_location` becomes a `url_citation` spanning the text block it arrived on; other citation types are `anthropic.<type>` annotations |
 | usage | `input_tokens` is input + cache read + cache creation; cache read becomes `cached_tokens`, cache creation `openresponses-experimental.cache_write_tokens` with `cache_write_tokens_by_ttl` (5m, 1h), thinking tokens `reasoning_tokens`; summed across resumed turns |
 | `GET /v1/models/{id}` (with `WithModels`) | `Describe`: `Info` as docs/extensions.md section 7 maps it |

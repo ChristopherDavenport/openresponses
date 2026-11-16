@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: a turn Claude paused (`pause_turn`) that is still
+  paused when the continuations run out (`WithContinuations`, default
+  8; also at zero) ends the response incomplete with
+  `max_output_tokens` and `incomplete_details["anthropic.stop_reason"]:
+  "pause_turn"`, as PLAN rule 11 asks. It used to complete with what it
+  had, so a caller could not tell the cut from a finished answer.
+
 ## v0.0.21 - 2026-11-15
 
 - Behaviour change: a request whose `include` names

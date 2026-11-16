@@ -46,8 +46,8 @@ that imports both aliases one.
 `WithMaxTokens` sets the `max_tokens` sent when a request has no
 `max_output_tokens` (the Messages API requires it; the default is
 32768). `WithContinuations` sets how many times a turn Claude pauses
-for a long-running server tool is resumed before the response
-completes with what it has (default 8).
+for a long-running server tool is resumed before the response ends
+incomplete with what it has (default 8; zero or less never resumes).
 `WithCacheTTL` sets how long the prompt cache keeps what a request
 writes, for requests that carry `prompt_cache_key`. Unset, the API's
 five minutes apply; `sdk.CacheControlEphemeralTTLTTL1h` keeps it for
@@ -145,8 +145,9 @@ server or MCP tool call), or any `anthropic.<kind>_tool_result` (a
 server-side tool's result, such as `anthropic.web_search_tool_result`
 or `anthropic.mcp_tool_result`). A caller cannot write a prefix with
 such blocks. A known limit: a paused turn that ends on text or thinking
-is refused as prefill, since nothing in a response marks it as paused
-and the adapter cannot tell such a resume from a prefix.
+is refused as prefill. Only the response's `incomplete_details` marks
+the turn as paused, and the items a caller sends back carry nothing, so
+the adapter cannot tell such a resume from a prefix.
 
 An image or file whose `image_url`, `file_url` or `file_data` is a
 `sidecar:` reference (`sidecar:sha256:<hex>`, docs/extensions.md
@@ -357,7 +358,17 @@ The category
 
 Categories differ by provider, so the member is under this adapter's
 slug rather than a shared one. `pause_turn` resumes the turn
-with its own output replayed, up to the configured continuations.
+with its own output replayed, up to the configured continuations. A
+turn still paused when they run out ends the response incomplete with
+`max_output_tokens`, as PLAN rule 11 asks of an adapter that continues
+a cut response, and names the stop reason:
+
+```json
+"incomplete_details": {"reason": "max_output_tokens", "anthropic.stop_reason": "pause_turn"}
+```
+
+The member tells it from a `max_tokens` cut, where a larger
+`max_output_tokens` helps; here more continuations would.
 Web search citations become `url_citation` annotations spanning the
 cited text block; document citations pass through as
 `anthropic.<citation type>` annotations. Usage counts cached and

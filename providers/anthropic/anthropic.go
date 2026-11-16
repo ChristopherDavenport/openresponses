@@ -34,7 +34,7 @@ const DefaultMaxTokens = 32768
 
 // DefaultContinuations is how many times a turn Claude paused
 // (stop_reason pause_turn, used by long-running server tools) is resumed
-// before the response completes with what it has.
+// before the response ends incomplete with what it has.
 const DefaultContinuations = 8
 
 // Adapter implements [openresponses.Adapter] over the Messages API.
@@ -69,7 +69,8 @@ func WithMaxTokens(n int) Option {
 }
 
 // WithContinuations sets how many times a paused turn is resumed. The
-// default is [DefaultContinuations]; zero never resumes.
+// default is [DefaultContinuations]; zero or less never resumes. A turn
+// still paused when they run out ends the response incomplete.
 func WithContinuations(n int) Option {
 	return func(a *Adapter) { a.continuations = n }
 }

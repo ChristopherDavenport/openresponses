@@ -66,11 +66,21 @@ func (d *decoder) annotate(ev openresponses.StreamEvent) {
 			rs.SetIssuer(issuer)
 		}
 	case *openresponses.ResponseIncompleteEvent:
-		if details := ev.Response.IncompleteDetails; details != nil && d.refusalCategory != "" {
+		details := ev.Response.IncompleteDetails
+		if details == nil {
+			return
+		}
+		if d.refusalCategory != "" {
 			if details.Extra == nil {
 				details.Extra = map[string]any{}
 			}
 			details.Extra[refusalCategoryMember] = d.refusalCategory
+		}
+		if d.stop == sdk.StopReasonPauseTurn {
+			if details.Extra == nil {
+				details.Extra = map[string]any{}
+			}
+			details.Extra[stopReasonMember] = string(d.stop)
 		}
 	}
 }
@@ -105,6 +115,12 @@ type decoder struct {
 // category Claude gives a refusal stop (cyber, bio, ...). Categories
 // differ by provider, so it is under this adapter's slug.
 const refusalCategoryMember = slug + "refusal_category"
+
+// stopReasonMember is the incomplete_details member naming Claude's stop
+// reason when a pause_turn the continuations did not resume ends the
+// response, which tells it from a max_tokens cut: a larger
+// max_output_tokens does not help there, more continuations do.
+const stopReasonMember = slug + "stop_reason"
 
 // rawBlock accumulates a block the specification has no item for, so it
 // can be re-emitted whole when it stops: the start event's JSON plus any
@@ -426,11 +442,14 @@ func messageText(m *openresponses.MessageWriter) string {
 // finish ends the response according to the last stop reason.
 func (d *decoder) finish() error {
 	switch d.stop {
-	case sdk.StopReasonEndTurn, sdk.StopReasonToolUse, sdk.StopReasonStopSequence, sdk.StopReasonPauseTurn:
-		// pause_turn reaches here only when the continuations ran out;
-		// what was produced is a valid response.
+	case sdk.StopReasonEndTurn, sdk.StopReasonToolUse, sdk.StopReasonStopSequence:
 		return d.em.Complete()
 	case sdk.StopReasonMaxTokens, sdk.StopReasonModelContextWindowExceeded:
+		return d.em.Incomplete(openresponses.IncompleteReasonMaxOutputTokens)
+	case sdk.StopReasonPauseTurn:
+		// pause_turn reaches here only when the continuations ran out.
+		// The turn was cut at the bound on its length (PLAN rule 11);
+		// annotate names the stop reason on incomplete_details.
 		return d.em.Incomplete(openresponses.IncompleteReasonMaxOutputTokens)
 	case sdk.StopReasonRefusal:
 		// A safety classifier ended the generation, which is a content
