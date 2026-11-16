@@ -22,8 +22,9 @@
   throughput, which has no Open Responses tier, the response keeps the
   echoed request tier.
 - Behaviour change, dependencies: google.golang.org/genai is v1.77.0
-  (was v1.72.0), and go.opentelemetry.io/otel/trace v1.47.0 (indirect,
-  was v1.44.0); the module stays on Go 1.26. From v1.74 the SDK
+  (was v1.72.0), and the go.opentelemetry.io/otel modules are v1.47.0
+  (indirect, was v1.44.0), adding go.opentelemetry.io/otel/log; the
+  module stays on Go 1.26. From v1.74 the SDK
   continues a response that ends with finish reason `CONTINUATION` on
   its own, by default: it sends the request again with the continuation
   token until the model finishes, with no bound on the number of
