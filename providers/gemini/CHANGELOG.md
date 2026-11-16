@@ -21,6 +21,19 @@
   type and the Gemini API does not; without one, and for provisioned
   throughput, which has no Open Responses tier, the response keeps the
   echoed request tier.
+- Dependencies: google.golang.org/genai is v1.77.0 (was v1.72.0), and
+  go.opentelemetry.io/otel/trace v1.47.0 (indirect, was v1.44.0); the
+  module stays on Go 1.26. Two behaviour changes come from the SDK.
+  From v1.74, a response that ends with finish reason `CONTINUATION` is
+  continued automatically: the SDK sends the request again with the
+  continuation token until the model finishes, so one call can make
+  several requests, each timed out, retried and billed on its own, and
+  the usage reported is summed across them. It is on by default, the
+  adapter leaves it on, and nothing bounds the number of requests. The
+  SDK also resumes a dropped stream from its last checkpoint token when
+  it has one. From v1.76, an error event inside a stream and a dropped
+  connection it cannot resume surface as errors, which the adapter
+  maps as it maps any upstream error.
 
 ## v0.0.19 - 2026-11-04
 
