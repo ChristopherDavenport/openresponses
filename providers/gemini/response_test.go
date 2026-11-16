@@ -225,6 +225,7 @@ func TestStreamServiceTier(t *testing.T) {
 		{"priority", openresponses.ServiceTierAuto, "ON_DEMAND_PRIORITY", openresponses.ServiceTierPriority},
 		{"flex", openresponses.ServiceTierAuto, "ON_DEMAND_FLEX", openresponses.ServiceTierFlex},
 		{"no request tier", "", "ON_DEMAND_FLEX", openresponses.ServiceTierFlex},
+		{"off-peak keeps the request", openresponses.ServiceTierAuto, "ON_DEMAND_OFFPEAK", openresponses.ServiceTierAuto},
 		{"provisioned keeps the request", openresponses.ServiceTierPriority, "PROVISIONED_THROUGHPUT", openresponses.ServiceTierPriority},
 		{"unspecified keeps the request", openresponses.ServiceTierFlex, "TRAFFIC_TYPE_UNSPECIFIED", openresponses.ServiceTierFlex},
 		{"absent keeps the request", openresponses.ServiceTierAuto, "", openresponses.ServiceTierAuto},

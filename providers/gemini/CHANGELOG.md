@@ -18,9 +18,9 @@
   `priority` and `ON_DEMAND_FLEX` is `flex`, the inverse of the request
   mapping. It used to echo the request, so a request for `auto`, or for
   no tier, never said which tier ran it. Vertex AI reports the traffic
-  type and the Gemini API does not; without one, and for provisioned
-  throughput, which has no Open Responses tier, the response keeps the
-  echoed request tier.
+  type and the Gemini API does not; without one, and for
+  `ON_DEMAND_OFFPEAK` and `PROVISIONED_THROUGHPUT`, which have no Open
+  Responses tier, the response keeps the echoed request tier.
 - Behaviour change, dependencies: google.golang.org/genai is v1.77.0
   (was v1.72.0), and the go.opentelemetry.io/otel modules are v1.47.0
   (indirect, was v1.44.0), adding go.opentelemetry.io/otel/log; the

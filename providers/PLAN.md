@@ -419,7 +419,8 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   `ResponseID` and `ModelVersion` fill the response. `TrafficType`,
   which only Vertex AI reports, is the served `service_tier`: ON_DEMAND
   is `default`, ON_DEMAND_PRIORITY `priority`, ON_DEMAND_FLEX `flex`;
-  provisioned throughput or none keeps the requested tier.
+  ON_DEMAND_OFFPEAK and PROVISIONED_THROUGHPUT, which have no Open
+  Responses tier, or none keep the requested tier.
 - Grounding becomes `URLCitation` annotations from
   `GroundingChunks[i].Web` joined through `GroundingSupports[].Segment`.
   Gemini's segment offsets are bytes within a part and the spec's

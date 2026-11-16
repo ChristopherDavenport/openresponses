@@ -347,10 +347,10 @@ func usage(u *genai.GenerateContentResponseUsageMetadata) *openresponses.Usage {
 }
 
 // servedTier maps the traffic type Vertex AI reports serving the request
-// with, the inverse of the request's service_tier mapping. Provisioned
-// throughput has no Open Responses tier, and the Gemini API reports no
-// traffic type at all; both report false and the response keeps the
-// requested tier.
+// with, the inverse of the request's service_tier mapping. Off-peak and
+// provisioned throughput have no Open Responses tier (flex is not
+// off-peak), and the Gemini API reports no traffic type at all; these
+// report false and the response keeps the requested tier.
 func servedTier(t genai.TrafficType) (openresponses.ServiceTier, bool) {
 	switch t {
 	case genai.TrafficTypeOnDemand:
