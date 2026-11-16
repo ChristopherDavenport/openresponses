@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.22 - 2026-11-16
 
 - Behaviour change: a response Gemini cuts with finish reason
   `CONTINUATION` is continued by the adapter (#84). It sends the same

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.22 - 2026-11-16
 
 - Behaviour change: a turn Claude paused (`pause_turn`) that is still
   paused when the continuations run out (`WithContinuations`, default
