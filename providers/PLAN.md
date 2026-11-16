@@ -254,7 +254,9 @@ regional hosts. Per-model regions mean one client per region; route by
 | `prompt_cache_key` | top-level `cache_control: ephemeral`, with `ttl` when `WithCacheTTL` sets one; the client asked for caching, and the key has nothing to name |
 | `service_tier` | `auto` and `default` (`standard_only`); `flex` and `priority` are `invalid_request` |
 | `temperature`, `top_p` | passed through |
-| `presence_penalty`, `frequency_penalty`, `top_logprobs`, `max_tool_calls`, `tool_choice` allowed_tools, `input_video` | `invalid_request` |
+| `presence_penalty`, `frequency_penalty`, `max_tool_calls`, `tool_choice` allowed_tools, `input_video` | `invalid_request` |
+| `include` of `message.output_text.logprobs` | `invalid_request`; Claude returns no logprobs |
+| `top_logprobs` without that include | accepted without effect; on its own it requests nothing |
 | `input_image.file_id`, `input_file.file_id` | Files API sources |
 | `ReasoningItem`, issuer `anthropic` or none, with `encrypted_content` | `thinking` block from the summary text and the signature |
 | `ReasoningItem` of another issuer, or without `encrypted_content` | left out (rule 5; README) |
@@ -283,6 +285,7 @@ regional hosts. Per-model regions mean one client per region; route by
 | citations | `web_search_result_location` becomes a `url_citation` spanning the text block it arrived on; other citation types are `anthropic.<type>` annotations |
 | usage | `input_tokens` is input + cache read + cache creation; cache read becomes `cached_tokens`, cache creation `openresponses-experimental.cache_write_tokens` with `cache_write_tokens_by_ttl` (5m, 1h), thinking tokens `reasoning_tokens`; summed across resumed turns |
 | `GET /v1/models/{id}` (with `WithModels`) | `Describe`: `Info` as docs/extensions.md section 7 maps it |
+| `usage.service_tier` on `message_start` | `service_tier`: `standard` is `default`, `priority` is `priority`; `batch` or none keeps the requested tier; the last resumed turn's wins |
 
 Streaming: `content_block_start` opens a `Message`, `FunctionCall` or
 `Reasoning` writer; deltas feed `Text`, `Arguments`, or `Text` and
@@ -375,11 +378,13 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   thinking refuses it upstream. `openresponses-experimental.effort` is
   ignored, since its fallback `xhigh` is already the highest setting. Any
   `reasoning.summary` sets `IncludeThoughts: true`.
-- Temperature, top_p, both penalties and `top_logprobs`
-  (`ResponseLogprobs` with `Logprobs`) are native. `max_output_tokens`
-  is optional. `CandidateCount` is pinned to 1. `metadata` becomes
-  `Labels` on Vertex only. `prompt_cache_key` is a caching hint;
-  Gemini caches implicitly, so the key is accepted without effect.
+- Temperature, top_p and both penalties are native. The
+  `message.output_text.logprobs` include sets `ResponseLogprobs`, and
+  `top_logprobs` sets `Logprobs` alongside it; `top_logprobs` without
+  the include requests nothing. `max_output_tokens` is optional.
+  `CandidateCount` is pinned to 1. `metadata` becomes `Labels` on
+  Vertex only. `prompt_cache_key` is a caching hint; Gemini caches
+  implicitly, so the key is accepted without effect.
 - Top-level `Request.Extra` (rule 8): a member under `anthropic.`,
   `chatcompletions.` or `gemini.` (no Gemini request parameter is
   defined yet) is `invalid_request` naming it, shared members are
@@ -402,7 +407,9 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   `Incomplete(max_output_tokens)`; SAFETY, RECITATION, BLOCKLIST,
   PROHIBITED_CONTENT, SPII and the IMAGE_* reasons are
   `Incomplete(content_filter)`; MALFORMED_FUNCTION_CALL,
-  UNEXPECTED_TOOL_CALL and OTHER are `ModelError`. A blocked prompt
+  UNEXPECTED_TOOL_CALL, OTHER and CONTINUATION are `ModelError`; the
+  SDK's `AutomaticContinuation` is off, since it has no bound, until
+  the adapter has a bounded loop of its own. A blocked prompt
   (`PromptFeedback.BlockReason` with no candidates) is
   `Incomplete(content_filter)` with empty output.
 - Usage: `PromptTokenCount + ToolUsePromptTokenCount` is input,
@@ -410,7 +417,11 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   ThoughtsTokenCount` is output, `ThoughtsTokenCount` is
   `reasoning_tokens`. Gemini reports no cache writes, so
   `openresponses-experimental.cache_write_tokens` is never set.
-  `ResponseID` and `ModelVersion` fill the response.
+  `ResponseID` and `ModelVersion` fill the response. `TrafficType`,
+  which only Vertex AI reports, is the served `service_tier`: ON_DEMAND
+  is `default`, ON_DEMAND_PRIORITY `priority`, ON_DEMAND_FLEX `flex`;
+  ON_DEMAND_OFFPEAK and PROVISIONED_THROUGHPUT, which have no Open
+  Responses tier, or none keep the requested tier.
 - Grounding becomes `URLCitation` annotations from
   `GroundingChunks[i].Web` joined through `GroundingSupports[].Segment`.
   Gemini's segment offsets are bytes within a part and the spec's
@@ -463,12 +474,15 @@ extension blocks to carry, so only the error members below use it.
 Where it differs from the SDK-backed adapters:
 
 - Most of the request maps one to one: sampling and penalties,
-  `top_logprobs`, `parallel_tool_calls`, `reasoning_effort`,
+  `parallel_tool_calls`, `reasoning_effort`,
   `response_format` (both `json_object` and `json_schema`),
   `verbosity`, `service_tier`, `safety_identifier`,
   `prompt_cache_key`, `metadata` and `tool_choice` including
   `allowed_tools`. `n` is pinned to 1 and `stream_options.include_usage`
   is always on.
+- The `message.output_text.logprobs` include sends `logprobs: true`,
+  with `top_logprobs` alongside it when set; `top_logprobs` without the
+  include requests nothing.
 - Reasoning has no standard field. Decoding accepts `reasoning_content`
   (DeepSeek) and a string `reasoning` (OpenRouter, Groq) into the
   reasoning item's content; there is no signature. Replay is opt-in
@@ -480,6 +494,9 @@ Where it differs from the SDK-backed adapters:
   a message left empty with them (rule 4), the other exception to rule
   3. An `image_url` or `file_data` holding a `sidecar:` reference is
   `invalid_request` naming the field.
+- A chunk's `service_tier` is the response's when it is one of the
+  specification's four; anything else (OpenAI's `scale`) keeps the
+  requested tier.
 - `max_output_tokens` is sent as `max_tokens` unless
   `WithMaxTokensField` says `max_completion_tokens`; providers split.
 - `WithExtra` forwards `Request.Extra` for provider parameters

@@ -109,14 +109,15 @@ kind, as PLAN rule 8 and docs/extensions.md section 1.5 say:
 A request field the Messages API has no equivalent for comes back as an
 `invalid_request` error with `code: unsupported_parameter` and `param`
 naming the field, rather than being dropped: `presence_penalty`,
-`frequency_penalty`, `top_logprobs`, `max_tool_calls`, `truncation:
-auto`, `text.verbosity`, `text.format` of type `json_object` (there is
-no schema-free JSON mode), `service_tier` `flex` and `priority`,
-`tool_choice` of type `allowed_tools`, `input_video`, `compaction` and
-`item_reference` items, tools from other providers' slugs, and items
-and content parts under a slug that names no provider (`acme.`).
-`previous_response_id` reaching the adapter means the handler
-has no `ResponseStore`, and is `previous_response_not_found`.
+`frequency_penalty`, `include` of `message.output_text.logprobs`
+(Claude returns no logprobs), `max_tool_calls`, `truncation: auto`, `text.verbosity`, `text.format`
+of type `json_object` (there is no schema-free JSON mode),
+`service_tier` `flex` and `priority`, `tool_choice` of type
+`allowed_tools`, `input_video`, `compaction` and `item_reference`
+items, tools from other providers' slugs, and items and content parts
+under a slug that names no provider (`acme.`). `previous_response_id`
+reaching the adapter means the handler has no `ResponseStore`, and is
+`previous_response_not_found`.
 
 An input that would end the Messages request on an assistant turn is
 `invalid_request` with `code: invalid_value` and `param` naming the
@@ -185,13 +186,16 @@ an item out lets a request through that would otherwise be refused.
 The caller's input keeps the part, as with every item left out.
 
 Accepted without effect: `metadata` (echoed on the response, never sent
-upstream), `input_image.detail`, `include`, `stream_options` and
-`store` (the handler's concerns). `safety_identifier` becomes
-`metadata.user_id`. `prompt_cache_key` turns on prompt caching for the
-request: Claude caches on request, and the key itself has nothing to
-name; `WithCacheTTL` sets how long the cache keeps it.
-`reasoning.effort` and `reasoning.summary` map as the next section
-says.
+upstream), `input_image.detail`, `include` of
+`reasoning.encrypted_content` (thinking signatures are always emitted),
+`top_logprobs` without the logprobs include (on its own it requests
+nothing, and it is echoed on the response), `stream_options` and
+`store` (the handler's concerns).
+`safety_identifier` becomes `metadata.user_id`. `prompt_cache_key`
+turns on prompt caching for the request: Claude caches on request, and
+the key itself has nothing to name; `WithCacheTTL` sets how long the
+cache keeps it. `reasoning.effort` and `reasoning.summary` map as the
+next section says.
 
 ## Reasoning effort
 
@@ -360,6 +364,12 @@ cited text block; document citations pass through as
 cache-creation tokens in `input_tokens`, reports cache reads in
 `cached_tokens` and thinking in `reasoning_tokens`, and sums across
 resumed turns; `model` on the response is the version Claude served.
+`service_tier` is the tier that served the request, from
+`usage.service_tier` on `message_start`: `standard` is `default` and
+`priority` is `priority`, so a request for `auto` says whether
+priority capacity ran it. `batch`, which has no Open Responses tier,
+or no tier keeps the requested one; after a resumed `pause_turn` the
+last turn's tier is the response's.
 
 Cache writes are reported in `input_tokens_details` as the shared
 members of docs/extensions.md section 5, and stay counted in

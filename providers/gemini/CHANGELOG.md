@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: logprobs are requested from Gemini
+  (`ResponseLogprobs`) only when the request's `include` names
+  `message.output_text.logprobs`, which is what the specification says
+  asks for them; `top_logprobs` then sets `Logprobs`, how many
+  alternatives each token carries. Before, the include was ignored and
+  `top_logprobs` alone turned logprobs on. This changes behaviour for a
+  caller that sets only `top_logprobs`: it now gets no logprobs, and has
+  to add the include to keep them; the value is still echoed on the
+  response. A request with the include and no `top_logprobs` now gets
+  logprobs without alternatives, where before it got none.
+- The response's `service_tier` is the tier that served the request, as
+  the specification defines it, read from the usage metadata's
+  `trafficType`: `ON_DEMAND` is `default`, `ON_DEMAND_PRIORITY` is
+  `priority` and `ON_DEMAND_FLEX` is `flex`, the inverse of the request
+  mapping. It used to echo the request, so a request for `auto`, or for
+  no tier, never said which tier ran it. Vertex AI reports the traffic
+  type and the Gemini API does not; without one, and for
+  `ON_DEMAND_OFFPEAK` and `PROVISIONED_THROUGHPUT`, which have no Open
+  Responses tier, the response keeps the echoed request tier.
+- Behaviour change, dependencies: google.golang.org/genai is v1.77.0
+  (was v1.72.0), and the go.opentelemetry.io/otel modules are v1.47.0
+  (indirect, was v1.44.0), adding go.opentelemetry.io/otel/log; the
+  module stays on Go 1.26. From v1.74 the SDK
+  continues a response that ends with finish reason `CONTINUATION` on
+  its own, by default: it sends the request again with the continuation
+  token until the model finishes, with no bound on the number of
+  requests, each billed. The adapter turns that off
+  (`AutomaticContinuation: false`), so a `CONTINUATION` finish still
+  fails the response with `model_error`, code `continuation`, after one
+  request, as before; a bounded loop of the adapter's own, like the
+  Anthropic adapter's `WithContinuations`, is left for later. With it
+  off, the SDK does not resume a dropped stream from a checkpoint
+  either. From v1.76, an error event inside a stream and a dropped
+  connection surface as errors, which the adapter maps as it maps any
+  upstream error.
+
 ## v0.0.19 - 2026-11-04
 
 - Behaviour change: a 402 is `invalid_request` with code

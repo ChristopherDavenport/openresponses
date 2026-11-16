@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+- Behaviour change: a request whose `include` names
+  `message.output_text.logprobs` is rejected with `invalid_request`,
+  `code: unsupported_parameter` and `param: include`. Claude returns no
+  logprobs, and the adapter used to accept the include and answer
+  without them; a caller that sends it now gets an error instead of a
+  response silently missing what it asked for. `include` of
+  `reasoning.encrypted_content` is accepted as before.
+- `top_logprobs` without that include is accepted without effect and
+  echoed on the response, as the other adapters do; it was
+  `invalid_request` with `param: top_logprobs`. On its own it requests
+  no logprobs, so there is nothing for Claude to refuse. With the
+  include, the include is refused.
+- The response's `service_tier` is the tier that served the request, as
+  the specification defines it, read from `usage.service_tier` on
+  `message_start`: `standard` is `default` and `priority` is `priority`.
+  It used to echo the request, so a request for `auto`, or for no tier,
+  never said whether priority capacity ran it. `batch`, which has no
+  Open Responses tier, and a message without the field keep the echoed
+  request tier. When a `pause_turn` is resumed, the last turn's tier is
+  the response's.
+- Behaviour change, dependencies: github.com/anthropics/anthropic-sdk-go
+  is v1.84.0 (was v1.78.0); the module still requires Go 1.25. From SDK
+  v1.81 the SDK records a span for each API call with the global
+  OpenTelemetry tracer provider, and injects trace-context headers into
+  each request with the global propagator, whenever the program
+  registers them. The spans carry metadata only unless content is asked
+  for. The adapter uses the client the caller builds, so the choice is
+  the caller's: `option.WithoutOpenTelemetry()` or
+  `ANTHROPIC_OPEN_TELEMETRY=false` turns off the spans and the headers;
+  `option.WithOpenTelemetryPropagation(false)` or
+  `ANTHROPIC_OPEN_TELEMETRY_PROPAGATION=false` turns off the headers
+  alone. The module now has go.opentelemetry.io/otel v1.33 as an
+  indirect dependency.
+
 ## v0.0.20 - 2026-11-09
 
 - Behaviour change: an assistant message's `refusal` parts are no

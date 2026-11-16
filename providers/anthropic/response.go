@@ -152,6 +152,11 @@ func (d *decoder) event(ev sdk.MessageStreamEventUnion) error {
 			split := v.Message.Usage.CacheCreation
 			d.split = &split
 		}
+		// Only message_start carries the tier. A resumed turn reports its
+		// own, and the last one wins.
+		if tier, ok := servedTier(v.Message.Usage.ServiceTier); ok {
+			d.em.Response().ServiceTier = tier
+		}
 		d.turn = usage(v.Message.Usage.InputTokens, v.Message.Usage.CacheReadInputTokens, v.Message.Usage.CacheCreationInputTokens,
 			d.split, v.Message.Usage.OutputTokens, v.Message.Usage.OutputTokensDetails.ThinkingTokens)
 		return nil
@@ -481,6 +486,19 @@ func ttlSplit(m map[string]int) map[string]int {
 		}
 	}
 	return m
+}
+
+// servedTier maps the tier the API reports serving the request with.
+// batch has no Open Responses tier, so it reports false and the
+// response keeps the requested one.
+func servedTier(t sdk.UsageServiceTier) (openresponses.ServiceTier, bool) {
+	switch t {
+	case sdk.UsageServiceTierStandard:
+		return openresponses.ServiceTierDefault, true
+	case sdk.UsageServiceTierPriority:
+		return openresponses.ServiceTierPriority, true
+	}
+	return "", false
 }
 
 func addUsage(a, b openresponses.Usage) openresponses.Usage {

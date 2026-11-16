@@ -283,6 +283,7 @@ func TestEncodeConfig(t *testing.T) {
 		PromptCacheKey:   "k",
 		ServiceTier:      openresponses.ServiceTierDefault,
 		Metadata:         map[string]string{"team": "a"},
+		Include:          []openresponses.Include{openresponses.IncludeReasoningEncryptedContent},
 		Reasoning:        openresponses.ReasoningConfig{Effort: openresponses.ReasoningEffortXHigh},
 		Text:             openresponses.TextConfig{Format: openresponses.JSONSchemaFormat("out", json.RawMessage(`{"type":"object"}`), true)},
 	})
@@ -369,7 +370,8 @@ func TestEncodeConfigErrors(t *testing.T) {
 	}{
 		{"presence_penalty", openresponses.Request{PresencePenalty: ptr(0.1)}, openresponses.CodeUnsupportedParameter, "presence_penalty"},
 		{"frequency_penalty", openresponses.Request{FrequencyPenalty: ptr(0.1)}, openresponses.CodeUnsupportedParameter, "frequency_penalty"},
-		{"top_logprobs", openresponses.Request{TopLogprobs: ptr(2)}, openresponses.CodeUnsupportedParameter, "top_logprobs"},
+		{"logprobs include", openresponses.Request{Include: []openresponses.Include{openresponses.IncludeOutputTextLogprobs}}, openresponses.CodeUnsupportedParameter, "include"},
+		{"logprobs include with top_logprobs", openresponses.Request{TopLogprobs: ptr(2), Include: []openresponses.Include{openresponses.IncludeOutputTextLogprobs}}, openresponses.CodeUnsupportedParameter, "include"},
 		{"max_tool_calls", openresponses.Request{MaxToolCalls: ptr(2)}, openresponses.CodeUnsupportedParameter, "max_tool_calls"},
 		{"truncation auto", openresponses.Request{Truncation: openresponses.TruncationAuto}, openresponses.CodeUnsupportedParameter, "truncation"},
 		{"verbosity", openresponses.Request{Text: openresponses.TextConfig{Verbosity: openresponses.VerbosityLow}}, openresponses.CodeUnsupportedParameter, "text.verbosity"},
@@ -383,6 +385,20 @@ func TestEncodeConfigErrors(t *testing.T) {
 			_, err := encodeRequest(tc.req, defaults)
 			wantErr(t, err, tc.code, tc.param)
 		})
+	}
+}
+
+// TestEncodeTopLogprobsAlone pins that top_logprobs without the
+// message.output_text.logprobs include is accepted without effect: on
+// its own it requests nothing, as in the other adapters, so there is
+// nothing for Claude to refuse.
+func TestEncodeTopLogprobsAlone(t *testing.T) {
+	p := encode(t, openresponses.Request{TopLogprobs: ptr(2)})
+	body := wire(t, p)
+	for _, key := range []string{"top_logprobs", "logprobs"} {
+		if _, ok := body[key]; ok {
+			t.Fatalf("top_logprobs alone sent %s: %v", key, body)
+		}
 	}
 }
 

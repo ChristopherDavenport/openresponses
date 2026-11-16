@@ -174,7 +174,12 @@ func invalid(param, message string) *openresponses.Error {
 // encodeConfig maps the request's settings. Model is not part of the
 // config; the caller passes it to the SDK directly.
 func encodeConfig(req openresponses.Request, thinking Thinking) (*genai.GenerateContentConfig, error) {
-	cfg := &genai.GenerateContentConfig{CandidateCount: 1}
+	// AutomaticContinuation is off: from genai v1.74 the SDK otherwise
+	// re-sends the request on a CONTINUATION finish until the model
+	// finishes, with no bound on the number of billed requests. Until the
+	// adapter runs a bounded loop of its own, the finish fails the
+	// response as a model_error, as it did before.
+	cfg := &genai.GenerateContentConfig{CandidateCount: 1, AutomaticContinuation: genai.Ptr(false)}
 
 	if req.MaxOutputTokens != nil {
 		cfg.MaxOutputTokens = int32(*req.MaxOutputTokens)
@@ -183,9 +188,13 @@ func encodeConfig(req openresponses.Request, thinking Thinking) (*genai.Generate
 	cfg.TopP = f32(req.TopP)
 	cfg.PresencePenalty = f32(req.PresencePenalty)
 	cfg.FrequencyPenalty = f32(req.FrequencyPenalty)
-	if req.TopLogprobs != nil {
+	// The include asks for logprobs; top_logprobs only sizes them, so on
+	// its own it requests nothing.
+	if req.Includes(openresponses.IncludeOutputTextLogprobs) {
 		cfg.ResponseLogprobs = true
-		cfg.Logprobs = genai.Ptr(int32(*req.TopLogprobs))
+		if req.TopLogprobs != nil {
+			cfg.Logprobs = genai.Ptr(int32(*req.TopLogprobs))
+		}
 	}
 	if req.ParallelToolCalls != nil && !*req.ParallelToolCalls {
 		// Gemini decides on its own whether to issue several calls at once.

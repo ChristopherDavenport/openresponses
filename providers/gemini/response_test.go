@@ -214,6 +214,39 @@ func TestSignatureAtEndOfTurn(t *testing.T) {
 	}
 }
 
+func TestStreamServiceTier(t *testing.T) {
+	cases := []struct {
+		name     string
+		req      openresponses.ServiceTier
+		upstream string // usageMetadata.trafficType; empty omits it
+		want     openresponses.ServiceTier
+	}{
+		{"on demand", openresponses.ServiceTierAuto, "ON_DEMAND", openresponses.ServiceTierDefault},
+		{"priority", openresponses.ServiceTierAuto, "ON_DEMAND_PRIORITY", openresponses.ServiceTierPriority},
+		{"flex", openresponses.ServiceTierAuto, "ON_DEMAND_FLEX", openresponses.ServiceTierFlex},
+		{"no request tier", "", "ON_DEMAND_FLEX", openresponses.ServiceTierFlex},
+		{"off-peak keeps the request", openresponses.ServiceTierAuto, "ON_DEMAND_OFFPEAK", openresponses.ServiceTierAuto},
+		{"provisioned keeps the request", openresponses.ServiceTierPriority, "PROVISIONED_THROUGHPUT", openresponses.ServiceTierPriority},
+		{"unspecified keeps the request", openresponses.ServiceTierFlex, "TRAFFIC_TYPE_UNSPECIFIED", openresponses.ServiceTierFlex},
+		{"absent keeps the request", openresponses.ServiceTierAuto, "", openresponses.ServiceTierAuto},
+		{"absent with no request tier", "", "", openresponses.ServiceTierDefault},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			finish := finishChunk
+			if tc.upstream != "" {
+				finish = strings.Replace(finishChunk, `"usageMetadata":{`, `"usageMetadata":{"trafficType":"`+tc.upstream+`",`, 1)
+			}
+			req := hello()
+			req.ServiceTier = tc.req
+			sink := run(t, req, textChunk, finish)
+			if got := sink.Response().ServiceTier; got != tc.want {
+				t.Errorf("service_tier = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestStreamIncomplete(t *testing.T) {
 	sink := run(t, hello(),
 		`{"candidates":[{"content":{"parts":[{"text":"Once upon"}],"role":"model"},"finishReason":"MAX_TOKENS"}]}`)
@@ -256,6 +289,32 @@ func TestStreamModelError(t *testing.T) {
 	var oerr *openresponses.Error
 	if !errorsAs(err, &oerr) || oerr.Type != openresponses.ErrorTypeModelError || !strings.Contains(oerr.Message, "MALFORMED_FUNCTION_CALL") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestStreamContinuationNotFollowed pins that the adapter does not let
+// the SDK continue a CONTINUATION finish on its own. genai v1.74 turned
+// automatic continuation on by default, with no bound on the number of
+// requests; the adapter turns it off, so the finish fails the response
+// as it did before and only one request is made.
+func TestStreamContinuationNotFollowed(t *testing.T) {
+	var requests int
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			sse(`{"candidates":[{"content":{"parts":[{"text":"Hel"}],"role":"model"},"finishReason":"CONTINUATION","continuationToken":"dG9rZW4=","index":0}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":1,"totalTokenCount":4}}`).ServeHTTP(w, r)
+			return
+		}
+		sse(finishChunk).ServeHTTP(w, r)
+	})
+	_, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+	wantErr(t, err, "continuation", "")
+	var oerr *openresponses.Error
+	if !errorsAs(err, &oerr) || oerr.Type != openresponses.ErrorTypeModelError {
+		t.Fatalf("err = %v, want a model_error", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1: the SDK continued the response", requests)
 	}
 }
 

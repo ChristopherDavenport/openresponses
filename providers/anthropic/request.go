@@ -199,8 +199,11 @@ func encodeConfig(req openresponses.Request, cfg config) (sdk.MessageNewParams, 
 		return p, unsupported("presence_penalty")
 	case req.FrequencyPenalty != nil:
 		return p, unsupported("frequency_penalty")
-	case req.TopLogprobs != nil:
-		return p, unsupported("top_logprobs")
+	case req.Includes(openresponses.IncludeOutputTextLogprobs):
+		// top_logprobs alone requests nothing, so only the include is
+		// refused; it is accepted without effect otherwise.
+		return p, openresponses.InvalidRequest(openresponses.CodeUnsupportedParameter,
+			"include message.output_text.logprobs is not supported by the Messages API", "include")
 	case req.MaxToolCalls != nil:
 		return p, unsupported("max_tool_calls")
 	case req.Truncation == openresponses.TruncationAuto:
