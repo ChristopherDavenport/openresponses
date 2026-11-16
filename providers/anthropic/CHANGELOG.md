@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.21 - 2026-11-15
 
 - Behaviour change: a request whose `include` names
   `message.output_text.logprobs` is rejected with `invalid_request`,

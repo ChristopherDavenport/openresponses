@@ -5,7 +5,7 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
-## Unreleased
+## v0.0.21 - 2026-11-15
 
 - Behaviour change: the `chatcompletions` adapter requests logprobs only
   when the request's `include` names `message.output_text.logprobs`,

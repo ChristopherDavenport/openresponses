@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.0.21 - 2026-11-15
 
 - Behaviour change: logprobs are requested from Gemini
   (`ResponseLogprobs`) only when the request's `include` names
