@@ -12,8 +12,8 @@ import (
 
 	"github.com/ChristopherDavenport/openresponses"
 	"github.com/ChristopherDavenport/openresponses/streamtest"
-	sdk "github.com/anthropics/anthropic-sdk-go"
-	"github.com/anthropics/anthropic-sdk-go/option"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
+	"github.com/anthropics/anthropic-sdk-go/v2/option"
 )
 
 // newAdapter returns an adapter whose client talks to handler over an
@@ -217,15 +217,15 @@ func TestThinkingRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(messages) != 1 || len(messages[0].Content) != 2 {
+	if len(messages) != 1 || len(messageContent(messages[0])) != 2 {
 		t.Fatalf("messages = %+v", messages)
 	}
-	th := messages[0].Content[0].OfThinking
+	th := messageContent(messages[0])[0].OfThinking
 	if th == nil || th.Thinking != "Let me think." || th.Signature != "c2lnbmF0dXJl" {
-		t.Fatalf("thinking block = %+v", messages[0].Content[0])
+		t.Fatalf("thinking block = %+v", messageContent(messages[0])[0])
 	}
-	if messages[0].Content[1].OfToolUse == nil {
-		t.Fatalf("tool use = %+v", messages[0].Content[1])
+	if messageContent(messages[0])[1].OfToolUse == nil {
+		t.Fatalf("tool use = %+v", messageContent(messages[0])[1])
 	}
 }
 

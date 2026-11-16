@@ -213,8 +213,8 @@ and `OPENRESPONSES_MODEL`.
 
 ## Anthropic
 
-Dependency: `github.com/anthropics/anthropic-sdk-go` (v1.78.0 at the
-time of writing). Its module graph includes `aws-sdk-go-v2`,
+Dependency: `github.com/anthropics/anthropic-sdk-go/v2` (v2.10.0 at the
+time of writing), which sends API version 2026-10-21. Its module graph includes `aws-sdk-go-v2`,
 `google.golang.org/api`, `grpc` and OpenTelemetry, which is why this is
 a module rather than a package.
 
@@ -249,7 +249,7 @@ regional hosts. Per-model regions mean one client per region; route by
 | `tool_choice` auto / none / required / function | auto / none / any / tool |
 | `parallel_tool_calls: false` | `disable_parallel_tool_use` |
 | `max_output_tokens` | `max_tokens`, which is required; `WithMaxTokens` sets the default (32768) |
-| `reasoning.effort` | by model, from the ID (rule 1; README table): before 4.6 `thinking: enabled` with a `budget_tokens` per effort; otherwise `output_config.effort` (`minimal` as `low`) with `thinking: adaptive`, `display: summarized` or `omitted` by `reasoning.summary`; `WithThinking` fixes the encoding. With a forced tool, `temperature` ≠ 1, `top_p` < 0.95 or `anthropic.top_k`, Claude refuses thinking: the effort goes alone, and a summary, or an effort before 4.6, is `invalid_request` (rule 3; README table) |
+| `reasoning.effort` | by model, from the ID (rule 1; README table): before 4.6 `thinking: enabled` with a `budget_tokens` per effort; otherwise `output_config.effort` (`minimal` as `low`) with `thinking: adaptive`, `display: summarized` or `omitted` by `reasoning.summary`; `WithThinking` fixes the encoding. With a forced tool Claude refuses thinking: the effort goes alone, and a summary, or an effort before 4.6, is `invalid_request` (rule 3; README table) |
 | `reasoning.effort: none` | `thinking: disabled`; `between_tools` on Sonnet 5.5; `invalid_request` naming the model on Opus 5.5, Fable and Mythos, which cannot turn thinking off |
 | `reasoning["openresponses-experimental.effort"]: max` | `output_config.effort: max` (a 32000 budget before 4.6); `xhigh` is never `max` |
 | `reasoning.summary` alone | `thinking: adaptive` with `display: summarized` (a `high` budget before 4.6) |
@@ -258,7 +258,7 @@ regional hosts. Per-model regions mean one client per region; route by
 | `metadata` | accepted and echoed on the response, never sent upstream |
 | `prompt_cache_key` | top-level `cache_control: ephemeral`, with `ttl` when `WithCacheTTL` sets one; the client asked for caching, and the key has nothing to name |
 | `service_tier` | `auto` and `default` (`standard_only`); `flex` and `priority` are `invalid_request` |
-| `temperature`, `top_p` | passed through |
+| `temperature`, `top_p`, and `top_k` as `anthropic.top_k` or forwarded | `invalid_request` at any value: API version 2026-10-21 (anthropic-sdk-go v2) refuses them |
 | `presence_penalty`, `frequency_penalty`, `max_tool_calls`, `tool_choice` allowed_tools, `input_video` | `invalid_request` |
 | `include` of `message.output_text.logprobs` | `invalid_request`; Claude returns no logprobs |
 | `top_logprobs` without that include | accepted without effect; on its own it requests nothing |

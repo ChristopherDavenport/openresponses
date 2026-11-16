@@ -2,7 +2,7 @@
 
 An [openresponses](https://github.com/ChristopherDavenport/openresponses)
 adapter for Claude, over the
-[anthropic-sdk-go](https://pkg.go.dev/github.com/anthropics/anthropic-sdk-go)
+[anthropic-sdk-go v2](https://pkg.go.dev/github.com/anthropics/anthropic-sdk-go/v2)
 Messages API. It is a separate module so the SDK stays out of the root
 library's dependency graph:
 
@@ -23,10 +23,10 @@ Bedrock differ only in how the client is built:
 
 ```go
 import (
-    sdk "github.com/anthropics/anthropic-sdk-go"
-    "github.com/anthropics/anthropic-sdk-go/bedrock"
-    "github.com/anthropics/anthropic-sdk-go/option"
-    "github.com/anthropics/anthropic-sdk-go/vertex"
+    sdk "github.com/anthropics/anthropic-sdk-go/v2"
+    "github.com/anthropics/anthropic-sdk-go/v2/bedrock"
+    "github.com/anthropics/anthropic-sdk-go/v2/option"
+    "github.com/anthropics/anthropic-sdk-go/v2/vertex"
 )
 
 messages := sdk.NewClient(option.WithAPIKey(key)).Messages                       // Claude API
@@ -42,6 +42,12 @@ or the metadata server) and takes `global`, `us`, `eu` or a region as
 the location. A `bedrock.MantleClient` works the same way through its
 `Messages` field. The SDK's package is also named `anthropic`, so code
 that imports both aliases one.
+
+SDK v2 sends API version `2026-10-21`. On Amazon Bedrock
+(`bedrock-runtime`) that version serves only Claude 4.7 and later; a
+caller of an older model there has to stay on an adapter release built
+on SDK v1. The version refuses `temperature`, `top_p` and `top_k`,
+which the adapter therefore refuses before sending (see below).
 
 `WithMaxTokens` sets the `max_tokens` sent when a request has no
 `max_output_tokens` (the Messages API requires it; the default is
@@ -88,8 +94,9 @@ kind, as PLAN rule 8 and docs/extensions.md section 1.5 say:
 
 - `anthropic.<field>` is a Messages API parameter: the request is sent
   with `<field>` set to the member's value, as given, so
-  `{"anthropic.top_k": 5}` sends `top_k: 5` and
-  `{"anthropic.inference_geo": "us"}` sends `inference_geo: "us"`. A
+  `{"anthropic.inference_geo": "us"}` sends `inference_geo: "us"`.
+  `anthropic.temperature`, `anthropic.top_p` and `anthropic.top_k` are
+  refused, as the request fields are. A
   member naming a field the adapter already sets from the request
   (`anthropic.max_tokens`, `anthropic.thinking` when an effort is set,
   ...) is `invalid_request` with `code: invalid_value` and `param` the
@@ -103,12 +110,15 @@ kind, as PLAN rule 8 and docs/extensions.md section 1.5 say:
   one this adapter implements, so it is ignored.
 - Any other member is dropped. `WithExtra` forwards it into the request
   as it is, never overriding a field the adapter set; off by default.
+  A `top_k` it would forward is refused.
 
 ## What the request mapping rejects and ignores
 
 A request field the Messages API has no equivalent for comes back as an
 `invalid_request` error with `code: unsupported_parameter` and `param`
-naming the field, rather than being dropped: `presence_penalty`,
+naming the field, rather than being dropped: `temperature` and
+`top_p` at any value, their defaults included, since API version
+`2026-10-21` refuses them (the message says so), `presence_penalty`,
 `frequency_penalty`, `include` of `message.output_text.logprobs`
 (Claude returns no logprobs), `max_tool_calls`, `truncation: auto`, `text.verbosity`, `text.format`
 of type `json_object` (there is no schema-free JSON mode),
@@ -269,24 +279,16 @@ The other efforts:
 
 ### Requests Claude refuses thinking with
 
-Claude refuses `thinking` together with any of these:
-
-| Parameter | Condition |
-|---|---|
-| `tool_choice` | `required` (`any`) or a named function (`tool`) |
-| `temperature` | other than 1 |
-| `top_p` | below 0.95 |
-| `anthropic.top_k` | present |
-
-When the request has one:
+Claude refuses `thinking` together with a forced tool: `tool_choice`
+`required` (`any`) or a named function (`tool`). The sampling
+parameters it also refused thinking with are refused outright under
+API version `2026-10-21`. When the request forces a tool:
 
 | Reasoning asked for | Adaptive encodings | `ThinkingBudget` |
 |---|---|---|
 | `none`, or nothing | as without the parameter | as without the parameter |
 | an effort, no summary | `output_config.effort` alone, no `thinking`; Opus 4.6 to 4.8 and Sonnet 4.6 then do not think | `invalid_request`, `code: unsupported_parameter`, `param` the parameter: an effort is only a budget there |
 | `reasoning.summary`, with or without an effort | `invalid_request`, `code: unsupported_parameter`, `param: reasoning.summary`: there is no thinking to summarise | the same |
-
-The first parameter in the order of the first table is the one named.
 
 Extension types use the `anthropic.` slug. A tool `{"type":
 "anthropic.web_search_20260209", "name": "web_search"}` is that server

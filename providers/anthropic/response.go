@@ -10,7 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ChristopherDavenport/openresponses"
-	sdk "github.com/anthropics/anthropic-sdk-go"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
 )
 
 // CreateStream runs one Messages call and streams it to sink. Content

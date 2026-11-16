@@ -1,5 +1,6 @@
 // Package anthropic serves Claude as an [openresponses.Adapter] through
-// the github.com/anthropics/anthropic-sdk-go Messages API.
+// the github.com/anthropics/anthropic-sdk-go/v2 Messages API, which sends
+// API version 2026-10-21.
 //
 // The adapter takes a constructed [sdk.MessageService] and knows nothing
 // about endpoints or credentials. The Claude API, Vertex AI and Bedrock
@@ -25,7 +26,7 @@ import (
 	"context"
 
 	"github.com/ChristopherDavenport/openresponses"
-	sdk "github.com/anthropics/anthropic-sdk-go"
+	sdk "github.com/anthropics/anthropic-sdk-go/v2"
 )
 
 // DefaultMaxTokens is the max_tokens sent when a request has no
