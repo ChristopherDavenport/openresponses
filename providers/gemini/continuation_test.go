@@ -430,3 +430,29 @@ func TestContinuationOutputBudget(t *testing.T) {
 		t.Fatalf("incomplete_details = %+v, want a plain max_output_tokens cut", resp.IncompleteDetails)
 	}
 }
+
+// TestContinuationGroundingOffsets: a continued request's grounding
+// offsets count from the start of that request's output, so a segment
+// located by its offsets alone lands after the text the earlier
+// requests put in the message.
+func TestContinuationGroundingOffsets(t *testing.T) {
+	h := &hops{t: t, chunks: [][]string{
+		{`{"candidates":[{"content":{"parts":[{"text":"Café is nice. "}],"role":"model"},"finishReason":"CONTINUATION","continuationToken":"dG9rZW4=","index":0}]}`},
+		{`{"candidates":[{"content":{"parts":[{"text":"Really nice."}],"role":"model"},"finishReason":"STOP","index":0,
+		  "groundingMetadata":{
+		    "groundingChunks":[{"web":{"uri":"https://example.com/a","title":"A"}}],
+		    "groundingSupports":[{"segment":{"startIndex":0,"endIndex":6},"groundingChunkIndices":[0]}]}}]}`},
+	}}
+	sink, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	text := sink.Response().Output[0].(*openresponses.Message).Content[0].(*openresponses.OutputText)
+	if text.Text != "Café is nice. Really nice." || len(text.Annotations) != 1 {
+		t.Fatalf("text = %q annotations = %d", text.Text, len(text.Annotations))
+	}
+	got := text.Annotations[0].(*openresponses.URLCitation)
+	if got.StartIndex != 14 || got.EndIndex != 20 {
+		t.Fatalf("citation = %d..%d, want 14..20 (Really)", got.StartIndex, got.EndIndex)
+	}
+}

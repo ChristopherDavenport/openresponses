@@ -283,7 +283,9 @@ request was sent with, so the request made no progress.
 for what is left of it after the `output_tokens` the earlier ones
 reported, thinking included, and when nothing is left the response
 ends incomplete with `max_output_tokens` and no further request, a
-plain cut without the member below.
+plain cut without the member below. A continued request's grounding
+offsets count from the start of its own output, and are moved on past
+the text earlier requests put in the message.
 
 ```json
 "incomplete_details": {"reason": "max_output_tokens", "gemini.finish_reason": "CONTINUATION"}

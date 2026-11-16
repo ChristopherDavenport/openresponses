@@ -70,6 +70,10 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 		next.ContinuationToken = d.token
 		cfg = &next
 		d.sent, d.checkpoint, d.token = d.token, nil, nil
+		d.base = 0
+		if d.msg != nil {
+			d.base = len(messageText(d.msg))
+		}
 	}
 }
 
@@ -124,7 +128,11 @@ type decoder struct {
 	// cited is the byte offset in the open message's text after the
 	// last citation, so grounding segments are located in order.
 	cited int
-	seen  bool
+	// base is the byte length of the open message's text when this
+	// request began. Gemini's segment offsets count from the start of the
+	// request's own output, and the message may hold earlier requests'.
+	base int
+	seen bool
 	// prior is the usage of the requests before this one. Within a
 	// request each chunk's usage metadata is its running total, so it
 	// replaces the last; across requests the totals are added.
@@ -311,6 +319,7 @@ func (d *decoder) openMessage() (*openresponses.MessageWriter, error) {
 	}
 	d.msg = m
 	d.cited = 0
+	d.base = 0
 	return m, nil
 }
 
@@ -365,7 +374,7 @@ func (d *decoder) ground(gm *genai.GroundingMetadata) error {
 		if support == nil || support.Segment == nil {
 			continue
 		}
-		start, end := locate(text, support.Segment, &d.cited)
+		start, end := locate(text, support.Segment, &d.cited, d.base)
 		for _, i := range support.GroundingChunkIndices {
 			if int(i) >= len(gm.GroundingChunks) || gm.GroundingChunks[i] == nil || gm.GroundingChunks[i].Web == nil {
 				continue
@@ -391,10 +400,11 @@ func messageText(m *openresponses.MessageWriter) string {
 
 // locate returns the character range of seg within text. The segment's
 // own text is searched for from *cited onward, so repeated phrases
-// resolve in order; when it is absent the byte offsets are used as
-// given. end is exclusive.
-func locate(text string, seg *genai.Segment, cited *int) (start, end int) {
-	byteStart, byteEnd := int(seg.StartIndex), int(seg.EndIndex)
+// resolve in order; when it is absent the byte offsets are used, moved
+// on by base, the bytes of text that came before this request's output.
+// end is exclusive.
+func locate(text string, seg *genai.Segment, cited *int, base int) (start, end int) {
+	byteStart, byteEnd := base+int(seg.StartIndex), base+int(seg.EndIndex)
 	if seg.Text != "" {
 		if i := strings.Index(text[min(*cited, len(text)):], seg.Text); i >= 0 {
 			byteStart = *cited + i
