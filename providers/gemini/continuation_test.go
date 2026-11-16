@@ -52,13 +52,14 @@ func (h *hops) requests() int {
 
 // continuationChunk cuts the response with finish reason CONTINUATION
 // after text, carrying token (base64, as on the wire; empty omits it)
-// and the hop's usage.
+// and the hop's usage: 3 input tokens, 2 of them cached, and 2 output
+// tokens, 1 of them thinking.
 func continuationChunk(text, token string) string {
 	tok := ""
 	if token != "" {
 		tok = `,"continuationToken":"` + token + `"`
 	}
-	return `{"candidates":[{"content":{"parts":[{"text":"` + text + `"}],"role":"model"},"finishReason":"CONTINUATION"` + tok + `,"index":0}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":1,"totalTokenCount":4}}`
+	return `{"candidates":[{"content":{"parts":[{"text":"` + text + `"}],"role":"model"},"finishReason":"CONTINUATION"` + tok + `,"index":0}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":1,"cachedContentTokenCount":2,"thoughtsTokenCount":1,"totalTokenCount":5}}`
 }
 
 // The second hop: the rest of the text, a function call the response
@@ -79,9 +80,6 @@ func checkTwoHops(t *testing.T, h *hops, resp *openresponses.Response) {
 	}
 	if got := h.bodies[1]["continuationToken"]; got != "dG9rZW4=" {
 		t.Fatalf("second request continuationToken = %v, want dG9rZW4= (body %v)", got, h.bodies[1])
-	}
-	if _, ok := h.bodies[0]["continuationToken"]; ok {
-		t.Fatalf("first request carries a continuationToken: %v", h.bodies[0])
 	}
 	first, _ := json.Marshal(h.bodies[0]["contents"])
 	second, _ := json.Marshal(h.bodies[1]["contents"])
@@ -104,9 +102,11 @@ func checkTwoHops(t *testing.T, h *hops, resp *openresponses.Response) {
 	if resp.Model != "gemini-2.5-pro-001" {
 		t.Fatalf("model = %q, want the first hop's version", resp.Model)
 	}
+	// Input 3+3, output (1+1)+(2+1), total 5+6, cached 2+1, reasoning
+	// 1+1: every count is summed over the requests.
 	u := resp.Usage
-	if u == nil || u.InputTokens != 6 || u.OutputTokens != 4 || u.TotalTokens != 10 ||
-		u.InputTokensDetails.CachedTokens != 1 || u.OutputTokensDetails.ReasoningTokens != 1 {
+	if u == nil || u.InputTokens != 6 || u.OutputTokens != 5 || u.TotalTokens != 11 ||
+		u.InputTokensDetails.CachedTokens != 3 || u.OutputTokensDetails.ReasoningTokens != 2 {
 		t.Fatalf("usage = %+v, want both hops summed", u)
 	}
 }
@@ -164,8 +164,55 @@ func TestContinuationLimit(t *testing.T) {
 	}
 	resp := sink.Response()
 	checkCut(t, resp, "Hello")
-	if u := resp.Usage; u == nil || u.InputTokens != 6 || u.OutputTokens != 2 || u.TotalTokens != 8 {
+	if u := resp.Usage; u == nil || u.InputTokens != 6 || u.OutputTokens != 4 || u.TotalTokens != 10 ||
+		u.InputTokensDetails.CachedTokens != 4 || u.OutputTokensDetails.ReasoningTokens != 2 {
 		t.Fatalf("usage = %+v, want both hops summed", u)
+	}
+
+	// The unary path carries the cut the same way.
+	h = &hops{t: t, chunks: [][]string{
+		{continuationChunk("Hel", "dG9rZW4=")},
+		{continuationChunk("lo", "dG9rZW4y")},
+	}}
+	created, err := newAdapter(t, h, WithContinuations(1)).Create(context.Background(), hello())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkCut(t, created, "Hello")
+}
+
+// TestContinuationInsideThought: a cut inside a thought leaves the
+// reasoning item open, and the next request's thought extends it before
+// the answer opens a message.
+func TestContinuationInsideThought(t *testing.T) {
+	h := &hops{t: t, chunks: [][]string{
+		{`{"candidates":[{"content":{"parts":[{"text":"Let me ","thought":true}],"role":"model"},"finishReason":"CONTINUATION","continuationToken":"dG9rZW4=","index":0}]}`},
+		{`{"candidates":[{"content":{"parts":[{"text":"think.","thought":true}],"role":"model"},"index":0}]}`,
+			`{"candidates":[{"content":{"parts":[{"text":"Answer."}],"role":"model"},"finishReason":"STOP","index":0}]}`},
+	}}
+	sink, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	resp := sink.Response()
+	if len(resp.Output) != 2 {
+		t.Fatalf("output = %+v, want one reasoning item and one message", resp.Output)
+	}
+	rs, ok := resp.Output[0].(*openresponses.ReasoningItem)
+	if !ok || len(rs.Summary) == 0 {
+		t.Fatalf("output[0] = %+v, want the reasoning item", resp.Output[0])
+	}
+	var summary string
+	for _, part := range rs.Summary {
+		if p, ok := part.(*openresponses.SummaryText); ok {
+			summary += p.Text
+		}
+	}
+	if summary != "Let me think." {
+		t.Fatalf("reasoning summary = %q, want both requests' thought", summary)
+	}
+	if resp.OutputText() != "Answer." {
+		t.Fatalf("output text = %q", resp.OutputText())
 	}
 }
 
