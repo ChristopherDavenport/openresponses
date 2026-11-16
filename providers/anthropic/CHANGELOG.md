@@ -9,6 +9,14 @@
   without them; a caller that sends it now gets an error instead of a
   response silently missing what it asked for. `include` of
   `reasoning.encrypted_content` is accepted as before.
+- The response's `service_tier` is the tier that served the request, as
+  the specification defines it, read from `usage.service_tier` on
+  `message_start`: `standard` is `default` and `priority` is `priority`.
+  It used to echo the request, so a request for `auto`, or for no tier,
+  never said whether priority capacity ran it. `batch`, which has no
+  Open Responses tier, and a message without the field keep the echoed
+  request tier. When a `pause_turn` is resumed, the last turn's tier is
+  the response's.
 
 ## v0.0.20 - 2026-11-09
 

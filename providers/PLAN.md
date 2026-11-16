@@ -284,6 +284,7 @@ regional hosts. Per-model regions mean one client per region; route by
 | citations | `web_search_result_location` becomes a `url_citation` spanning the text block it arrived on; other citation types are `anthropic.<type>` annotations |
 | usage | `input_tokens` is input + cache read + cache creation; cache read becomes `cached_tokens`, cache creation `openresponses-experimental.cache_write_tokens` with `cache_write_tokens_by_ttl` (5m, 1h), thinking tokens `reasoning_tokens`; summed across resumed turns |
 | `GET /v1/models/{id}` (with `WithModels`) | `Describe`: `Info` as docs/extensions.md section 7 maps it |
+| `usage.service_tier` on `message_start` | `service_tier`: `standard` is `default`, `priority` is `priority`; `batch` or none keeps the requested tier; the last resumed turn's wins |
 
 Streaming: `content_block_start` opens a `Message`, `FunctionCall` or
 `Reasoning` writer; deltas feed `Text`, `Arguments`, or `Text` and
@@ -413,7 +414,10 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   ThoughtsTokenCount` is output, `ThoughtsTokenCount` is
   `reasoning_tokens`. Gemini reports no cache writes, so
   `openresponses-experimental.cache_write_tokens` is never set.
-  `ResponseID` and `ModelVersion` fill the response.
+  `ResponseID` and `ModelVersion` fill the response. `TrafficType`,
+  which only Vertex AI reports, is the served `service_tier`: ON_DEMAND
+  is `default`, ON_DEMAND_PRIORITY `priority`, ON_DEMAND_FLEX `flex`;
+  provisioned throughput or none keeps the requested tier.
 - Grounding becomes `URLCitation` annotations from
   `GroundingChunks[i].Web` joined through `GroundingSupports[].Segment`.
   Gemini's segment offsets are bytes within a part and the spec's
@@ -486,6 +490,9 @@ Where it differs from the SDK-backed adapters:
   a message left empty with them (rule 4), the other exception to rule
   3. An `image_url` or `file_data` holding a `sidecar:` reference is
   `invalid_request` naming the field.
+- A chunk's `service_tier` is the response's when it is one of the
+  specification's four; anything else (OpenAI's `scale`) keeps the
+  requested tier.
 - `max_output_tokens` is sent as `max_tokens` unless
   `WithMaxTokensField` says `max_completion_tokens`; providers split.
 - `WithExtra` forwards `Request.Extra` for provider parameters

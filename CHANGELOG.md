@@ -16,6 +16,13 @@ versions may break the API.
   logprobs, and has to add the include to keep them. A request with the
   include and no `top_logprobs` now gets logprobs without alternatives,
   where before it got none.
+- The `chatcompletions` adapter reports the tier that served the request
+  in the response's `service_tier`, read from the `service_tier` the
+  upstream puts on its chunks, as the specification defines the field.
+  It used to echo the request, so a request for `auto`, or for no tier,
+  never said which tier ran it. A value the specification has no name
+  for, such as OpenAI's `scale`, and an upstream that sends none keep
+  the echoed request tier.
 
 ## v0.0.20 - 2026-11-09
 

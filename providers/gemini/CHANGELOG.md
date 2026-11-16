@@ -12,6 +12,15 @@
   is still echoed on the response. A request with the include and no
   `top_logprobs` now gets logprobs without alternatives, where before
   it got none.
+- The response's `service_tier` is the tier that served the request, as
+  the specification defines it, read from the usage metadata's
+  `trafficType`: `ON_DEMAND` is `default`, `ON_DEMAND_PRIORITY` is
+  `priority` and `ON_DEMAND_FLEX` is `flex`, the inverse of the request
+  mapping. It used to echo the request, so a request for `auto`, or for
+  no tier, never said which tier ran it. Vertex AI reports the traffic
+  type and the Gemini API does not; without one, and for provisioned
+  throughput, which has no Open Responses tier, the response keeps the
+  echoed request tier.
 
 ## v0.0.19 - 2026-11-04
 
