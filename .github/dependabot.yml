@@ -1,7 +1,20 @@
 version: 2
 updates:
+  # go.work at / puts this entry in dependabot's workspace mode, and no
+  # setting turns that off (exclude-paths is not consulted for go.work's
+  # use list). In that mode it updates any dependency of any workspace
+  # module, running `go get` in every module and then `go work sync`,
+  # which writes the workspace's selected versions into every go.mod and
+  # raises a module's go line when one of them needs a newer Go (#71 and
+  # #76 moved conformance and providers/anthropic to go 1.26 that way).
+  # allow keeps it to the root module's own requirement, so it no longer
+  # opens the nested modules' updates; the nested entries below do. A
+  # root update still runs across the workspace and can still raise a
+  # nested floor; the floor job in ci.yml fails such a PR.
   - package-ecosystem: gomod
     directory: /
+    allow:
+      - dependency-name: github.com/coder/websocket
     schedule:
       interval: weekly
   - package-ecosystem: gomod

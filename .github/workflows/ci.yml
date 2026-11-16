@@ -17,7 +17,8 @@ jobs:
       matrix:
         # 1.26 is the floor go.work declares, since providers/gemini needs
         # it for golang.org/x/net; the root go.mod still says 1.25, which
-        # the workspace cannot build under. stable is the current release.
+        # the workspace cannot build under; the floor job tests the 1.25
+        # modules alone. stable is the current release.
         go: ["1.26.x", "stable"]
     steps:
       - uses: actions/checkout@v7
@@ -40,6 +41,32 @@ jobs:
         run: make vet
       - name: Test (library and nested modules)
         run: make test
+
+  # The root, conformance and providers/anthropic declare go 1.25, below
+  # go.work's 1.26, so each is tested alone on 1.25.x, outside the
+  # workspace, as a consumer that takes only that module builds it. This
+  # is what notices a change, such as a dependency update, that raises one
+  # of their floors: dependabot's / entry runs `go work sync`, which did
+  # that to conformance and providers/anthropic in #71 and #76.
+  floor:
+    name: Test ${{ matrix.module }} (Go 1.25.x)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [".", conformance, providers/anthropic]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+      - name: Vet
+        working-directory: ${{ matrix.module }}
+        run: GOWORK=off go vet ./...
+      - name: Test
+        working-directory: ${{ matrix.module }}
+        run: GOWORK=off go test ./...
 
   lint:
     name: Lint
@@ -106,7 +133,7 @@ jobs:
   checks:
     name: Checks
     if: always()
-    needs: [test, lint, compliance, extracted]
+    needs: [test, floor, lint, compliance, extracted]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every job succeeded
