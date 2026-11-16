@@ -406,7 +406,9 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   `Incomplete(max_output_tokens)`; SAFETY, RECITATION, BLOCKLIST,
   PROHIBITED_CONTENT, SPII and the IMAGE_* reasons are
   `Incomplete(content_filter)`; MALFORMED_FUNCTION_CALL,
-  UNEXPECTED_TOOL_CALL and OTHER are `ModelError`. A blocked prompt
+  UNEXPECTED_TOOL_CALL, OTHER and CONTINUATION are `ModelError`; the
+  SDK's `AutomaticContinuation` is off, since it has no bound, until
+  the adapter has a bounded loop of its own. A blocked prompt
   (`PromptFeedback.BlockReason` with no candidates) is
   `Incomplete(content_filter)` with empty output.
 - Usage: `PromptTokenCount + ToolUsePromptTokenCount` is input,

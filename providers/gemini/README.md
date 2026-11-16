@@ -256,7 +256,10 @@ decodes to, in the URL alphabet its underscores belong to.
 content, SPII, language and image reasons, and a blocked prompt, end
 it incomplete with `content_filter`. `MALFORMED_FUNCTION_CALL`,
 `UNEXPECTED_TOOL_CALL`, `TOO_MANY_TOOL_CALLS` and `OTHER` fail it with
-a `model_error` whose code is the reason in lower case. Grounding
+a `model_error` whose code is the reason in lower case, and so does
+`CONTINUATION`: the adapter turns off the SDK's automatic continuation,
+which has no bound on the requests it makes, and does not yet continue
+the response itself. Grounding
 supports become `url_citation` annotations with character offsets into
 the message text, and logprobs, when the request includes them, land
 on the `output_text` part. `model` on the response is the version
