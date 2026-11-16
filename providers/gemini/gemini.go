@@ -84,8 +84,8 @@ func WithThinking(t Thinking) Option {
 // WithContinuations sets how many times a response Gemini cuts with
 // finish reason CONTINUATION is continued: the request is sent again
 // with the continuation token, and the next request's output goes on in
-// the same response. The default is [DefaultContinuations]; zero never
-// continues. A cut response that is not continued ends incomplete with
+// the same response. The default is [DefaultContinuations]; zero or
+// less never continues. A cut response that is not continued ends incomplete with
 // what it has.
 func WithContinuations(n int) Option {
 	return func(a *Adapter) { a.continuations = n }
