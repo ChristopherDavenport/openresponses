@@ -363,6 +363,12 @@ cited text block; document citations pass through as
 cache-creation tokens in `input_tokens`, reports cache reads in
 `cached_tokens` and thinking in `reasoning_tokens`, and sums across
 resumed turns; `model` on the response is the version Claude served.
+`service_tier` is the tier that served the request, from
+`usage.service_tier` on `message_start`: `standard` is `default` and
+`priority` is `priority`, so a request for `auto` says whether
+priority capacity ran it. `batch`, which has no Open Responses tier,
+or no tier keeps the requested one; after a resumed `pause_turn` the
+last turn's tier is the response's.
 
 Cache writes are reported in `input_tokens_details` as the shared
 members of docs/extensions.md section 5, and stay counted in

@@ -259,11 +259,15 @@ it incomplete with `content_filter`. `MALFORMED_FUNCTION_CALL`,
 a `model_error` whose code is the reason in lower case, and so does
 `CONTINUATION`: the adapter turns off the SDK's automatic continuation,
 which has no bound on the requests it makes, and does not yet continue
-the response itself. Grounding
-supports become `url_citation` annotations with character offsets into
-the message text, and logprobs, when the request includes them, land
-on the `output_text` part. `model` on the response is the version
-Gemini served.
+the response itself. Grounding supports become `url_citation`
+annotations with character offsets into the message text, and
+logprobs, when the request includes them, land on the `output_text`
+part. `model` on the response is the version Gemini served, and
+`service_tier` the tier that served it, from the usage metadata's
+`trafficType`, which only Vertex AI reports: `ON_DEMAND` is `default`,
+`ON_DEMAND_PRIORITY` `priority` and `ON_DEMAND_FLEX` `flex`.
+`ON_DEMAND_OFFPEAK` and `PROVISIONED_THROUGHPUT`, which have no Open
+Responses tier, or no traffic type keep the requested tier.
 
 Usage: `input_tokens` is `promptTokenCount` plus
 `toolUsePromptTokenCount`, and `cached_tokens` is
