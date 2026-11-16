@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Dependencies: golang.org/x/net is v0.62.0 (indirect, was v0.60.0)
+  and golang.org/x/crypto v0.59.0 (indirect, was v0.57.0), with
+  golang.org/x/sys v0.50.0 and golang.org/x/text v0.44.0 following.
+  govulncheck reported GO-2026-6866 and GO-2026-6860 (x/net html) and
+  GO-2026-5932 (x/crypto openpgp) in the required modules; none was
+  reachable from the adapter, and none is reported now. The module
+  stays on Go 1.26.
+
 ## v0.0.21 - 2026-11-15
 
 - Behaviour change: logprobs are requested from Gemini
