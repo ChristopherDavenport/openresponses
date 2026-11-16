@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -215,5 +216,67 @@ func checkCut(t *testing.T, resp *openresponses.Response, text string) {
 	}
 	if msg, ok := resp.Output[0].(*openresponses.Message); !ok || msg.Text() != text || msg.Status != openresponses.StatusIncomplete {
 		t.Fatalf("output[0] = %+v, want an incomplete message %q", resp.Output[0], text)
+	}
+}
+
+// TestContinuationErrorOnSecondRequest: a continued request that fails
+// fails the response, as any mid-stream failure does. Through the
+// handler the caller sees one response.created, the first request's
+// text, and one terminal event, response.failed; nothing reads as
+// incomplete or completed.
+func TestContinuationErrorOnSecondRequest(t *testing.T) {
+	// failing serves a cut first request and a second that fails after
+	// one chunk, inside the stream, so the SDK's HTTP retry cannot hide it.
+	failing := func() (*hops, *Adapter) {
+		h := &hops{t: t, chunks: [][]string{{continuationChunk("First", "dG9rZW4=")}}}
+		handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if h.requests() == 0 {
+				h.ServeHTTP(w, r)
+				return
+			}
+			h.mu.Lock()
+			h.bodies = append(h.bodies, nil)
+			h.mu.Unlock()
+			streamError(`{"error":{"code":500,"message":"boom","status":"INTERNAL"}}`).ServeHTTP(w, r)
+		})
+		return h, newAdapter(t, handler)
+	}
+
+	h, adapter := failing()
+	_, err := streamtest.Run(context.Background(), adapter, hello())
+	var oerr *openresponses.Error
+	if !errorsAs(err, &oerr) || oerr.Type != openresponses.ErrorTypeServerError || oerr.Code != "internal" {
+		t.Fatalf("err = %v, want the second request's server_error", err)
+	}
+	if n := h.requests(); n != 2 {
+		t.Fatalf("requests = %d, want 2", n)
+	}
+
+	h, adapter = failing()
+	srv := httptest.NewServer(openresponses.NewHandler(adapter))
+	t.Cleanup(srv.Close)
+	req := hello()
+	req.Stream = true
+	body, _ := json.Marshal(req)
+	resp, err := http.Post(srv.URL+"/v1/responses", "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := h.requests(); n != 2 {
+		t.Fatalf("handler run: requests = %d, want 2", n)
+	}
+	stream := string(data)
+	count := func(event string) int { return strings.Count(stream, "event: "+event+"\n") }
+	if count("response.created") != 1 || count("response.failed") != 1 ||
+		count("response.incomplete") != 0 || count("response.completed") != 0 {
+		t.Fatalf("stream = %s, want one created and one failed", stream)
+	}
+	if !strings.Contains(stream, `"delta":"First"`) {
+		t.Fatalf("stream = %s, want the first request's text", stream)
 	}
 }
