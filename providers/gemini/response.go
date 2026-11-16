@@ -49,11 +49,24 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 			// The response ended with a terminal event.
 			return nil
 		}
+		next := *cfg
+		if req.MaxOutputTokens != nil {
+			// max_output_tokens bounds the whole response, so the next
+			// request gets what the earlier ones left. With nothing left,
+			// this is the caller's own cut, and reads as one.
+			left := *req.MaxOutputTokens
+			if u := d.em.Response().Usage; u != nil {
+				left -= u.OutputTokens
+			}
+			if left <= 0 {
+				return d.em.Incomplete(openresponses.IncompleteReasonMaxOutputTokens)
+			}
+			next.MaxOutputTokens = int32(left)
+		}
 		if hop >= a.continuations || len(d.token) == 0 {
 			d.cut = true
 			return d.em.Incomplete(openresponses.IncompleteReasonMaxOutputTokens)
 		}
-		next := *cfg
 		next.ContinuationToken = d.token
 		cfg = &next
 		d.sent, d.checkpoint, d.token = d.token, nil, nil

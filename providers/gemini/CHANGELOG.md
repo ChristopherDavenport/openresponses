@@ -9,8 +9,13 @@
   open, with one `response.created`, one terminal event and output
   indices running on; usage is summed over the requests.
   `WithContinuations` sets how many times (default
-  `DefaultContinuations`, 8; zero never continues, as in the Anthropic
-  adapter). A cut that is not continued, at the limit or without a
+  `DefaultContinuations`, 8; zero or less never continues, as in the
+  Anthropic adapter). The token is the finishing chunk's or the latest
+  checkpoint token before it, and a request that ends on the token it
+  was sent with is not sent again. `max_output_tokens` bounds the
+  whole response: a later request asks for what is left of it, and
+  with nothing left the response ends incomplete with
+  `max_output_tokens` without another request. A cut that is not continued, at the limit or without a
   token, ends the response incomplete with `max_output_tokens` and
   `incomplete_details["gemini.finish_reason"]: "CONTINUATION"`, the
   open item marked incomplete. Before, the finish failed the response

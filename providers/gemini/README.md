@@ -279,6 +279,11 @@ Anthropic adapter. A cut that is not continued ends the response
 incomplete with what it has, the open item marked incomplete: the
 limit was reached, Gemini sent no token, or the token is the one the
 request was sent with, so the request made no progress.
+`max_output_tokens` bounds the whole response: each later request asks
+for what is left of it after the `output_tokens` the earlier ones
+reported, thinking included, and when nothing is left the response
+ends incomplete with `max_output_tokens` and no further request, a
+plain cut without the member below.
 
 ```json
 "incomplete_details": {"reason": "max_output_tokens", "gemini.finish_reason": "CONTINUATION"}

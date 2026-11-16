@@ -387,3 +387,46 @@ func TestContinuationLaterWithoutToken(t *testing.T) {
 	}
 	checkCut(t, sink.Response(), "Hello")
 }
+
+// TestContinuationOutputBudget: max_output_tokens bounds the whole
+// response, so each later request asks for what is left of it (the
+// first request used 2), and once nothing is left the response ends
+// incomplete as any max_output_tokens cut does, without another request
+// and without the CONTINUATION member.
+func TestContinuationOutputBudget(t *testing.T) {
+	maxTokens := func(body map[string]any) any {
+		cfg, _ := body["generationConfig"].(map[string]any)
+		return cfg["maxOutputTokens"]
+	}
+
+	h := twoHops(t)
+	req := hello()
+	req.MaxOutputTokens = ptr(10)
+	if _, err := streamtest.Run(context.Background(), newAdapter(t, h), req); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if n := h.requests(); n != 2 {
+		t.Fatalf("requests = %d, want 2", n)
+	}
+	if first, second := maxTokens(h.bodies[0]), maxTokens(h.bodies[1]); first != float64(10) || second != float64(8) {
+		t.Fatalf("maxOutputTokens = %v then %v, want 10 then 8", first, second)
+	}
+
+	h = &hops{t: t, chunks: [][]string{{continuationChunk("Hel", "dG9rZW4=")}}}
+	req.MaxOutputTokens = ptr(2)
+	sink, err := streamtest.Run(context.Background(), newAdapter(t, h), req)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if n := h.requests(); n != 1 {
+		t.Fatalf("requests = %d, want 1: the budget was spent", n)
+	}
+	resp := sink.Response()
+	if resp.Status != openresponses.ResponseStatusIncomplete || resp.IncompleteDetails == nil ||
+		resp.IncompleteDetails.Reason != openresponses.IncompleteReasonMaxOutputTokens {
+		t.Fatalf("resp = %s %+v, want incomplete max_output_tokens", resp.Status, resp.IncompleteDetails)
+	}
+	if _, ok := resp.IncompleteDetails.Extra[slug+"finish_reason"]; ok {
+		t.Fatalf("incomplete_details = %+v, want a plain max_output_tokens cut", resp.IncompleteDetails)
+	}
+}
