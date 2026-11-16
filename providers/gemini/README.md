@@ -270,11 +270,15 @@ A response Gemini cuts with `CONTINUATION` is continued by the
 adapter: it sends the same request again with the continuation token,
 and the next request's output goes on in the same response, extending
 the item the cut left open, under one `response.created` and one
-terminal event, with output indices running on. `WithContinuations`
-sets how many times (default 8, `DefaultContinuations`); zero never
-continues, as in the Anthropic adapter. A cut that is not continued,
-because the limit was reached or Gemini sent no token, ends the
-response incomplete with what it has, the open item marked incomplete:
+terminal event, with output indices running on. The token is the
+finishing chunk's, or, when it carries none, the latest checkpoint
+token an earlier chunk of that request carried, as the SDK's own loop
+picks it. `WithContinuations` sets how many times (default 8,
+`DefaultContinuations`); zero or less never continues, as in the
+Anthropic adapter. A cut that is not continued ends the response
+incomplete with what it has, the open item marked incomplete: the
+limit was reached, Gemini sent no token, or the token is the one the
+request was sent with, so the request made no progress.
 
 ```json
 "incomplete_details": {"reason": "max_output_tokens", "gemini.finish_reason": "CONTINUATION"}

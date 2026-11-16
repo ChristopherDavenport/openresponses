@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -52,11 +53,10 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 			d.cut = true
 			return d.em.Incomplete(openresponses.IncompleteReasonMaxOutputTokens)
 		}
-		// Copied, so the request's own config never carries a token.
 		next := *cfg
 		next.ContinuationToken = d.token
 		cfg = &next
-		d.token = nil
+		d.sent, d.checkpoint, d.token = d.token, nil, nil
 	}
 }
 
@@ -117,9 +117,12 @@ type decoder struct {
 	// replaces the last; across requests the totals are added.
 	prior *openresponses.Usage
 	// token is set, non-nil, when a request ended with finish reason
-	// CONTINUATION, to the continuation token it carried (empty when it
-	// carried none).
+	// CONTINUATION, to the token to continue from: empty when there is
+	// none, or when it is the token that request was sent with.
 	token []byte
+	// checkpoint is the latest continuation token a chunk of this
+	// request carried, and sent the token this request was sent with.
+	checkpoint, sent []byte
 	// cut is set when a CONTINUATION cut ends the response incomplete.
 	cut bool
 }
@@ -149,6 +152,9 @@ func (d *decoder) chunk(chunk *genai.GenerateContentResponse) (bool, error) {
 		return false, nil
 	}
 	c := chunk.Candidates[0]
+	if len(c.ContinuationToken) > 0 {
+		d.checkpoint = c.ContinuationToken
+	}
 	if c.Content != nil {
 		for _, p := range c.Content.Parts {
 			if err := d.part(p); err != nil {
@@ -171,10 +177,14 @@ func (d *decoder) chunk(chunk *genai.GenerateContentResponse) (bool, error) {
 	}
 	if c.FinishReason == genai.FinishReasonContinuation {
 		// Not an end: CreateStream decides whether to continue. The open
-		// item stays open for the next request to extend.
-		d.token = c.ContinuationToken
-		if d.token == nil {
-			d.token = []byte{}
+		// item stays open for the next request to extend. The token is
+		// the latest checkpoint, the finishing chunk's own when it has
+		// one, and a request that ends on the token it was sent with
+		// made no progress, as genai v1.77.0 decides in
+		// continuation.go:215-219 (observe) and 307-316 (nextResumeToken).
+		d.token = []byte{}
+		if len(d.checkpoint) > 0 && !bytes.Equal(d.checkpoint, d.sent) {
+			d.token = d.checkpoint
 		}
 		return true, nil
 	}

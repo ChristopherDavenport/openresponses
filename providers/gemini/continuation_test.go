@@ -327,3 +327,63 @@ func TestContinuationErrorOnSecondRequest(t *testing.T) {
 		t.Fatalf("stream = %s, want the first request's text", stream)
 	}
 }
+
+// TestContinuationCheckpointToken: chunks before the end of a request
+// can carry checkpoint tokens. A CONTINUATION finish without a token of
+// its own continues from the latest of them, as the SDK's loop does.
+func TestContinuationCheckpointToken(t *testing.T) {
+	h := &hops{t: t, chunks: [][]string{
+		{`{"candidates":[{"content":{"parts":[{"text":"Hel"}],"role":"model"},"continuationToken":"Y2hlY2sx","index":0}]}`,
+			`{"candidates":[{"content":{"parts":[{"text":"l"}],"role":"model"},"continuationToken":"Y2hlY2sy","index":0}]}`,
+			continuationChunk("", "")},
+		{finishChunk},
+	}}
+	sink, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if n := h.requests(); n != 2 {
+		t.Fatalf("requests = %d, want 2", n)
+	}
+	if got := h.bodies[1]["continuationToken"]; got != "Y2hlY2sy" {
+		t.Fatalf("second request continuationToken = %v, want the latest checkpoint", got)
+	}
+	if resp := sink.Response(); resp.Status != openresponses.ResponseStatusCompleted || resp.OutputText() != "Helllo" {
+		t.Fatalf("resp = %s %q", resp.Status, resp.OutputText())
+	}
+}
+
+// TestContinuationNoProgress: a request that ends with the token it was
+// sent with made no progress, and is not sent again; the response ends
+// as at the limit.
+func TestContinuationNoProgress(t *testing.T) {
+	h := &hops{t: t, chunks: [][]string{
+		{continuationChunk("Hel", "dG9rZW4=")},
+		{continuationChunk("lo", "dG9rZW4=")},
+	}}
+	sink, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if n := h.requests(); n != 2 {
+		t.Fatalf("requests = %d, want 2", n)
+	}
+	checkCut(t, sink.Response(), "Hello")
+}
+
+// TestContinuationLaterWithoutToken: a later request that ends with
+// CONTINUATION and no token at all ends the response as at the limit.
+func TestContinuationLaterWithoutToken(t *testing.T) {
+	h := &hops{t: t, chunks: [][]string{
+		{continuationChunk("Hel", "dG9rZW4=")},
+		{continuationChunk("lo", "")},
+	}}
+	sink, err := streamtest.Run(context.Background(), newAdapter(t, h), hello())
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if n := h.requests(); n != 2 {
+		t.Fatalf("requests = %d, want 2", n)
+	}
+	checkCut(t, sink.Response(), "Hello")
+}
