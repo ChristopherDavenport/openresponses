@@ -109,9 +109,8 @@ kind, as PLAN rule 8 and docs/extensions.md section 1.5 say:
 A request field the Messages API has no equivalent for comes back as an
 `invalid_request` error with `code: unsupported_parameter` and `param`
 naming the field, rather than being dropped: `presence_penalty`,
-`frequency_penalty`, `top_logprobs`, `include` of
-`message.output_text.logprobs` (Claude returns no logprobs),
-`max_tool_calls`, `truncation: auto`, `text.verbosity`, `text.format`
+`frequency_penalty`, `include` of `message.output_text.logprobs`
+(Claude returns no logprobs), `max_tool_calls`, `truncation: auto`, `text.verbosity`, `text.format`
 of type `json_object` (there is no schema-free JSON mode),
 `service_tier` `flex` and `priority`, `tool_choice` of type
 `allowed_tools`, `input_video`, `compaction` and `item_reference`
@@ -189,7 +188,9 @@ The caller's input keeps the part, as with every item left out.
 Accepted without effect: `metadata` (echoed on the response, never sent
 upstream), `input_image.detail`, `include` of
 `reasoning.encrypted_content` (thinking signatures are always emitted),
-`stream_options` and `store` (the handler's concerns).
+`top_logprobs` without the logprobs include (on its own it requests
+nothing, and it is echoed on the response), `stream_options` and
+`store` (the handler's concerns).
 `safety_identifier` becomes `metadata.user_id`. `prompt_cache_key`
 turns on prompt caching for the request: Claude caches on request, and
 the key itself has nothing to name; `WithCacheTTL` sets how long the

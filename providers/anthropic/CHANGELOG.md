@@ -4,11 +4,16 @@
 
 - Behaviour change: a request whose `include` names
   `message.output_text.logprobs` is rejected with `invalid_request`,
-  `code: unsupported_parameter` and `param: include`, as `top_logprobs`
-  already was. Claude returns no logprobs, and the adapter used to
-  accept the include and answer without them; a caller that sends it now
-  gets an error instead of a response silently missing what it asked
-  for. `include` of `reasoning.encrypted_content` is accepted as before.
+  `code: unsupported_parameter` and `param: include`. Claude returns no
+  logprobs, and the adapter used to accept the include and answer
+  without them; a caller that sends it now gets an error instead of a
+  response silently missing what it asked for. `include` of
+  `reasoning.encrypted_content` is accepted as before.
+- `top_logprobs` without that include is accepted without effect and
+  echoed on the response, as the other adapters do; it was
+  `invalid_request` with `param: top_logprobs`. On its own it requests
+  no logprobs, so there is nothing for Claude to refuse. With the
+  include, the include is refused.
 - The response's `service_tier` is the tier that served the request, as
   the specification defines it, read from `usage.service_tier` on
   `message_start`: `standard` is `default` and `priority` is `priority`.

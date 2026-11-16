@@ -254,8 +254,9 @@ regional hosts. Per-model regions mean one client per region; route by
 | `prompt_cache_key` | top-level `cache_control: ephemeral`, with `ttl` when `WithCacheTTL` sets one; the client asked for caching, and the key has nothing to name |
 | `service_tier` | `auto` and `default` (`standard_only`); `flex` and `priority` are `invalid_request` |
 | `temperature`, `top_p` | passed through |
-| `presence_penalty`, `frequency_penalty`, `top_logprobs`, `max_tool_calls`, `tool_choice` allowed_tools, `input_video` | `invalid_request` |
+| `presence_penalty`, `frequency_penalty`, `max_tool_calls`, `tool_choice` allowed_tools, `input_video` | `invalid_request` |
 | `include` of `message.output_text.logprobs` | `invalid_request`; Claude returns no logprobs |
+| `top_logprobs` without that include | accepted without effect; on its own it requests nothing |
 | `input_image.file_id`, `input_file.file_id` | Files API sources |
 | `ReasoningItem`, issuer `anthropic` or none, with `encrypted_content` | `thinking` block from the summary text and the signature |
 | `ReasoningItem` of another issuer, or without `encrypted_content` | left out (rule 5; README) |
