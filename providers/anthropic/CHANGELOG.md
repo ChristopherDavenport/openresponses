@@ -2,13 +2,13 @@
 
 ## Unreleased
 
-- A request whose `include` names `message.output_text.logprobs` is
-  rejected with `invalid_request`, `code: unsupported_parameter` and
-  `param: include`, as `top_logprobs` already was. Claude returns no
-  logprobs, and the adapter used to accept the include and answer
-  without them; a caller that sends it now gets an error instead of a
-  response silently missing what it asked for. `include` of
-  `reasoning.encrypted_content` is accepted as before.
+- Behaviour change: a request whose `include` names
+  `message.output_text.logprobs` is rejected with `invalid_request`,
+  `code: unsupported_parameter` and `param: include`, as `top_logprobs`
+  already was. Claude returns no logprobs, and the adapter used to
+  accept the include and answer without them; a caller that sends it now
+  gets an error instead of a response silently missing what it asked
+  for. `include` of `reasoning.encrypted_content` is accepted as before.
 - The response's `service_tier` is the tier that served the request, as
   the specification defines it, read from `usage.service_tier` on
   `message_start`: `standard` is `default` and `priority` is `priority`.
@@ -17,14 +17,15 @@
   Open Responses tier, and a message without the field keep the echoed
   request tier. When a `pause_turn` is resumed, the last turn's tier is
   the response's.
-- Dependencies: github.com/anthropics/anthropic-sdk-go is v1.84.0
-  (was v1.78.0); the module still requires Go 1.25. Behaviour change
-  from SDK v1.81: the SDK records spans and sends trace-context headers
-  on every request whenever the program registers a global OpenTelemetry
-  tracer provider. The adapter uses the client the caller builds, so the
-  choice is the caller's: build it with `option.WithoutOpenTelemetry()`,
-  or set `ANTHROPIC_OPEN_TELEMETRY=false`, to turn it off. The module
-  now has go.opentelemetry.io/otel v1.33 as an indirect dependency.
+- Behaviour change, dependencies: github.com/anthropics/anthropic-sdk-go
+  is v1.84.0 (was v1.78.0); the module still requires Go 1.25. Behaviour
+  change from SDK v1.81: the SDK records spans and sends trace-context
+  headers on every request whenever the program registers a global
+  OpenTelemetry tracer provider. The adapter uses the client the caller
+  builds, so the choice is the caller's: build it with
+  `option.WithoutOpenTelemetry()`, or set
+  `ANTHROPIC_OPEN_TELEMETRY=false`, to turn it off. The module now has
+  go.opentelemetry.io/otel v1.33 as an indirect dependency.
 
 ## v0.0.20 - 2026-11-09
 

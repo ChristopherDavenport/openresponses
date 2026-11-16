@@ -7,15 +7,15 @@ versions may break the API.
 
 ## Unreleased
 
-- The `chatcompletions` adapter requests logprobs only when the
-  request's `include` names `message.output_text.logprobs`, which is
-  what the specification says asks for them; `top_logprobs` then sets
-  how many alternatives each token carries. Before, the include was
-  ignored and `top_logprobs` alone turned logprobs on. This changes
-  behaviour for a caller that sets only `top_logprobs`: it now gets no
-  logprobs, and has to add the include to keep them. A request with the
-  include and no `top_logprobs` now gets logprobs without alternatives,
-  where before it got none.
+- Behaviour change: the `chatcompletions` adapter requests logprobs only
+  when the request's `include` names `message.output_text.logprobs`,
+  which is what the specification says asks for them; `top_logprobs`
+  then sets how many alternatives each token carries. Before, the
+  include was ignored and `top_logprobs` alone turned logprobs on. This
+  changes behaviour for a caller that sets only `top_logprobs`: it now
+  gets no logprobs, and has to add the include to keep them. A request
+  with the include and no `top_logprobs` now gets logprobs without
+  alternatives, where before it got none.
 - The `chatcompletions` adapter reports the tier that served the request
   in the response's `service_tier`, read from the `service_tier` the
   upstream puts on its chunks, as the specification defines the field.
