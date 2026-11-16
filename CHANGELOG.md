@@ -5,6 +5,18 @@ All user-visible changes to this library. The format follows
 uses [Semantic Versioning](https://semver.org/); before v1.0.0 minor
 versions may break the API.
 
+## Unreleased
+
+- The `chatcompletions` adapter requests logprobs only when the
+  request's `include` names `message.output_text.logprobs`, which is
+  what the specification says asks for them; `top_logprobs` then sets
+  how many alternatives each token carries. Before, the include was
+  ignored and `top_logprobs` alone turned logprobs on. This changes
+  behaviour for a caller that sets only `top_logprobs`: it now gets no
+  logprobs, and has to add the include to keep them. A request with the
+  include and no `top_logprobs` now gets logprobs without alternatives,
+  where before it got none.
+
 ## v0.0.20 - 2026-11-09
 
 - docs/extensions.md section 1.8 states a general adapter rule: an

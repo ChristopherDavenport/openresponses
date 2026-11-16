@@ -255,6 +255,7 @@ regional hosts. Per-model regions mean one client per region; route by
 | `service_tier` | `auto` and `default` (`standard_only`); `flex` and `priority` are `invalid_request` |
 | `temperature`, `top_p` | passed through |
 | `presence_penalty`, `frequency_penalty`, `top_logprobs`, `max_tool_calls`, `tool_choice` allowed_tools, `input_video` | `invalid_request` |
+| `include` of `message.output_text.logprobs` | `invalid_request`; Claude returns no logprobs |
 | `input_image.file_id`, `input_file.file_id` | Files API sources |
 | `ReasoningItem`, issuer `anthropic` or none, with `encrypted_content` | `thinking` block from the summary text and the signature |
 | `ReasoningItem` of another issuer, or without `encrypted_content` | left out (rule 5; README) |
@@ -375,11 +376,13 @@ genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendVertexAI, Project
   thinking refuses it upstream. `openresponses-experimental.effort` is
   ignored, since its fallback `xhigh` is already the highest setting. Any
   `reasoning.summary` sets `IncludeThoughts: true`.
-- Temperature, top_p, both penalties and `top_logprobs`
-  (`ResponseLogprobs` with `Logprobs`) are native. `max_output_tokens`
-  is optional. `CandidateCount` is pinned to 1. `metadata` becomes
-  `Labels` on Vertex only. `prompt_cache_key` is a caching hint;
-  Gemini caches implicitly, so the key is accepted without effect.
+- Temperature, top_p and both penalties are native. The
+  `message.output_text.logprobs` include sets `ResponseLogprobs`, and
+  `top_logprobs` sets `Logprobs` alongside it; `top_logprobs` without
+  the include requests nothing. `max_output_tokens` is optional.
+  `CandidateCount` is pinned to 1. `metadata` becomes `Labels` on
+  Vertex only. `prompt_cache_key` is a caching hint; Gemini caches
+  implicitly, so the key is accepted without effect.
 - Top-level `Request.Extra` (rule 8): a member under `anthropic.`,
   `chatcompletions.` or `gemini.` (no Gemini request parameter is
   defined yet) is `invalid_request` naming it, shared members are
@@ -463,12 +466,15 @@ extension blocks to carry, so only the error members below use it.
 Where it differs from the SDK-backed adapters:
 
 - Most of the request maps one to one: sampling and penalties,
-  `top_logprobs`, `parallel_tool_calls`, `reasoning_effort`,
+  `parallel_tool_calls`, `reasoning_effort`,
   `response_format` (both `json_object` and `json_schema`),
   `verbosity`, `service_tier`, `safety_identifier`,
   `prompt_cache_key`, `metadata` and `tool_choice` including
   `allowed_tools`. `n` is pinned to 1 and `stream_options.include_usage`
   is always on.
+- The `message.output_text.logprobs` include sends `logprobs: true`,
+  with `top_logprobs` alongside it when set; `top_logprobs` without the
+  include requests nothing.
 - Reasoning has no standard field. Decoding accepts `reasoning_content`
   (DeepSeek) and a string `reasoning` (OpenRouter, Groq) into the
   reasoning item's content; there is no signature. Replay is opt-in

@@ -148,10 +148,16 @@ function call from such a transcript, which carries no Gemini
 signature, gets the placeholder described under
 [Responses](#responses).
 
+`include: ["message.output_text.logprobs"]` asks Gemini for logprobs,
+and `top_logprobs` sets how many alternatives each token carries; on
+its own `top_logprobs` requests nothing, and is only echoed on the
+response.
+
 Accepted without effect: `strict` on function tools and on
-`text.format`, `include`, `stream_options` and `store` (the handler's
-concerns), and `prompt_cache_key`, which is a caching hint: Gemini
-caches implicitly, so the key has nothing to name. `metadata` becomes
+`text.format`, `include: ["reasoning.encrypted_content"]` (thought
+signatures are always emitted), `stream_options` and `store` (the
+handler's concerns), and `prompt_cache_key`, which is a caching hint:
+Gemini caches implicitly, so the key has nothing to name. `metadata` becomes
 Vertex AI labels, which the Gemini API rejects.
 
 Unknown top-level request members are read by kind (PLAN.md rule 8).
@@ -252,8 +258,9 @@ it incomplete with `content_filter`. `MALFORMED_FUNCTION_CALL`,
 `UNEXPECTED_TOOL_CALL`, `TOO_MANY_TOOL_CALLS` and `OTHER` fail it with
 a `model_error` whose code is the reason in lower case. Grounding
 supports become `url_citation` annotations with character offsets into
-the message text, and logprobs land on the `output_text` part. `model` on
-the response is the version Gemini served.
+the message text, and logprobs, when the request includes them, land
+on the `output_text` part. `model` on the response is the version
+Gemini served.
 
 Usage: `input_tokens` is `promptTokenCount` plus
 `toolUsePromptTokenCount`, and `cached_tokens` is

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- A request whose `include` names `message.output_text.logprobs` is
+  rejected with `invalid_request`, `code: unsupported_parameter` and
+  `param: include`, as `top_logprobs` already was. Claude returns no
+  logprobs, and the adapter used to accept the include and answer
+  without them; a caller that sends it now gets an error instead of a
+  response silently missing what it asked for. `include` of
+  `reasoning.encrypted_content` is accepted as before.
+
 ## v0.0.20 - 2026-11-09
 
 - Behaviour change: an assistant message's `refusal` parts are no

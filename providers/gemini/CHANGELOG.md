@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Logprobs are requested from Gemini (`ResponseLogprobs`) only when the
+  request's `include` names `message.output_text.logprobs`, which is
+  what the specification says asks for them; `top_logprobs` then sets
+  `Logprobs`, how many alternatives each token carries. Before, the
+  include was ignored and `top_logprobs` alone turned logprobs on. This
+  changes behaviour for a caller that sets only `top_logprobs`: it now
+  gets no logprobs, and has to add the include to keep them; the value
+  is still echoed on the response. A request with the include and no
+  `top_logprobs` now gets logprobs without alternatives, where before
+  it got none.
+
 ## v0.0.19 - 2026-11-04
 
 - Behaviour change: a 402 is `invalid_request` with code

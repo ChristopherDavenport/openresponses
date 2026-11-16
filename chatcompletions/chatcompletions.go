@@ -19,6 +19,11 @@
 // docs/extensions.md section 1.6 says. An image or file whose URL is a
 // sidecar: reference is refused (section 1.7). providers/PLAN.md lists
 // everything else. Compaction is not supported.
+//
+// Logprobs are requested only when the request's include names
+// message.output_text.logprobs, as the specification defines it;
+// top_logprobs sets how many alternatives each token carries and on its
+// own requests nothing.
 package chatcompletions
 
 import (
