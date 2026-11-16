@@ -49,19 +49,20 @@ func (a *Adapter) CreateStream(ctx context.Context, req openresponses.Request, s
 			// The response ended with a terminal event.
 			return nil
 		}
+		// The next request is this one with the token: maxOutputTokens
+		// stays the caller's value, since Gemini counts it across the
+		// continued requests and requires it never to shrink (API
+		// reference, Candidate.finishReason CONTINUATION). The SDK's own
+		// loop sends it unchanged too (genai v1.77.0 continuation.go:342-351,
+		// prepareContinuationConfig).
 		next := *cfg
 		if req.MaxOutputTokens != nil {
-			// max_output_tokens bounds the whole response, so the next
-			// request gets what the earlier ones left. With nothing left,
-			// this is the caller's own cut, and reads as one.
-			left := *req.MaxOutputTokens
-			if u := d.em.Response().Usage; u != nil {
-				left -= u.OutputTokens
-			}
-			if left <= 0 {
+			// When the output so far, thinking included, has spent it,
+			// another request can produce nothing; this is the caller's
+			// own cut, and reads as one.
+			if u := d.em.Response().Usage; u != nil && u.OutputTokens >= *req.MaxOutputTokens {
 				return d.em.Incomplete(openresponses.IncompleteReasonMaxOutputTokens)
 			}
-			next.MaxOutputTokens = int32(left)
 		}
 		if hop >= a.continuations || len(d.token) == 0 {
 			d.cut = true

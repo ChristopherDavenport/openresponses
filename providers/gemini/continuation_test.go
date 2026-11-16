@@ -389,10 +389,14 @@ func TestContinuationLaterWithoutToken(t *testing.T) {
 }
 
 // TestContinuationOutputBudget: max_output_tokens bounds the whole
-// response, so each later request asks for what is left of it (the
-// first request used 2), and once nothing is left the response ends
-// incomplete as any max_output_tokens cut does, without another request
-// and without the CONTINUATION member.
+// response, and Gemini counts it across the continued requests: it "is
+// cumulative across continuation hops and must be monotonically
+// increased or omitted" (API reference, Candidate.finishReason
+// CONTINUATION). So every request sends the caller's value unchanged,
+// as the SDK's own loop does. Once the requests' output tokens have
+// spent it, nothing more can come, and the response ends incomplete as
+// any max_output_tokens cut does, without another request and without
+// the CONTINUATION member.
 func TestContinuationOutputBudget(t *testing.T) {
 	maxTokens := func(body map[string]any) any {
 		cfg, _ := body["generationConfig"].(map[string]any)
@@ -408,8 +412,8 @@ func TestContinuationOutputBudget(t *testing.T) {
 	if n := h.requests(); n != 2 {
 		t.Fatalf("requests = %d, want 2", n)
 	}
-	if first, second := maxTokens(h.bodies[0]), maxTokens(h.bodies[1]); first != float64(10) || second != float64(8) {
-		t.Fatalf("maxOutputTokens = %v then %v, want 10 then 8", first, second)
+	if first, second := maxTokens(h.bodies[0]), maxTokens(h.bodies[1]); first != float64(10) || second != float64(10) {
+		t.Fatalf("maxOutputTokens = %v then %v, want 10 then 10", first, second)
 	}
 
 	h = &hops{t: t, chunks: [][]string{{continuationChunk("Hel", "dG9rZW4=")}}}
